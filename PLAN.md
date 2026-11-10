@@ -194,15 +194,31 @@ The user's test machine: AMD Ryzen 5 5500 (Zen 3), 32GB RAM, Radeon RX 6500 XT. 
 
 | Milestone | State |
 |---|---|
+| M5 | done: stock 9front `boot`, `paqfs` and `bootrc` run on the kernel and reach an interactive `rc` on the serial console; `/dev`, `/proc`, `/env`, `/srv` and union directories work from the shell. Tested by a scripted console session on all three CPU models and in a debug build |
 | M4 | done: the first process runs `initcode` in user mode and execs `/boot/boot`; fork, exec, exits/await, pipes, brk, rendezvous, notes, alarms and FPU state work; an unmodified 9front `/amd64/bin/echo` runs. Tested on all three CPU models and in a debug build |
 | M3 | done: `chan`, `dev`, `pgrp`, `qio`, `allocb`, `parse`, 9P marshalling (`lib/fcall.zig`), and devices root, cons, env, pipe, srv, dup. The boot self-test binds `#c #d #e #s`, writes `/dev/cons`, checks error text, uses `/env`, round-trips a pipe and copies a name space |
 | M2 | done: kernel processes sleep, wake, queue on locks, get preempted, take notes and alarms, exit and are reused; the scheduling self-test ran for 60s. Not done: rendezvous, which is a system call and moves to M4 |
 | M1 | done: `zig build test` (host) and `zig build test-boot` (two boots: clean self-test, deliberate fault) pass on `SandyBridge`, `Opteron_G4` and `max`, in safe and debug builds |
 | M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=SandyBridge` (default), `Opteron_G4` and `max` |
 
+Notes from M5 for later milestones:
+
+- **Stock boot.** With `-Dref=ref` the build puts 9front's own `boot`, `paqfs`, `factotum` and `bootfs.paq` in the boot volume's `boot/` directory; the loader reads those four names and passes them in `BootInfo.files`, and the kernel serves them in `/boot`. Without a `boot` from the loader, `/boot/boot` is planZ's user-mode self-test. `zig build run9 -Dref=ref` boots to bootrc's "bootargs is" question on the serial console; answer `!rc` for a shell. `zig build test-9front -Dref=ref` does that with `tools/bootchat.sh` and uses the shell.
+- **Console.** `plan9.ini` needs `console=0` for bootrc to start `kbdfs` on the serial port (`/dev/eia0`). Kernel prints still go out polled through `print.zig`; `kbdfs` writes through the interrupt-driven queue of the same UART, so the two can interleave.
+- **devmnt** has no mount cache; its read-ahead code is ported but uncalled. An Rerror is always `error.Str` with the server's text, so compare text (`proc.errtext`) and not tags when a server's error matters.
+- **devproc**: `mem` works through a private port of `segio`; `fpregs`, watchpoints, syscall trace and `/proc/trace` are listed but error-only or empty; the EDF ctl commands are unknown (`// DIFF: edf`).
+- **random.zig** seeds for about 3 seconds after boot with a spinning kernel process, as in 9front; `/dev/random` and the first `nrand` block until then. `hwrandbuf` (RDRAND) is not hooked up.
+- **`#ec`**: `bootargs.setconfenv()` exports every `plan9.ini` setting; `/dev/config` is still empty.
+- **devuart / uart16550**: the driver is generic over its register accessor and asks the platform for its interrupt through a callback; `arch/amd64/uartpc.zig` is the PC glue (COM1, COM2). There is no `intrdisable` yet, so closing a port leaves its handler installed. An explicit `console=0` without a baud rate sets 9600 as 9front does; with no `console=` the port stays at 115200.
+- **`/dev/swap`** reports memory statistics with swap as 0/0; the "kernel malloc" maximum and the draw/secret lines are placeholders.
+- `ps` is not in 9front's boot file system, so "ps works" from the plan is checked by reading `/proc/N/status`, which is what `ps` reads.
+- **Not exercised yet:** `factotum`, `mntgen` beyond start-up, notes through `/proc/N/note`, `/dev/reboot`, the RTC write path, devsrv posting from user programs beyond what bootrc does, and everything under `/net` (no devices there until M7).
+- **Agents' ports still unreviewed line by line:** devmnt, devproc, devuart, uart16550, random, devrtc, devswap, sysfile, sysproc, page/segment/fault. They pass the boot tests; treat anything outside what those tests reach as unproven.
+
 Notes from M4 for later milestones:
 
-- **Reference binaries.** The 9front amd64 ISO (release 11952) is in `ref/iso/`, and its `amd64/` and `cfg/` trees are unpacked in `ref/root/` (`ref/` is gitignored). `zig build test-boot -Dstock=ref/root/amd64/bin` adds a stock `echo` to `/boot` and requires its output; without `-Dstock` the tests need nothing outside the repository. No checksum is published for the ISO.
+- **Allocators.** `alloc.allocator` is the kernel allocator as a `std.mem.Allocator`, for new code that wants standard containers (`std.ArrayList`, hash maps); it fails with `error.OutOfMemory` rather than waiting. Ported code keeps calling `malloc`/`smalloc`/`free`.
+- **Reference binaries.** The 9front amd64 ISO (release 11952) is in `ref/iso/`, and its `amd64/` and `cfg/` trees are unpacked in `ref/root/` (`ref/` is gitignored). `ref/boot/` holds `boot` and `bootfs.paq`, cut out of the reference `9pc64` (they exist nowhere else; `bootfs.paq` checks against its own SHA-1). `zig build test-boot -Dref=ref` adds a stock `echo` to `/boot` and requires its output; without `-Dref` the tests need nothing outside the repository. No checksum is published for the ISO.
 - **System calls.** A handler is `fn(*Sargs) Error!usize` and takes its arguments with `a.next(T)`. `port/syscall.zig` holds the dispatcher, `donotify` and the table (`systabinit` lists every call). `syscall()` in `arch/amd64/trap.zig` returns non-zero to make the assembly restore all registers (a note or `noted`); the C patches its return address instead.
 - **User memory.** `fault.validaddr`, `userslice` and `userstr` are the only way in. `validaddr` now pre-faults every page of the range through `arch.probe`, a fault-safe touch, so a page that cannot be loaded fails the system call with an ordinary error. A validated address that still faults later (another process sharing the memory unmapped it) kills the process if it holds no kernel locks, and panics otherwise. `fault()` itself never unwinds; it returns -1 with the reason in `up.errstr`.
 - **No swap, in practice:** `page.zig` keeps a pager process whose only jobs are reclaiming idle cached image pages and, last, killing the largest process.

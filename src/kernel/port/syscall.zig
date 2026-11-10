@@ -126,7 +126,10 @@ pub fn systabinit() void {
     install(_WSTAT, "_wstat", f.sys_wstat);
     install(_FWSTAT, "_fwstat", f.sys_fwstat);
     install(_MOUNT, "_mount", f.sys_mount);
-    // M5: FAUTH and FVERSION, with devmnt.
+
+    const au = @import("auth.zig");
+    install(FAUTH, "Fauth", au.sysfauth);
+    install(FVERSION, "Fversion", au.sysfversion);
 
     const p = @import("sysproc.zig");
     install(SYSR1, "Running", p.sysr1);

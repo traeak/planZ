@@ -10,6 +10,7 @@ const taslock = @import("taslock.zig");
 const ql = @import("qlock.zig");
 const alloc = @import("alloc.zig");
 const proc = @import("proc.zig");
+const random = @import("random.zig");
 const tod = @import("tod.zig");
 const chan = @import("chan.zig");
 const devmod = @import("dev.zig");
@@ -290,7 +291,6 @@ pub fn mountfree(m_: ?*Mount) void {
 }
 
 var lastwhine: i64 = 0;
-var whineseed: u32 = 1;
 
 /// Wait a little for some resource to be freed, saying why once in a
 /// while.
@@ -308,8 +308,5 @@ pub fn resrcwait(reason: ?[]const u8) Error!void {
             print("%s\n", .{r});
         }
     }
-    // DIFF: the C sleeps 100+nrand(200) ms; the kernel's random number
-    // generator is not ported yet, so this spreads the waits itself.
-    whineseed = whineseed *% 1103515245 +% 12345;
-    try proc.tsleep(&up.sleep, proc.return0, null, 100 + (whineseed >> 16) % 200);
+    try proc.tsleep(&up.sleep, proc.return0, null, @intCast(100 + random.nrand(200)));
 }

@@ -29,8 +29,6 @@
 //!     sys_fstat fail the way the C's own sys_wstat and sys_fwstat do
 //!     ("old ... system call - recompile"); packoldstat is gone with
 //!     them.
-//!   - mount: devmnt is not ported (M5).  bindmount does everything up
-//!     to mntattach, which is a stub here that fails.
 //!   - wstat on a mount point reports "is a mount point: 'path'" with a
 //!     plain errorf; chan.namelenerror, which shortens a long path
 //!     nicely, is private to chan.zig.
@@ -57,6 +55,7 @@ const devmod = @import("dev.zig");
 const pgrp = @import("pgrp.zig");
 const fault = @import("fault.zig");
 const devcons = @import("devcons.zig");
+const devmnt = @import("devmnt.zig");
 const p9 = @import("print.zig");
 
 const print = p9.print;
@@ -973,17 +972,6 @@ pub fn syschdir(a: *Sargs) Error!usize {
     return 0;
 }
 
-/// M5: devmnt.  Stands for mntattach in 9/port/devmnt.c: attach to the
-/// file server on the other end of c (authenticated through ac if it is
-/// not nil) and return the channel of its root.
-fn mntattach(c: *Chan, ac: ?*Chan, spec: []const u8, flags: u32) Error!*Chan {
-    _ = c;
-    _ = ac;
-    _ = spec;
-    _ = flags;
-    return proc.errorf("mount: devmnt not ported yet", .{});
-}
-
 fn bindmount(ismount: bool, fd: i32, afd: i32, arg0: usize, arg1: usize, flag: u32, uspec: usize) Error!usize {
     if (flag & ~@as(u32, lib.MMASK) != 0 or flag & lib.MORDER == (lib.MBEFORE | lib.MAFTER))
         return error.Ebadarg;
@@ -1002,8 +990,7 @@ fn bindmount(ismount: bool, fd: i32, afd: i32, arg0: usize, arg1: usize, flag: u
         if (afd >= 0)
             ac = try fdtochan(afd, lib.ORDWR, false, true);
         defer if (ac) |x| cclose(x);
-        // M5: devmnt
-        break :blk try mntattach(bc, ac, spec.?, flag & lib.MCACHE);
+        break :blk try devmnt.mntattach(bc, ac, spec.?, flag & lib.MCACHE);
     } else try namec(try userstr(arg0), portdat.Abind, 0, 0);
     {
         defer cclose(c0);

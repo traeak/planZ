@@ -46,6 +46,7 @@ const alloc = @import("alloc.zig");
 const proc = @import("proc.zig");
 const tod = @import("tod.zig");
 const portclock = @import("portclock.zig");
+const random = @import("random.zig");
 const qio = @import("qio.zig");
 const chan = @import("chan.zig");
 const pgrp = @import("pgrp.zig");
@@ -275,7 +276,7 @@ pub fn readstr(off: usize, buf: []u8, str: []const u8) usize {
 
 fn consinit() void {
     tod.todinit();
-    // M5: randominit()
+    random.randominit();
     p9.addconsole(kprintputs); // DIFF: see kprintputs
 }
 
@@ -452,8 +453,7 @@ fn consread(c: *Chan, buf: []u8, off: i64) Error!usize {
 
         Qsysname => return readstr(ul(offset), buf, sysname),
 
-        // M5: randomread(buf, n), from 9/port/random.c
-        Qrandom => return proc.errorf("random numbers not ported yet", .{}),
+        Qrandom => return random.randomread(buf),
 
         Qdrivers => {
             const b = alloc.snewslice(u8, READSTR);

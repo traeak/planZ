@@ -101,9 +101,42 @@ fn malloctest() void {
     if (!std.mem.eql(u8, r[0..10], "0123456789")) panic("selftest: realloc lost data", .{});
     alloc.free(r);
 
+    stdalloctest();
+
     if (alloc.mallocstats().curalloc != before)
         panic("selftest: malloc leaked %lud bytes", .{alloc.mallocstats().curalloc - before});
     print("selftest: malloc ok, %lludK in the arena\n", .{alloc.mallocstats().cursize / mem.KiB});
+}
+
+/// The standard library's containers on the kernel allocator.
+fn stdalloctest() void {
+    const gpa = alloc.allocator;
+
+    var list: std.ArrayList(u32) = .empty;
+    defer list.deinit(gpa);
+    var i: u32 = 0;
+    while (i < 5000) : (i += 1)
+        list.append(gpa, i * 3) catch panic("selftest: ArrayList append", .{});
+    for (list.items, 0..) |v, k| {
+        if (v != k * 3) panic("selftest: ArrayList lost data at %lud", .{k});
+    }
+
+    var map: std.AutoHashMapUnmanaged(u32, u32) = .empty;
+    defer map.deinit(gpa);
+    i = 0;
+    while (i < 1000) : (i += 1)
+        map.put(gpa, i, i * i) catch panic("selftest: HashMap put", .{});
+    i = 0;
+    while (i < 1000) : (i += 1) {
+        if (map.get(i) != i * i) panic("selftest: HashMap lost key %ud", .{i});
+    }
+
+    // An over-aligned allocation and a typed one.
+    const page = gpa.alignedAlloc(u8, .fromByteUnits(mem.BY2PG), 100) catch panic("selftest: alignedAlloc", .{});
+    if (@intFromPtr(page.ptr) % mem.BY2PG != 0) panic("selftest: alignedAlloc not aligned", .{});
+    gpa.free(page);
+    const one = gpa.create(Rendez) catch panic("selftest: create", .{});
+    gpa.destroy(one);
 }
 
 /// The clock, the timers and time of day agree on how long 250ms is.
@@ -115,9 +148,12 @@ fn sleeptest() void {
     const ms = @divTrunc(tod.uptime() - t0, 1000000);
     const ticks = arch.MACHP(0).ticks -% k0;
     print("selftest: slept %lldms, %lud ticks\n", .{ ms, ticks });
-    if (ms < 250 or ms > 300)
+    // Never early.  Late by up to a scheduling quantum: the process that
+    // seeds the random number generator spins at the same priority for
+    // the first seconds after boot.
+    if (ms < 250 or ms > 400)
         panic("selftest: tsleep(250) took %lldms", .{ms});
-    if (ticks < mem.HZ / 4 - 2 or ticks > mem.HZ / 4 + 5)
+    if (ticks < mem.HZ / 4 - 2 or ticks > mem.HZ / 4 + 15)
         panic("selftest: %lud clock ticks in 250ms", .{ticks});
 }
 

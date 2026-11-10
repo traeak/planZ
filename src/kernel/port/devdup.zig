@@ -5,11 +5,8 @@
 //! DIFF:
 //!   - dupgen also stops when the descriptor is past the end of the fd
 //!     array, which the C takes on trust from maxfd.
-//!   - procfdprint (9/port/devproc.c) and readstr (9/port/devcons.c)
-//!     are private copies here until those files are ported; each is
-//!     marked with where it goes.
-//!   - procfdprint prints a missing path as chanpath does, where the C
-//!     would dereference nil.
+//!   - readstr (9/port/devcons.c) is a private copy here, marked with
+//!     where it goes.
 
 const std = @import("std");
 const fcall = @import("fcall");
@@ -30,6 +27,7 @@ const unlock = taslock.unlock;
 const incref = portdat.incref;
 const cclose = chan.cclose;
 const fdtochan = sysfile.fdtochan;
+const procfdprint = @import("devproc.zig").procfdprint;
 
 const Error = proc.Error;
 const Chan = portdat.Chan;
@@ -44,24 +42,6 @@ const QTFILE = fcall.QTFILE;
 const QTAUTH = fcall.QTAUTH;
 const DEVDOTDOT = portdat.DEVDOTDOT;
 const COPEN = portdat.COPEN;
-
-/// One line of /proc/n/fd; returns the part of s written.
-/// from 9/port/devproc.c
-// M4: move to devproc.zig
-fn procfdprint(c: *Chan, fd: i32, s: []u8) []u8 {
-    return fmt.snprint(s, "%3d %.2s %C %4ld (%.16llux %lud %.2ux) %5ld %8lld %s\n", .{
-        fd,
-        "r w rw"[@as(usize, c.mode & 3) << 1 ..],
-        devmod.devtab[c.type].dc,
-        c.dev,
-        c.qid.path,
-        c.qid.vers,
-        c.qid.type,
-        c.iounit,
-        c.offset,
-        chan.chanpath(c),
-    });
-}
 
 /// Read from a string as if it were a file.
 /// from 9/port/devcons.c

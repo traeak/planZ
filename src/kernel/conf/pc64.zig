@@ -15,4 +15,9 @@ pub const devtab = [_]*const devmod.Dev{
     &@import("../port/devpipe.zig").pipedevtab,
     &@import("../port/devsrv.zig").srvdevtab,
     &@import("../port/devdup.zig").dupdevtab,
+    &@import("../port/devproc.zig").procdevtab,
+    &@import("../port/devmnt.zig").mntdevtab,
+    &@import("../port/devuart.zig").uartdevtab,
+    &@import("../arch/amd64/devrtc.zig").rtcdevtab,
+    &@import("../port/devswap.zig").swapdevtab,
 };

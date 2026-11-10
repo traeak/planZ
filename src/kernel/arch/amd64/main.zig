@@ -31,6 +31,7 @@ const syscallmod = @import("../../port/syscall.zig");
 const portdat = @import("../../port/portdat.zig");
 const fmt = @import("fmt");
 const fpu = @import("fpu.zig");
+const uartpc = @import("uartpc.zig");
 const Uart16550 = @import("../../drv/uart16550.zig").Uart16550;
 
 const print = p9.print;
@@ -157,6 +158,33 @@ fn archinit() void {
         panic("no ACPI tables", .{});
 }
 
+/// Fill /boot.  The loader may have brought files (a 9front boot, paqfs,
+/// factotum and bootfs.paq); without a boot program from there the
+/// kernel's own user-mode self-test is /boot/boot.
+/// Stands in for the bootdir section of a 9front kernel configuration
+/// and the bootlinks() that mkrootc generates from it.
+fn bootfiles() void {
+    const bi = bootargs.bootinfop;
+    var haveboot = false;
+    if (bi.files_len != 0) {
+        const files = @as([*]const bootinfo.BootFile, @ptrFromInt(mmu.kaddr(bi.files)))[0..bi.files_len];
+        for (files) |*f| {
+            const name = std.mem.sliceTo(&f.name, 0);
+            const data = @as([*]const u8, @ptrFromInt(mmu.kaddr(f.base)))[0..f.len];
+            devroot.addbootfile(name, data);
+            if (std.mem.eql(u8, name, "boot")) haveboot = true;
+        }
+    }
+    if (!haveboot)
+        devroot.addbootfile("boot", @embedFile("bootprog"));
+
+    // Given with -Dstock: an unmodified 9front binary for the user test
+    // to run.
+    const stockecho = @embedFile("stockecho");
+    if (stockecho.len != 0)
+        devroot.addbootfile("echo", stockecho);
+}
+
 /// The first process, still in the kernel: finish what needs a process
 /// to do it, then leave for user mode and initcode.
 fn init0() noreturn {
@@ -166,7 +194,7 @@ fn init0() noreturn {
     devenv.ksetenv("terminal", fmt.snprint(&buf, "%s %s", .{ "generic", "pc64" }), false) catch {};
     devenv.ksetenv("cputype", "amd64", false) catch {};
     devenv.ksetenv("service", if (dat.cpuserver) "cpu" else "terminal", false) catch {};
-    // M5: setconfenv(), the plan9.ini settings as #ec variables.
+    bootargs.setconfenv();
     proc.kproc("alarm", alarm.alarmkproc, null);
 
     // DIFF: not in 9front; see port/selftest.zig.
@@ -211,12 +239,8 @@ pub fn main(bipa: u64) callconv(.c) noreturn {
 
     proc.procinit0();
     devmod.devtab = &conf_pc64.devtab;
-    devroot.addbootfile("boot", @embedFile("bootprog"));
-    // Given with -Dstock: an unmodified 9front binary for the user test
-    // to run.
-    const stockecho = @embedFile("stockecho");
-    if (stockecho.len != 0)
-        devroot.addbootfile("echo", stockecho);
+    uartpc.uartinit();
+    bootfiles();
     chan.chandevreset();
     syscallmod.systabinit();
     page.pageinit();

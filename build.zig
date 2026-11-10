@@ -19,8 +19,9 @@ pub fn build(b: *std.Build) void {
     const cpu = b.option([]const u8, "cpu", "QEMU cpu model (default SandyBridge)") orelse "SandyBridge";
     const memory = b.option([]const u8, "mem", "QEMU memory size (default 512M)") orelse "512M";
     // Unmodified 9front binaries, to check binary compatibility.  They
-    // are not in the repository: unpack /amd64/bin from a 9front ISO.
-    const stock = b.option([]const u8, "stock", "Directory of stock 9front amd64 binaries, e.g. ref/root/amd64/bin");
+    // are not in the repository; see "Reference binaries" in PLAN.md for
+    // what the directory must hold.
+    const ref = b.option([]const u8, "ref", "Directory of 9front reference files, e.g. ref");
 
     const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
     const fcall = b.createModule(.{ .root_source_file = b.path("src/lib/fcall.zig") });
@@ -70,7 +71,7 @@ pub fn build(b: *std.Build) void {
     kernel.root_module.addAnonymousImport("bootprog", .{ .root_source_file = bootprog });
     // An empty file stands for "no stock binaries given".
     kernel.root_module.addAnonymousImport("stockecho", .{
-        .root_source_file = if (stock) |dir| b.path(b.pathJoin(&.{ dir, "echo" })) else b.addWriteFiles().add("none", ""),
+        .root_source_file = if (ref) |dir| b.path(b.pathJoin(&.{ dir, "root/amd64/bin/echo" })) else b.addWriteFiles().add("none", ""),
     });
     kernel.setLinkerScript(b.path("src/kernel/arch/amd64/kernel.ld"));
     kernel.entry = .{ .symbol_name = "_start" };
@@ -114,7 +115,7 @@ pub fn build(b: *std.Build) void {
     };
 
     const run = b.addSystemCommand(qemu_args);
-    addEsp(b, run, loader, kernel, null);
+    addEsp(b, run, loader, kernel, null, null);
     run.addPassthruArgs();
     b.step("run", "Boot the kernel in QEMU (serial console on stdio)").dependOn(&run.step);
 
@@ -125,7 +126,7 @@ pub fn build(b: *std.Build) void {
     const boot_tests = [_]BootTest{
         .{
             .ini = null,
-            .expect = if (stock != null)
+            .expect = if (ref != null)
                 "selftest ok|usertest ok|hello from stock 9front echo"
             else
                 "selftest ok|usertest ok",
@@ -136,8 +137,39 @@ pub fn build(b: *std.Build) void {
         const bt = b.addSystemCommand(&.{ "sh", "tools/boottest.sh", "60", t.expect });
         bt.addArgs(qemu_args);
         bt.addArgs(&.{ "-display", "none" });
-        addEsp(b, bt, loader, kernel, t.ini);
+        addEsp(b, bt, loader, kernel, t.ini, null);
         test_boot.dependOn(&bt.step);
+    }
+
+    // With the reference files: boot 9front's own boot program, paqfs
+    // and boot file system, with the console on the serial port.
+    if (ref) |dir| {
+        const ini9 = "console=0\n";
+
+        const run9 = b.addSystemCommand(qemu_args);
+        addEsp(b, run9, loader, kernel, ini9, dir);
+        run9.addPassthruArgs();
+        b.step("run9", "Boot stock 9front user programs in QEMU (serial console on stdio)").dependOn(&run9.step);
+
+        // At bootrc's question, ask for a shell and use it.
+        // The conversation: what to wait for, then what to type.
+        // (ps is not in the boot file system; cat reads what it reads.)
+        const chat = b.addSystemCommand(&.{ "sh", "tools/bootchat.sh", "120" });
+        chat.addArgs(&.{
+            "bootargs is", "!rc",
+            "% ",          "echo planz^9front",
+            "planz9front", "ls /dev/cons /dev/time",
+            "/dev/time",   "cat /dev/pid && echo pid^ok",
+            "pidok",       "cat /proc/1/status | sed 1q && echo st^ok",
+            "stok",        "ls /proc | sed 3q && cat /dev/time && echo time^ok",
+            "timeok",      "ls /bin | grep -c . && echo union^ok",
+            "unionok",     "--",
+        });
+        chat.addArgs(qemu_args);
+        chat.addArgs(&.{ "-display", "none" });
+        addEsp(b, chat, loader, kernel, ini9, dir);
+        const test9 = b.step("test-9front", "Boot stock 9front user programs to a shell and use it");
+        test9.dependOn(&chat.step);
     }
 
     // The portable kernel must compile for the architectures planZ means
@@ -205,11 +237,19 @@ fn addEsp(
     loader: *std.Build.Step.Compile,
     kernel: *std.Build.Step.Compile,
     ini: ?[]const u8,
+    /// Reference directory to take 9front's boot files from, or null.
+    ref: ?[]const u8,
 ) void {
     const esp = b.addWriteFiles();
     _ = esp.addCopyFile(loader.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
     _ = esp.addCopyFile(kernel.getEmittedBin(), "planz");
     if (ini) |text| _ = esp.add("plan9.ini", text);
+    if (ref) |dir| {
+        _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "boot/boot" })), "boot/boot");
+        _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })), "boot/bootfs.paq");
+        _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })), "boot/paqfs");
+        _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "root/amd64/bin/auth/factotum" })), "boot/factotum");
+    }
     run.addArg("-drive");
     run.addPrefixedDirectoryArg("format=raw,file=fat:rw:", esp.getDirectory());
 }

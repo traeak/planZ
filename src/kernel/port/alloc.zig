@@ -277,3 +277,59 @@ pub fn snewslice(comptime T: type, n: usize) []T {
     const p: [*]T = @ptrCast(@alignCast(smalloc(n * @sizeOf(T))));
     return p[0..n];
 }
+
+// The kernel allocator as a std.mem.Allocator.
+//
+// DIFF (new): ported code calls malloc, smalloc and free by their Plan 9
+// names and should go on doing so.  This is for new code that wants the
+// standard library's containers (std.ArrayList, std.AutoHashMap ...):
+//
+//     var list: std.ArrayList(u32) = .empty;
+//     defer list.deinit(alloc.allocator);
+//     try list.append(alloc.allocator, 1);
+//
+// Allocation fails with error.OutOfMemory instead of waiting as smalloc
+// does; a caller that returns a kernel Error maps it to error.Enomem.
+// Memory is not zeroed, as the interface does not promise it.
+
+/// Bytes the block holding `v` can hold without moving, or 0 for an
+/// aligned block, whose slack is not worth working out.
+fn capacity(v: usize) usize {
+    const a: *Ahdr = @ptrFromInt(v - @sizeOf(Ahdr));
+    if (a.magic == Aligned) return 0;
+    const h: *Hdr = @ptrFromInt(v - hdrsize);
+    return binsize(h.bin) - hdrsize;
+}
+
+fn stdAlloc(_: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
+    const al = alignment.toByteUnits();
+    if (al <= hdrsize) {
+        const p = alloc(len) orelse return null;
+        return @ptrFromInt(p);
+    }
+    return mallocalign(len, al, 0, 0);
+}
+
+fn stdResize(_: *anyopaque, memory: []u8, _: std.mem.Alignment, new_len: usize, _: usize) bool {
+    if (new_len <= memory.len) return true;
+    return new_len <= capacity(@intFromPtr(memory.ptr));
+}
+
+fn stdRemap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+    // In place or not at all: the caller then allocates, copies and frees.
+    return if (stdResize(ctx, memory, alignment, new_len, ret_addr)) memory.ptr else null;
+}
+
+fn stdFree(_: *anyopaque, memory: []u8, _: std.mem.Alignment, ret_addr: usize) void {
+    free0(@intFromPtr(memory.ptr), ret_addr);
+}
+
+pub const allocator: std.mem.Allocator = .{
+    .ptr = undefined,
+    .vtable = &.{
+        .alloc = stdAlloc,
+        .resize = stdResize,
+        .remap = stdRemap,
+        .free = stdFree,
+    },
+};
