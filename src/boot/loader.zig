@@ -16,6 +16,7 @@ const BootInfo = bootinfo.BootInfo;
 const MemRegion = bootinfo.MemRegion;
 
 const kernel_path = std.unicode.utf8ToUtf16LeStringLiteral("planz");
+const ini_path = std.unicode.utf8ToUtf16LeStringLiteral("plan9.ini");
 
 const page_size = 4096;
 const MiB = 1 << 20;
@@ -64,6 +65,7 @@ const EM_X86_64 = 62;
 const LoadError = error{
     NoBootServices,
     NoFileSystem,
+    NoKernel,
     BadKernel,
     ExitFailed,
     FiveLevelPaging,
@@ -88,8 +90,11 @@ fn boot() !noreturn {
     if (builtin.cpu.arch == .x86_64 and fiveLevelPaging())
         return error.FiveLevelPaging;
 
-    const file = try readKernel();
+    const root = try openVolume();
+    const file = (try readFile(root, kernel_path)) orelse return error.NoKernel;
     const image = try loadElf(file);
+    // Optional: name=value lines for the kernel.
+    const ini: []const u8 = (try readFile(root, ini_path)) orelse "";
 
     const info_pages = try allocPages(1);
     const info: *BootInfo = @ptrCast(@alignCast(info_pages.ptr));
@@ -99,6 +104,8 @@ fn boot() !noreturn {
         .kernel_size = image.size,
         .framebuffer = findFramebuffer(),
         .acpi_rsdp = findRsdp(),
+        .cmdline = if (ini.len != 0) @intFromPtr(ini.ptr) else 0,
+        .cmdline_len = ini.len,
     };
 
     // Size the direct map: all of the memory map, and at least the low
@@ -195,15 +202,24 @@ fn haveNx() bool {
     return edx & (1 << 20) != 0;
 }
 
-fn readKernel() ![]u8 {
+/// The volume the loader itself was read from.
+fn openVolume() !*uefi.protocol.File {
     const LoadedImage = uefi.protocol.LoadedImage;
     const SimpleFileSystem = uefi.protocol.SimpleFileSystem;
 
     const li = (try bs.handleProtocol(LoadedImage, uefi.handle)) orelse return error.NoFileSystem;
     const dev = li.device_handle orelse return error.NoFileSystem;
     const fs = (try bs.handleProtocol(SimpleFileSystem, dev)) orelse return error.NoFileSystem;
-    const root = try fs.openVolume();
-    const f = try root.open(kernel_path, .read, .{});
+    return fs.openVolume();
+}
+
+/// The contents of a file in the volume's root directory, or null if
+/// there is no such file.
+fn readFile(root: *uefi.protocol.File, name: [*:0]const u16) !?[]u8 {
+    const f = root.open(name, .read, .{}) catch |err| switch (err) {
+        error.NotFound => return null,
+        else => return err,
+    };
 
     // Seeking to the all-ones position means "end of file".
     try f.setPosition(0xffff_ffff_ffff_ffff);

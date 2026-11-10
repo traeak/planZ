@@ -149,7 +149,7 @@ AP startup, per-CPU state, TLB shootdown, `-smp 4`.
 
 ### M7 — Storage and network
 PCI over ECAM with MSI/MSI-X; `devsd` + virtio-blk, NVMe, AHCI; trimmed `9/ip`; `devether` + virtio-net; `devtls` on `std.crypto`; `devcap`, `auth`.
-- **Done when:** boots a real 9front disk image (stock cwfs/hjfs), gets a DHCP lease, `hget` over TLS works.
+- **Done when:** boots a real 9front disk image (stock gefs, cwfs or hjfs), gets a DHCP lease, `hget` over TLS works.
 
 ### M8 — Graphics and input
 Framebuffer `screen`, `libmemdraw`, `libmemlayer`, `devdraw`, `devmouse`, `devkbd`, xHCI + USB HID.
@@ -158,9 +158,12 @@ Framebuffer `screen`, `libmemdraw`, `libmemlayer`, `devdraw`, `devmouse`, `devkb
 ### M9 — Real hardware
 Boot on one physical 2011-or-later machine; add the NIC and quirks it needs; audio (HDA) if wanted.
 
+The user's test machine: AMD Ryzen 5 5500 (Zen 3), 32GB RAM, Radeon RX 6500 XT. It has no integrated graphics, so the display is the card's UEFI framebuffer. Assume no serial console. Board model, NIC and PS/2 availability are not yet known. Booting it early is cheap: copy `zig-out/esp` onto a FAT32 USB stick.
+
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
 - Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail.
+- File servers are user programs, so `gefs`, `cwfs` and `hjfs` run unmodified as stock binaries from M7 and need no port for the kernel to use them. When userland is ported, `gefs` (about 12K lines of C) is the file server to do first.
 
 ## Future additions
 
@@ -191,7 +194,23 @@ Boot on one physical 2011-or-later machine; add the NIC and quirks it needs; aud
 
 | Milestone | State |
 |---|---|
+| M1 | done: `zig build test` (host) and `zig build test-boot` (two boots: clean self-test, deliberate fault) pass on `SandyBridge`, `Opteron_G4` and `max`, in safe and debug builds |
 | M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=SandyBridge` (default), `Opteron_G4` and `max` |
+
+Notes from M1 for later milestones:
+
+- Port code reaches the machine only through `src/kernel/arch.zig`; `arch/amd64/amd64.zig` is the list of what an architecture must provide.
+- `lib/fmt.zig` is the Plan 9 verb formatter; a type prints itself for any verb by declaring `fmt9` (use this for `%E`, `%I`, `%V`, `%T` ...). Size modifiers are ignored, `u` is not.
+- **Context switch needs a design decision in M2.** The C `setlabel`/`gotolabel` save only SP and PC because the Plan 9 compilers keep nothing in registers across calls. Zig follows the SysV ABI, so RBX, RBP and R12-R15 must be saved too: either widen `Label` or push them on the stack before saving SP. They were left out of `l.zig` for this reason.
+- `taslock.zig` has only what M1 needs: `lock` spins without scheduling and there are no priority or statistics hooks.
+- `alloc.zig` is the simple size-class allocator; `smalloc` panics instead of waiting, `mallocalign` does not support `span`.
+- `rdmsr`/`wrmsr` have no fault fixup; `trap()` has no `_rdmsrinst`/`_peekinst` cases yet.
+- `irq.zig` lacks the interrupt-time histogram, `preempted()` and the `irqalloc` file. `apic.zig` routes ISA interrupts only; MSI comes with PCI.
+- An HPET is required to calibrate the TSC; there is no ACPI PM timer or CPUID-leaf fallback.
+- The invariant-TSC requirement is waived when CPUID reports a hypervisor, because QEMU hides the flag.
+- Machine-check and MTRR set-up from `cpuidentify` are not ported.
+- `port/screen.zig` is a text console on the boot framebuffer using 9front's default font (`port/defont.bin`, extracted from `libdraw/defont.c`). It was pulled forward from M8 so boots are visible on machines without a serial port. `vmap` fails for device memory above 1024GiB; a framebuffer placed that high gets no console.
+- `*selftest=fault` in `plan9.ini` makes the boot self-test end in a kernel fault; the loader passes `plan9.ini` to the kernel as the command line and `getconf` reads it.
 
 Notes from M0 for later milestones:
 

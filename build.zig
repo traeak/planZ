@@ -17,6 +17,7 @@ pub fn build(b: *std.Build) void {
     const cpu = b.option([]const u8, "cpu", "QEMU cpu model (default SandyBridge)") orelse "SandyBridge";
     const memory = b.option([]const u8, "mem", "QEMU memory size (default 512M)") orelse "512M";
 
+    const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
     const bootinfo = b.createModule(.{ .root_source_file = b.path("src/boot/bootinfo.zig") });
 
     // The kernel: freestanding, no floating point or vector registers
@@ -41,7 +42,10 @@ pub fn build(b: *std.Build) void {
             .pic = false,
             .omit_frame_pointer = false,
             .single_threaded = true,
-            .imports = &.{.{ .name = "bootinfo", .module = bootinfo }},
+            .imports = &.{
+                .{ .name = "bootinfo", .module = bootinfo },
+                .{ .name = "fmt", .module = fmt },
+            },
         }),
         .use_llvm = true,
         .use_lld = true,
@@ -70,11 +74,6 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_loader.step);
     b.getInstallStep().dependOn(&install_kernel.step);
 
-    // The same tree from the build cache, for QEMU to boot from.
-    const esp = b.addWriteFiles();
-    _ = esp.addCopyFile(loader.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
-    _ = esp.addCopyFile(kernel.getEmittedBin(), "planz");
-
     const qemu_args: []const []const u8 = &.{
         "qemu-system-x86_64",
         "-machine",
@@ -93,19 +92,47 @@ pub fn build(b: *std.Build) void {
     };
 
     const run = b.addSystemCommand(qemu_args);
-    addEsp(run, esp);
+    addEsp(b, run, loader, kernel, null);
     run.addPassthruArgs();
     b.step("run", "Boot the kernel in QEMU (serial console on stdio)").dependOn(&run.step);
 
-    const boot_test = b.addSystemCommand(&.{ "sh", "tools/boottest.sh", "60", "Plan 9" });
-    boot_test.addArgs(qemu_args);
-    boot_test.addArgs(&.{ "-display", "none" });
-    addEsp(boot_test, esp);
-    b.step("test-boot", "Boot in headless QEMU and check the serial output").dependOn(&boot_test.step);
+    // Boot tests: each boots headless with its own plan9.ini and waits
+    // for a line on the serial console.
+    const test_boot = b.step("test-boot", "Boot in headless QEMU and check the serial output");
+    const BootTest = struct { ini: ?[]const u8, expect: []const u8 };
+    const boot_tests = [_]BootTest{
+        .{ .ini = null, .expect = "selftest ok" },
+        .{ .ini = "*selftest=fault\n", .expect = "panic: kernel fault: write addr=0x1234" },
+    };
+    for (boot_tests) |t| {
+        const bt = b.addSystemCommand(&.{ "sh", "tools/boottest.sh", "60", t.expect });
+        bt.addArgs(qemu_args);
+        bt.addArgs(&.{ "-display", "none" });
+        addEsp(b, bt, loader, kernel, t.ini);
+        test_boot.dependOn(&bt.step);
+    }
+
+    // Unit tests of the parts that do not need the machine, run on the host.
+    const unit = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/lib/fmt.zig"),
+        .target = b.graph.host,
+    }) });
+    b.step("test", "Run host unit tests").dependOn(&b.addRunArtifact(unit).step);
 }
 
-/// Give QEMU the directory as a FAT disk.
-fn addEsp(run: *std.Build.Step.Run, esp: *std.Build.Step.WriteFile) void {
+/// Give QEMU a FAT disk holding the loader, the kernel and, if given, a
+/// plan9.ini.  The directory lives in the build cache.
+fn addEsp(
+    b: *std.Build,
+    run: *std.Build.Step.Run,
+    loader: *std.Build.Step.Compile,
+    kernel: *std.Build.Step.Compile,
+    ini: ?[]const u8,
+) void {
+    const esp = b.addWriteFiles();
+    _ = esp.addCopyFile(loader.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
+    _ = esp.addCopyFile(kernel.getEmittedBin(), "planz");
+    if (ini) |text| _ = esp.add("plan9.ini", text);
     run.addArg("-drive");
     run.addPrefixedDirectoryArg("format=raw,file=fat:rw:", esp.getDirectory());
 }

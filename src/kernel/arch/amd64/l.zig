@@ -4,12 +4,17 @@
 //! DIFF: the protected-mode and long-mode bring-up (_protected, _warp64,
 //! _lme, _identity) is done by the UEFI loader; _start here corresponds
 //! to _start64v.  Leaf routines are inline assembly instead of TEXT
-//! blocks.
+//! blocks.  m and up are not kept in R15/R14 (see dat.zig), so the trap
+//! entry saves and restores those two like any other register.
 
+const std = @import("std");
 const mem = @import("mem.zig");
+const dat = @import("dat.zig");
 
-/// Stack for the bootstrap processor until it has a Mach.
-export var cpu0stack: [mem.MACHSIZE]u8 align(16) linksection(".bss") = undefined;
+/// Mach for the bootstrap processor.  The Mach structure is at the
+/// bottom and the processor's stack grows down from the top, as with
+/// CPU0MACH in the C kernel.
+pub export var mach0: [mem.MACHSIZE]u8 align(mem.BY2PG) linksection(".bss") = undefined;
 
 /// Kernel entry.  The loader arrives here in long mode on its own stack,
 /// with the kernel mapped at its link address, interrupts off, and the
@@ -18,7 +23,7 @@ pub fn _start() callconv(.naked) noreturn {
     asm volatile (
         \\ cli
         \\ cld
-        \\ leaq cpu0stack(%%rip), %%rsp
+        \\ leaq mach0(%%rip), %%rsp
         \\ addq %[size], %%rsp
         \\ xorl %%ebp, %%ebp
         \\ pushq $0            /* clear flags */
@@ -38,6 +43,26 @@ pub fn idle() noreturn {
         \\ sti
         \\ hlt
     );
+}
+
+// The CPUID instruction is always supported on the amd64.
+
+pub const Cpuid = struct { ax: u32, bx: u32, cx: u32, dx: u32 };
+
+pub fn cpuid(ax: u32, cx: u32) Cpuid {
+    var a: u32 = undefined;
+    var b: u32 = undefined;
+    var c: u32 = undefined;
+    var d: u32 = undefined;
+    asm volatile ("cpuid"
+        : [a] "={eax}" (a),
+          [b] "={ebx}" (b),
+          [c] "={ecx}" (c),
+          [d] "={edx}" (d),
+        : [ia] "{eax}" (ax),
+          [ic] "{ecx}" (cx),
+    );
+    return .{ .ax = a, .bx = b, .cx = c, .dx = d };
 }
 
 // Port I/O.
@@ -86,3 +111,309 @@ pub fn outl(port: u16, v: u32) void {
           [port] "{dx}" (port),
     );
 }
+
+// Descriptor tables.
+
+/// Operand of LGDT and LIDT.
+pub const Tableptr = extern struct {
+    _pad: [3]u16 = undefined,
+    lim: u16,
+    off: u64,
+};
+
+pub fn lgdt(lim: u16, off: usize) void {
+    const p: Tableptr = .{ .lim = lim, .off = off };
+    asm volatile ("lgdt (%[p])"
+        :
+        : [p] "r" (&p.lim),
+    );
+}
+
+pub fn lidt(lim: u16, off: usize) void {
+    const p: Tableptr = .{ .lim = lim, .off = off };
+    asm volatile ("lidt (%[p])"
+        :
+        : [p] "r" (&p.lim),
+    );
+}
+
+pub fn ltr(sel: u16) void {
+    asm volatile ("ltr %[sel]"
+        :
+        : [sel] "r" (sel),
+    );
+}
+
+/// Load CS with `cs` and clear the data segment registers, as
+/// _start64v does after loading its GDT.  Loading FS and GS clears
+/// their base registers on some processors, so GSbase must be set after
+/// this, not before.
+pub fn setsegs(cs: u16) void {
+    asm volatile (
+        \\ pushq %[cs]
+        \\ leaq 1f(%%rip), %%rax
+        \\ pushq %%rax
+        \\ lretq
+        \\1:
+        \\ xorl %%eax, %%eax
+        \\ movw %%ax, %%ds
+        \\ movw %%ax, %%es
+        \\ movw %%ax, %%fs
+        \\ movw %%ax, %%gs
+        \\ movw %%ax, %%ss
+        \\ lldt %%ax
+        :
+        : [cs] "r" (@as(u64, cs)),
+        : .{ .rax = true, .memory = true });
+}
+
+// Read/write various system registers.
+
+pub fn getcr0() u64 {
+    return asm volatile ("movq %%cr0, %[ret]"
+        : [ret] "=r" (-> u64),
+    );
+}
+
+pub fn putcr0(v: u64) void {
+    asm volatile ("movq %[v], %%cr0"
+        :
+        : [v] "r" (v),
+    );
+}
+
+/// #PF Linear Address
+pub fn getcr2() u64 {
+    return asm volatile ("movq %%cr2, %[ret]"
+        : [ret] "=r" (-> u64),
+    );
+}
+
+/// PML4 Base
+pub fn getcr3() u64 {
+    return asm volatile ("movq %%cr3, %[ret]"
+        : [ret] "=r" (-> u64),
+    );
+}
+
+pub fn putcr3(v: u64) void {
+    asm volatile ("movq %[v], %%cr3"
+        :
+        : [v] "r" (v),
+        : .{ .memory = true });
+}
+
+pub fn getcr4() u64 {
+    return asm volatile ("movq %%cr4, %[ret]"
+        : [ret] "=r" (-> u64),
+    );
+}
+
+pub fn putcr4(v: u64) void {
+    asm volatile ("movq %[v], %%cr4"
+        :
+        : [v] "r" (v),
+    );
+}
+
+/// Time stamp counter.
+pub fn cycles() u64 {
+    var lo: u32 = undefined;
+    var hi: u32 = undefined;
+    asm volatile ("rdtsc"
+        : [lo] "={eax}" (lo),
+          [hi] "={edx}" (hi),
+    );
+    return @as(u64, hi) << 32 | lo;
+}
+
+/// Model-Specific Register.
+/// DIFF: no trap fixup yet; reading an MSR the processor lacks faults.
+pub fn rdmsr(msr: u32) u64 {
+    var lo: u32 = undefined;
+    var hi: u32 = undefined;
+    asm volatile ("rdmsr"
+        : [lo] "={eax}" (lo),
+          [hi] "={edx}" (hi),
+        : [msr] "{ecx}" (msr),
+    );
+    return @as(u64, hi) << 32 | lo;
+}
+
+pub fn wrmsr(msr: u32, v: u64) void {
+    asm volatile ("wrmsr"
+        :
+        : [msr] "{ecx}" (msr),
+          [lo] "{eax}" (@as(u32, @truncate(v))),
+          [hi] "{edx}" (@as(u32, @truncate(v >> 32))),
+    );
+}
+
+pub fn invlpg(va: usize) void {
+    asm volatile ("invlpg (%[va])"
+        :
+        : [va] "r" (va),
+        : .{ .memory = true });
+}
+
+// Serialisation.
+
+pub fn mfence() void {
+    asm volatile ("mfence" ::: .{ .memory = true });
+}
+
+/// Make this processor's stores visible to the others before going on.
+pub fn coherence() void {
+    mfence();
+}
+
+// Interrupt priority.  splhi and splx return and take the flags
+// register; only the interrupt flag (0x200) matters.
+
+fn getflags() usize {
+    return asm volatile (
+        \\ pushfq
+        \\ popq %[ret]
+        : [ret] "=r" (-> usize),
+    );
+}
+
+pub fn splhi() usize {
+    const f = getflags();
+    if (f & 0x200 != 0) {
+        asm volatile ("cli");
+        dat.m().splpc = @returnAddress();
+    }
+    return f;
+}
+
+pub fn spllo() usize {
+    const f = getflags();
+    if (f & 0x200 == 0) {
+        dat.m().splpc = 0;
+        asm volatile ("sti");
+    }
+    return f;
+}
+
+pub fn splx(f: usize) void {
+    if (f & 0x200 != 0) _ = spllo() else _ = splhi();
+}
+
+pub fn islo() bool {
+    return getflags() & 0x200 != 0;
+}
+
+/// Wait for an interrupt.
+pub fn halt() void {
+    asm volatile (
+        \\ sti
+        \\ hlt
+    );
+}
+
+// Synchronisation
+
+pub fn tas(key: *u32) u32 {
+    return @atomicRmw(u32, key, .Xchg, 0xdeaddead, .seq_cst);
+}
+
+pub fn cas(addr: *u32, exp: u32, new: u32) bool {
+    return @cmpxchgStrong(u32, addr, exp, new, .seq_cst, .seq_cst) == null;
+}
+
+// Interrupt/exception handling.
+//
+// The processor has pushed SS, SP, flags, CS and PC, and for some
+// exceptions an error code.  Each vectortable entry is a CALL followed
+// by the vector number, so the return address the CALL pushes points at
+// that number: _strayintr and _strayintrx turn it into Ureg.type and go
+// on to push the rest of the Ureg.
+
+const vectors = blk: {
+    @setEvalBranchQuota(2_000_000);
+    var s: []const u8 =
+        \\ .text
+        \\ .balign 16
+        \\ .globl vectortable
+        \\vectortable:
+        \\
+    ;
+    for (0..256) |v| {
+        const stub = switch (v) {
+            // double fault, invalid TSS, segment not present, stack
+            // exception, general protection, page fault, alignment check
+            8, 10, 11, 12, 13, 14, 17 => "_strayintrx",
+            else => "_strayintr",
+        };
+        s = s ++ std.fmt.comptimePrint(" call {s}\n .byte {d}\n", .{ stub, v });
+    }
+    break :blk s;
+};
+
+comptime {
+    asm (vectors ++ std.fmt.comptimePrint(
+            \\
+            \\_strayintr:                     /* no error code pushed */
+            \\ pushq %rax                     /* save AX */
+            \\ movq 8(%rsp), %rax             /* vectortable PC */
+            \\ jmp _intrcommon
+            \\_strayintrx:                    /* error code pushed */
+            \\ xchgq %rax, (%rsp)
+            \\_intrcommon:
+            \\ movzbq (%rax), %rax
+            \\ xchgq %rax, (%rsp)
+            \\ subq $24, %rsp                 /* R1[45], [DEFG]S */
+            \\ movq %r14, 0(%rsp)
+            \\ movq %r15, 8(%rsp)
+            \\ cmpw ${[kesel]d}, 48(%rsp)     /* old CS */
+            \\ je 1f
+            \\ swapgs
+            \\1:
+            \\ pushq %r13
+            \\ pushq %r12
+            \\ pushq %r11
+            \\ pushq %r10
+            \\ pushq %r9
+            \\ pushq %r8
+            \\ pushq %rbp
+            \\ pushq %rdi
+            \\ pushq %rsi
+            \\ pushq %rdx
+            \\ pushq %rcx
+            \\ pushq %rbx
+            \\ pushq %rax
+            \\ movq %rsp, %rdi                /* Ureg* */
+            \\ xorl %ebp, %ebp
+            \\ pushq %rsp                     /* keeps the stack 16-byte aligned */
+            \\ cld
+            \\ call trap
+            \\ .globl noteret
+            \\noteret:
+            \\ popq %rax
+            \\ popq %rax
+            \\ popq %rbx
+            \\ popq %rcx
+            \\ popq %rdx
+            \\ popq %rsi
+            \\ popq %rdi
+            \\ popq %rbp
+            \\ popq %r8
+            \\ popq %r9
+            \\ popq %r10
+            \\ popq %r11
+            \\ popq %r12
+            \\ popq %r13
+            \\ movq 0(%rsp), %r14
+            \\ movq 8(%rsp), %r15
+            \\ cmpw ${[kesel]d}, 48(%rsp)
+            \\ je 1f
+            \\ swapgs
+            \\1:
+            \\ addq $40, %rsp
+            \\ iretq
+        , .{ .kesel = mem.KESEL }));
+}
+
+/// 256 six-byte entries; see trapinit0.
+pub extern const vectortable: [256 * 6]u8;

@@ -1,43 +1,88 @@
 //! Kernel console output.
-//! from 9/port/print.c and the print half of 9/port/devcons.c
+//! from the output half of 9/port/devcons.c (print, iprint, panic,
+//! putstrn0, kmesg)
 //!
-//! M0 placeholder: strings and numbers only.  The Plan 9 format verbs
-//! (print("%s %lud\n", ...)) arrive with lib/fmt in M1.
+//! DIFF: there is no console queue yet, so print writes straight to the
+//! registered consoles as iprint does; devcons adds the queue (M3).
 
-/// Set by the architecture once it has a console that can take output.
-pub var consputs: ?*const fn ([]const u8) void = null;
+const std = @import("std");
+const arch = @import("../arch.zig");
+const fmt = @import("fmt");
 
-pub fn puts(s: []const u8) void {
-    if (consputs) |f| f(s);
-}
+const PRINTSIZE = 256;
 
-pub fn hex(v: u64) void {
-    var buf: [18]u8 = undefined;
-    buf[0] = '0';
-    buf[1] = 'x';
-    for (0..16) |i| {
-        const nib: u8 = @truncate(v >> @intCast(60 - 4 * i));
-        buf[2 + i] = "0123456789abcdef"[nib & 0xf];
+/// A place console output goes: the serial port, the screen.
+pub const Consputs = *const fn ([]const u8) void;
+
+var consoles: [4]?Consputs = @splat(null);
+
+pub fn addconsole(f: Consputs) void {
+    for (&consoles) |*c| {
+        if (c.* == null) {
+            c.* = f;
+            return;
+        }
     }
-    puts(&buf);
 }
 
-pub fn dec(v: u64) void {
-    var buf: [20]u8 = undefined;
-    var i: usize = buf.len;
-    var n = v;
-    while (true) {
-        i -= 1;
-        buf[i] = '0' + @as(u8, @intCast(n % 10));
-        n /= 10;
-        if (n == 0) break;
+/// The kernel message buffer behind /dev/kmesg: the last output, kept so
+/// it can be read after the screen has scrolled.
+pub var kmesg: struct {
+    buf: [16384]u8 = undefined,
+    n: usize = 0,
+} = .{};
+
+fn kmesgputs(s: []const u8) void {
+    const b = &kmesg.buf;
+    // take the tail of huge writes
+    const str = if (s.len > b.len) s[s.len - b.len ..] else s;
+    // slide the buffer down to make room
+    if (kmesg.n + str.len > b.len) {
+        const d = kmesg.n + str.len - b.len;
+        std.mem.copyForwards(u8, b[0 .. kmesg.n - d], b[d..kmesg.n]);
+        kmesg.n -= d;
     }
-    puts(buf[i..]);
+    @memcpy(b[kmesg.n..][0..str.len], str);
+    kmesg.n += str.len;
 }
 
-pub fn panic(msg: []const u8) noreturn {
-    puts("panic: ");
-    puts(msg);
-    puts("\n");
+/// Print a string on the console.
+pub fn putstrn(s: []const u8) void {
+    if (s.len == 0) return;
+    kmesgputs(s);
+    for (consoles) |c| {
+        if (c) |f| f(s);
+    }
+}
+
+fn flush(f: *fmt.Fmt) void {
+    putstrn(f.buf[0..f.n]);
+    f.n = 0;
+}
+
+pub fn print(comptime format: []const u8, args: anytype) void {
+    var buf: [PRINTSIZE]u8 = undefined;
+    var f: fmt.Fmt = .{ .buf = &buf, .flush = flush };
+    fmt.fmtprint(&f, format, args);
+    flush(&f);
+}
+
+/// Print from interrupt level.
+pub fn iprint(comptime format: []const u8, args: anytype) void {
+    const s = arch.splhi();
+    print(format, args);
+    arch.splx(s);
+}
+
+var panicking: bool = false;
+
+pub fn panic(comptime format: []const u8, args: anytype) noreturn {
+    _ = arch.splhi();
+    // A panic while panicking would only bury the first message.
+    if (!panicking) {
+        panicking = true;
+        print("panic: " ++ format ++ "\n", args);
+        arch.dumpstack();
+    }
     while (true) asm volatile ("hlt");
 }
