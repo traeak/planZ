@@ -20,6 +20,9 @@ const proc = @import("../../port/proc.zig");
 const portclock = @import("../../port/portclock.zig");
 const alarm = @import("../../port/alarm.zig");
 const selftest = @import("../../port/selftest.zig");
+const devmod = @import("../../port/dev.zig");
+const chan = @import("../../port/chan.zig");
+const conf_pc64 = @import("../../conf/pc64.zig");
 const fpu = @import("fpu.zig");
 const Uart16550 = @import("../../drv/uart16550.zig").Uart16550;
 
@@ -173,9 +176,11 @@ pub fn main(bipa: u64) callconv(.c) noreturn {
     apic.clockenable();
 
     proc.procinit0();
+    devmod.devtab = &conf_pc64.devtab;
+    chan.chandevreset();
 
-    // DIFF: this is as far as the kernel goes for now; chandevreset,
-    // pageinit and userinit follow in later milestones.  In their place
+    // DIFF: this is as far as the kernel goes for now; pageinit and
+    // userinit follow in later milestones.  In their place
     // the first processes are the alarm process, which userinit's init0
     // starts in the C, and the self-test.
     proc.kproc("alarm", alarm.alarmkproc, null);

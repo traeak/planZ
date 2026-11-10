@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
     const memory = b.option([]const u8, "mem", "QEMU memory size (default 512M)") orelse "512M";
 
     const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
+    const fcall = b.createModule(.{ .root_source_file = b.path("src/lib/fcall.zig") });
     const bootinfo = b.createModule(.{ .root_source_file = b.path("src/boot/bootinfo.zig") });
 
     // The kernel: freestanding, no floating point or vector registers
@@ -47,6 +48,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "bootinfo", .module = bootinfo },
                 .{ .name = "fmt", .module = fmt },
+                .{ .name = "fcall", .module = fcall },
             },
         }),
         .use_llvm = true,
@@ -127,6 +129,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "bootinfo", .module = bootinfo },
                     .{ .name = "fmt", .module = fmt },
+                    .{ .name = "fcall", .module = fcall },
                 },
             }),
         });
@@ -134,11 +137,14 @@ pub fn build(b: *std.Build) void {
     }
 
     // Unit tests of the parts that do not need the machine, run on the host.
-    const unit = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/lib/fmt.zig"),
-        .target = b.graph.host,
-    }) });
-    b.step("test", "Run host unit tests").dependOn(&b.addRunArtifact(unit).step);
+    const test_step = b.step("test", "Run host unit tests");
+    for ([_][]const u8{ "src/lib/fmt.zig", "src/lib/fcall.zig", "src/kernel/port/lib.zig" }) |file| {
+        const unit = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path(file),
+            .target = b.graph.host,
+        }) });
+        test_step.dependOn(&b.addRunArtifact(unit).step);
+    }
 }
 
 /// Give QEMU a FAT disk holding the loader, the kernel and, if given, a

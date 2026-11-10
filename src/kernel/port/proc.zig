@@ -31,6 +31,8 @@ const ql = @import("qlock.zig");
 const alloc = @import("alloc.zig");
 const xalloc = @import("xalloc.zig");
 const portclock = @import("portclock.zig");
+const chanmod = @import("chan.zig");
+const pgrpmod = @import("pgrp.zig");
 const errmod = @import("error.zig");
 const fmt = @import("fmt");
 const p9 = @import("print.zig");
@@ -751,7 +753,9 @@ pub fn sleep(r: *Rendez, f: *const fn (?*anyopaque) bool, arg: ?*anyopaque) Erro
 /// What the C does by calling error(Eintr): returns the error for the
 /// caller to return.
 pub fn interrupted() Error {
-    // M3: if(up->procctl == Proc_exitme && up->closingfgrp != nil) forceclosefgrp();
+    const up = cur();
+    if (up.procctl == portdat.Proc_exitme and up.closingfgrp != null)
+        pgrpmod.forceclosefgrp();
     return error.Eintr;
 }
 
@@ -1026,9 +1030,11 @@ pub fn pexit(exitstr_: ?[]const u8, freemem: bool) noreturn {
     up.dot = null;
     ql.qunlock(&up.debug);
 
-    // M3: closefgrp, closeegrp, closergrp, cclose(dot), closepgrp.
-    if (fgrp != null or egrp != null or rgrp != null or dot != null or pgrp != null)
-        panic("pexit: process has resources this kernel cannot release yet", .{});
+    if (fgrp) |x| pgrpmod.closefgrp(x);
+    if (egrp) |x| @import("devenv.zig").closeegrp(x);
+    if (rgrp) |x| pgrpmod.closergrp(x);
+    if (dot) |x| chanmod.cclose(x);
+    if (pgrp) |x| pgrpmod.closepgrp(x);
 
     if (up.parentpid == 0) {
         if (exitstr == null)
@@ -1188,6 +1194,9 @@ pub fn procdump() void {
     }
 }
 
+/// The name space kernel processes share.
+var kpgrp: ?*portdat.Pgrp = null;
+
 /// First code a kernel process runs.
 fn linkproc() callconv(.c) noreturn {
     _ = arch.spllo();
@@ -1206,10 +1215,14 @@ pub fn kproc(name: []const u8, func: *const fn (?*anyopaque) void, arg: ?*anyopa
     };
 
     ql.qlock(&p.debug);
-    // M3: inherit slash and dot from up, and share the kernel
-    // processes' namespace (kpgrp).
-    p.slash = null;
-    p.dot = null;
+    if (arch.up()) |up| {
+        p.slash = up.slash;
+        p.dot = up.slash; // unlike fork, do not inherit the dot for kprocs
+        if (p.dot) |d| _ = portdat.incref(&d.ref);
+    } else {
+        p.slash = null;
+        p.dot = null;
+    }
 
     p.nnote = 0;
     p.notify = 0;
@@ -1233,6 +1246,11 @@ pub fn kproc(name: []const u8, func: *const fn (?*anyopaque) void, arg: ?*anyopa
     p.nargs = 0;
     p.setargs = false;
 
+    if (kpgrp == null)
+        kpgrp = pgrpmod.newpgrp() catch panic("kproc: no memory for the kernel name space", .{});
+    p.pgrp = kpgrp;
+    _ = portdat.incref(&kpgrp.?.ref);
+
     p.insyscall = 1;
     p.time = @splat(0);
     p.time[portdat.TReal] = arch.MACHP(0).ticks;
@@ -1246,6 +1264,27 @@ pub fn kproc(name: []const u8, func: *const fn (?*anyopaque) void, arg: ?*anyopa
     procpriority(p, portdat.PriKproc, false);
 
     ready(p);
+}
+
+/// The text of an error: for error.Str, what is in up.errstr.
+pub fn errtext(e: Error) []const u8 {
+    if (e == error.Str) return std.mem.sliceTo(cur().errstr, 0);
+    return errmod.errstr(e);
+}
+
+/// Make up.errstr hold the text of `e`, for code that reports an error
+/// later than it happens (what kstrcpy(up->errstr, Estr, ERRMAX) does).
+pub fn seterror(e: Error) void {
+    if (e != error.Str) kstrcpy(cur().errstr, errmod.errstr(e));
+}
+
+/// Exchange up.errstr and up.syserrstr.  Used to keep one error's text
+/// while something that may set another one runs.
+pub fn swaperr() void {
+    const up = cur();
+    const t = up.errstr;
+    up.errstr = up.syserrstr;
+    up.syserrstr = t;
 }
 
 /// Set up.errstr from a format and return the error that says to look

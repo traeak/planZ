@@ -176,9 +176,22 @@ pub fn smalloc(size: usize) [*]u8 {
         panic("smalloc: out of memory, %lud bytes, pc %#p", .{ size, @returnAddress() });
 }
 
-pub fn free(v: ?*anyopaque) void {
-    const p = @intFromPtr(v orelse return);
-    const h = hdrof(p, @returnAddress());
+/// Free what malloc returned.  Takes any pointer to it, a slice of it,
+/// or null.
+pub fn free(v: anytype) void {
+    const T = @TypeOf(v);
+    const addr: usize = switch (@typeInfo(T)) {
+        .pointer => |pi| if (pi.size == .slice) @intFromPtr(v.ptr) else @intFromPtr(v),
+        .optional => if (v) |x| @intFromPtr(x) else 0,
+        .null => 0,
+        else => @compileError("free: not a pointer: " ++ @typeName(T)),
+    };
+    free0(addr, @returnAddress());
+}
+
+fn free0(p: usize, pc: usize) void {
+    if (p == 0) return;
+    const h = hdrof(p, pc);
     const bin = h.bin;
 
     taslock.ilock(&arena.lock);
@@ -212,11 +225,11 @@ pub fn realloc(v: ?*anyopaque, size: usize) ?[*]u8 {
         h.size = size;
         return @ptrFromInt(p);
     }
-    const new = malloc(size) orelse return null;
+    const nw = malloc(size) orelse return null;
     const n = @min(have, size);
-    @memcpy(new[0..n], bytes(p, n));
+    @memcpy(nw[0..n], bytes(p, n));
     free(old);
-    return new;
+    return nw;
 }
 
 /// Memory for secrets: zeroed when freed.
@@ -236,4 +249,31 @@ pub fn secfree(v: ?*anyopaque) void {
 /// Bytes obtained from xalloc and bytes in allocated blocks, for /dev/swap.
 pub fn mallocstats() struct { cursize: usize, curalloc: usize } {
     return .{ .cursize = arena.cursize, .curalloc = arena.curalloc };
+}
+
+/// Zeroed memory for one T, or null.  The caller initialises it:
+/// zeroes are not necessarily T's defaults.
+pub fn new(comptime T: type) ?*T {
+    comptime std.debug.assert(@alignOf(T) <= hdrsize);
+    return @ptrCast(@alignCast(malloc(@sizeOf(T)) orelse return null));
+}
+
+/// As `new`, with smalloc.
+pub fn snew(comptime T: type) *T {
+    comptime std.debug.assert(@alignOf(T) <= hdrsize);
+    return @ptrCast(@alignCast(smalloc(@sizeOf(T))));
+}
+
+/// Zeroed memory for n Ts, or null.
+pub fn newslice(comptime T: type, n: usize) ?[]T {
+    comptime std.debug.assert(@alignOf(T) <= hdrsize);
+    const p: [*]T = @ptrCast(@alignCast(malloc(n * @sizeOf(T)) orelse return null));
+    return p[0..n];
+}
+
+/// As `newslice`, with smalloc.
+pub fn snewslice(comptime T: type, n: usize) []T {
+    comptime std.debug.assert(@alignOf(T) <= hdrsize);
+    const p: [*]T = @ptrCast(@alignCast(smalloc(n * @sizeOf(T))));
+    return p[0..n];
 }

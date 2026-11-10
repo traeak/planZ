@@ -11,7 +11,7 @@
 //! matters: without it a negative value prints with a minus sign, with it
 //! the value prints as the unsigned number of the same width.
 //!
-//! Verbs: d x X o b (integers), c (rune), s (string), q (quoted string),
+//! Verbs: d x X o b (integers), c and C (rune), s (string), q (quoted string),
 //! p (address), r (current error string), % (literal).
 //! Flags: - + # space , 0, width and .precision, either may be `*`.
 //!
@@ -248,7 +248,7 @@ fn verb(f: *Fmt, comptime r: u8, arg: anytype) void {
             f.r = 'x';
             ifmt(f, 'x', if (@typeInfo(T) == .optional) @intFromPtr(arg) else arg);
         },
-        'c' => {
+        'c', 'C' => {
             var buf: [4]u8 = undefined;
             const c: u21 = @intCast(arg);
             const n = std.unicode.utf8Encode(c, &buf) catch blk: {
@@ -283,10 +283,11 @@ fn sfmt(f: *Fmt, s: []const u8) void {
 }
 
 /// %q: quote the string rc-style if it is empty or has white space or
-/// quotes in it.
+/// quotes in it; %#q: always.
 fn qfmt(f: *Fmt, full: []const u8) void {
     const s = if (f.flags.prec) runeprefix(full, f.prec) else full;
-    var quote = s.len == 0;
+    // %#q always quotes.
+    var quote = s.len == 0 or f.flags.sharp;
     var nq: usize = 0;
     for (s) |c| {
         if (c <= ' ' or c == '\'') quote = true;
@@ -466,6 +467,7 @@ test "quoting" {
     try expect("''", "%q", .{""});
     try expect("'two words'", "%q", .{"two words"});
     try expect("'it''s'", "%q", .{"it's"});
+    try expect("'plain'", "%#q", .{"plain"});
 }
 
 test "custom verb and flush" {

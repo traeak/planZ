@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const arch = @import("../arch.zig");
+const fcall = @import("fcall");
 
 const Mach = arch.Mach;
 const Label = arch.Label;
@@ -188,12 +189,166 @@ pub const nostr: []u8 = nostrbuf[0..0];
 
 // Not ported yet.
 pub const Segment = opaque {};
-pub const Pgrp = opaque {};
-pub const Egrp = opaque {};
-pub const Fgrp = opaque {};
-pub const Rgrp = opaque {};
-pub const Chan = opaque {};
 pub const Watchpt = opaque {};
+pub const Mntcache = opaque {};
+pub const Mnt = opaque {};
+
+pub const Qid = fcall.Qid;
+pub const Dir = fcall.Dir;
+
+// Access types in namec
+pub const Aaccess = 0; // as in stat, wstat
+pub const Abind = 1; // for left-hand-side of bind
+pub const Atodir = 2; // as in chdir
+pub const Aopen = 3; // for i/o
+pub const Amount = 4; // to be mounted or mounted upon
+pub const Acreate = 5; // is to be created
+pub const Aremove = 6; // will be removed by caller
+pub const Aunmount = 7; // unmount arg[0]
+
+// channel flags
+pub const COPEN = 0x0001; // for i/o
+pub const CMSG = 0x0002; // the message channel for a mount
+pub const CCEXEC = 0x0008; // close on exec (per file descriptor)
+pub const CFREE = 0x0010; // not in use
+pub const CRCLOSE = 0x0020; // remove on close
+pub const CCACHE = 0x0080; // client cache
+
+pub const Chan = struct {
+    ref: Ref = .{},
+    lock: Lock = .{},
+    next: ?*Chan = null, // allocation
+    link: ?*Chan = null,
+    offset: i64 = 0, // in fd
+    devoffset: i64 = 0, // in underlying device; see read
+    type: u16 = 0,
+    dev: u32 = 0,
+    mode: u16 = 0, // read/write
+    flag: u16 = 0,
+    qid: Qid = .{},
+    fid: i32 = 0, // for devmnt
+    iounit: u32 = 0, // chunk size for i/o; 0==default
+    umh: ?*Mhead = null, // mount point that derived Chan; used in unionread
+    umc: ?*Chan = null, // channel in union; held for union read
+    umqlock: QLock = .{}, // serialize unionreads
+    uri: i32 = 0, // union read index
+    dri: i32 = 0, // devdirread index
+    dirrock: ?[]u8 = null, // directory entry rock for translations
+    nrock: usize = 0,
+    rockqlock: QLock = .{},
+    ismtpt: bool = false,
+    mcp: ?*Mntcache = null, // Mount cache pointer
+    mux: ?*Mnt = null, // Mnt for clients using me for messages
+    aux: ?*anyopaque = null,
+    mid: u32 = 0, // for ns in devproc (shares storage with aux in the C)
+    mchan: ?*Chan = null, // channel to mounted server
+    mqid: Qid = .{}, // qid of root of mount point
+    path: ?*Path = null,
+    srvname: ?[]u8 = null, // /srv/name when posted
+};
+
+pub const Path = struct {
+    ref: Ref = .{},
+    /// The name; `s[0..len]` is in use.  DIFF: not NUL-terminated.
+    s: []u8 = &.{},
+    mtpt: []?*Chan = &.{}, // mtpt history; mtpt[0..mlen] is in use
+    len: usize = 0, // strlen(s)
+    mlen: usize = 0, // number of path elements
+
+    pub fn str(p: *const Path) []const u8 {
+        return p.s[0..p.len];
+    }
+};
+
+/// Result of a device walk.
+/// DIFF: room for the most names one walk can carry, where the C
+/// allocates exactly as many qids as names.
+pub const Walkqid = struct {
+    clone: ?*Chan = null,
+    nqid: usize = 0,
+    qid: [fcall.MAXWELEM]Qid = undefined,
+};
+
+pub const Mount = struct {
+    order: ?*Mount = null, // Pgrp.mntorder chain
+    norder: ?*Mount = null, // forward pointer for pgrpcpy()
+    next: ?*Mount = null, // Mhead.mount chain
+    umh: ?*Mhead = null, // the union we belong to
+    to: *Chan, // channel replacing channel
+    mflag: u32 = 0,
+    /// Stored after the Mount in the same allocation.
+    spec: []u8 = &.{},
+};
+
+pub const Mhead = struct {
+    ref: Ref = .{},
+    lock: RWLock = .{},
+    from: *Chan, // channel mounted upon
+    mount: ?*Mount = null, // what's mounted upon it
+    hash: ?*Mhead = null, // Hash chain
+};
+
+pub const RENDLOG = 5;
+pub const RENDHASH = 1 << RENDLOG; // Hash to lookup rendezvous tags
+pub const MNTLOG = 5;
+pub const MNTHASH = 1 << MNTLOG; // Hash to walk mount table
+
+pub const Pgrp = struct {
+    ref: Ref = .{},
+    ns: RWLock = .{}, // Namespace n read/one write lock
+    devmask: [256 / 8]u8 = @splat(0), // Room for 256 devices
+    mntorder: ?*Mount = null, // Ordered list of mounts
+    mntordertail: *?*Mount = undefined,
+    mnthash: [MNTHASH]?*Mhead = @splat(null),
+
+    /// MOUNTH in the C: the hash chain for a qid.
+    pub fn mounth(pg: *Pgrp, qid: Qid) *?*Mhead {
+        return &pg.mnthash[@intCast(qid.path & (MNTHASH - 1))];
+    }
+};
+
+pub const Rgrp = struct {
+    ref: Ref = .{},
+    lock: Lock = .{},
+    rendhash: [RENDHASH]?*Proc = @splat(null), // Rendezvous tag hash
+};
+
+pub const DELTAFD = 20; // incremental increase in Fgrp.fd's
+
+pub const Fgrp = struct {
+    ref: Ref = .{},
+    lock: Lock = .{},
+    /// fd.len is nfd in the C.
+    fd: []?*Chan = &.{},
+    flag: []u8 = &.{}, // per file-descriptor flags (CCEXEC)
+    maxfd: i32 = 0, // highest fd in use
+    exceed: i32 = 0, // debugging
+};
+
+pub const ENVLOG = 5;
+pub const ENVHASH = 1 << ENVLOG; // Egrp hash for variable lookup
+
+pub const Evalue = struct {
+    value: []u8 = &.{},
+    vers: u32 = 0,
+    path: u64 = 0, // qid.path: Egrp.path << 32 | index (of Egrp.ent[])
+    hash: ?*Evalue = null,
+    /// Stored after the Evalue in the same allocation.
+    name: []u8 = &.{},
+};
+
+pub const Egrp = struct {
+    ref: Ref = .{},
+    lock: RWLock = .{},
+    ent: []?*Evalue = &.{}, // ent.len is the number of slots
+    low: usize = 0, // lowest free index in ent[]
+    alloc: usize = 0, // bytes allocated for env
+    path: u32 = 0, // generator for qid path
+    vers: u32 = 0, // of Egrp
+    hash: [ENVHASH]?*Evalue = @splat(null), // hashtable for name lookup
+};
+
+pub const DEVDOTDOT = -1;
 
 pub const Proc = struct {
     sched: Label = .{}, // known to the context switch

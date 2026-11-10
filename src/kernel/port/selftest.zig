@@ -17,6 +17,12 @@ const alloc = @import("alloc.zig");
 const proc = @import("proc.zig");
 const tod = @import("tod.zig");
 const alarm = @import("alarm.zig");
+const fcall = @import("fcall");
+const lib = @import("lib.zig");
+const chan = @import("chan.zig");
+const devmod = @import("dev.zig");
+const pgrp = @import("pgrp.zig");
+const devenv = @import("devenv.zig");
 const p9 = @import("print.zig");
 
 const print = p9.print;
@@ -34,6 +40,7 @@ pub fn selftest(_: ?*anyopaque) void {
 
     malloctest();
     sleeptest();
+    nstest() catch |err| panic("selftest: name space: %s", .{proc.errtext(err)});
     schedtest();
 
     if (arch.getconf("*selftest")) |t| {
@@ -112,6 +119,230 @@ fn sleeptest() void {
         panic("selftest: tsleep(250) took %lldms", .{ms});
     if (ticks < mem.HZ / 4 - 2 or ticks > mem.HZ / 4 + 5)
         panic("selftest: %lud clock ticks in 250ms", .{ticks});
+}
+
+// The name space test: what init does first, done from inside the
+// kernel.  There are no system calls yet, so these helpers stand in
+// for the ones in sysfile.c.
+
+const Chan = portdat.Chan;
+const Error = proc.Error;
+
+fn dev(c: *Chan) *const devmod.Dev {
+    return devmod.devtab[c.type];
+}
+
+/// bind(2): from sysfile.c:/^bindmount without the mount half.
+fn bind(new: []const u8, old: []const u8, flag: u32) Error!void {
+    const c0 = try chan.namec(new, portdat.Abind, 0, 0);
+    defer chan.cclose(c0);
+    const c1 = try chan.namec(old, portdat.Amount, 0, 0);
+    defer chan.cclose(c1);
+    try chan.cmount(c0, c1, flag, "");
+}
+
+fn open(name: []const u8, omode: u32) Error!*Chan {
+    return chan.namec(name, portdat.Aopen, omode, 0);
+}
+
+/// Read a whole small file into buf.
+fn readfile(name: []const u8, buf: []u8) Error![]u8 {
+    const c = try open(name, lib.OREAD);
+    defer chan.cclose(c);
+    var n: usize = 0;
+    while (n < buf.len) {
+        const k = try dev(c).read(c, buf[n..], @intCast(n));
+        if (k == 0) break;
+        n += k;
+    }
+    return buf[0..n];
+}
+
+fn writefile(name: []const u8, data: []const u8) Error!void {
+    const c = try open(name, lib.OWRITE);
+    defer chan.cclose(c);
+    const n = try dev(c).write(c, data, 0);
+    if (n != data.len) panic("selftest: short write to %s", .{name});
+}
+
+/// Whether the directory has an entry of that name.
+fn hasentry(dirname: []const u8, want: []const u8) Error!bool {
+    const S = struct {
+        var buf: [2048]u8 = undefined;
+        var strs: [256]u8 = undefined;
+    };
+    const c = try open(dirname, lib.OREAD);
+    defer chan.cclose(c);
+    var found = false;
+    while (true) {
+        const n = try dev(c).read(c, &S.buf, c.offset);
+        if (n == 0) break;
+        c.offset += @intCast(n);
+        var i: usize = 0;
+        while (i + fcall.BIT16SZ <= n) {
+            const m = fcall.BIT16SZ + fcall.GBIT16(&S.buf, i);
+            var d: portdat.Dir = .{};
+            if (i + m > n or fcall.convM2D(S.buf[i..][0..m], &d, &S.strs) == 0)
+                panic("selftest: bad directory entry in %s", .{dirname});
+            if (std.mem.eql(u8, d.name, want)) found = true;
+            i += m;
+        }
+    }
+    return found;
+}
+
+/// The error text a failing namec leaves.
+fn nameerror(name: []const u8, amode: u32) []const u8 {
+    if (chan.namec(name, amode, lib.OREAD, 0)) |c| {
+        chan.cclose(c);
+        return "";
+    } else |err| return proc.errtext(err);
+}
+
+fn expecterr(name: []const u8, amode: u32, want: []const u8) void {
+    const got = nameerror(name, amode);
+    if (!std.mem.eql(u8, got, want))
+        panic("selftest: namec %s: got error \"%s\", expected \"%s\"", .{ name, got, want });
+}
+
+var pipetest: struct {
+    c: ?*Chan = null,
+    r: Rendez = .{},
+    got: usize = 0,
+    buf: [64]u8 = undefined,
+    done: bool = false,
+} = .{};
+
+fn piped(_: ?*anyopaque) bool {
+    return pipetest.done;
+}
+
+/// Blocks in read until the other end is written.
+fn pipereader(_: ?*anyopaque) void {
+    const c = pipetest.c.?;
+    pipetest.got = dev(c).read(c, &pipetest.buf, 0) catch 0;
+    pipetest.done = true;
+    _ = proc.wakeup(&pipetest.r);
+    proc.pexit("", true);
+}
+
+fn nstest() Error!void {
+    const up = arch.up().?;
+    var buf: [256]u8 = undefined;
+
+    // What proc0 does in 9/port/userinit.c: a name space, environment
+    // and file descriptor group of our own, rooted at #/.
+    const oldpg = up.pgrp;
+    up.pgrp = try pgrp.newpgrp();
+    if (oldpg) |pg| pgrp.closepgrp(pg);
+    up.egrp = try devenv.newegrp();
+    up.fgrp = try pgrp.dupfgrp(null);
+    up.rgrp = try pgrp.newrgrp();
+
+    // These are o.k. because rootinit is null.
+    // Then early kproc's will have a root and dot.
+    up.slash = try chan.namec("#/", portdat.Atodir, 0, 0);
+    chan.pathclose(up.slash.?.path);
+    up.slash.?.path = chan.newpath("/");
+    up.dot = try chan.cclone(up.slash.?);
+
+    // init0
+    chan.chandevinit();
+
+    // The root device has the directories to mount things on.
+    for ([_][]const u8{ "dev", "env", "fd", "srv", "proc", "boot" }) |name| {
+        if (!try hasentry("/", name)) panic("selftest: no /%s in the root", .{name});
+    }
+
+    // What 9/port/initcode.c does before it execs /boot/boot.
+    try bind("#c", "/dev", lib.MAFTER);
+    try bind("#d", "/fd", lib.MREPL);
+    try bind("#e", "/env", lib.MREPL | lib.MCREATE);
+    try bind("#s", "/srv", lib.MREPL | lib.MCREATE);
+
+    try writefile("/dev/cons", "selftest: hello from /dev/cons\n");
+
+    // Through the union at /dev, relative to dot, and back out again.
+    // (Reading the union directory /dev itself needs unionread, which is
+    // part of the read system call; list the device instead.)
+    if (!try hasentry("#c", "cons") or !try hasentry("#c", "time"))
+        panic("selftest: #c lacks cons or time", .{});
+    const c = try chan.namec("dev/../dev/./cons", portdat.Aaccess, 0, 0);
+    if (!std.mem.eql(u8, chan.chanpath(c), "/dev/cons"))
+        panic("selftest: path of dev/../dev/./cons is %s", .{chan.chanpath(c)});
+    chan.cclose(c);
+    const dd = try chan.namec("/dev/..", portdat.Atodir, 0, 0);
+    if (!std.mem.eql(u8, chan.chanpath(dd), "/"))
+        panic("selftest: path of /dev/.. is %s", .{chan.chanpath(dd)});
+    chan.cclose(dd);
+
+    // Files programs parse.
+    const t = try readfile("/dev/time", &buf);
+    if (t.len < 4 * portdat.NUMSIZE) panic("selftest: /dev/time is \"%s\"", .{t});
+    if ((try readfile("/dev/null", &buf)).len != 0) panic("selftest: /dev/null has contents", .{});
+    const pid = try readfile("/dev/pid", &buf);
+    const want = std.fmt.parseInt(u32, std.mem.trim(u8, pid, " "), 10) catch 0;
+    if (want != up.pid) panic("selftest: /dev/pid says \"%s\", pid is %ud", .{ pid, up.pid });
+
+    // Errors carry the name, as user programs print them.
+    expecterr("/nosuch/file", portdat.Aopen, "file does not exist: '/nosuch'");
+    expecterr("/dev/cons/x", portdat.Aopen, "not a directory: '/dev/cons'");
+    expecterr("#Z", portdat.Aopen, "unknown device in # filename");
+    expecterr("/dev/bad\x01name", portdat.Aopen, "bad character in file name: '/dev/bad\x01name'");
+
+    // The environment: create, write, read back, remove.
+    const e = try chan.namec("/env/planz", portdat.Acreate, lib.OWRITE, 0o666);
+    _ = try dev(e).write(e, "nine", 0);
+    chan.cclose(e);
+    if (!std.mem.eql(u8, try readfile("/env/planz", &buf), "nine"))
+        panic("selftest: /env/planz did not read back", .{});
+    try devenv.ksetenv("cputype", "amd64", false);
+    if (!std.mem.eql(u8, try readfile("#e/cputype", &buf), "amd64"))
+        panic("selftest: ksetenv", .{});
+    const rm = try chan.namec("/env/planz", portdat.Aremove, 0, 0);
+    try dev(rm).remove(rm);
+    chan.cclose(rm);
+    expecterr("/env/planz", portdat.Aopen, "file does not exist: '/env/planz'");
+
+    // A pipe, as syspipe makes one: both ends from one attach.  The
+    // reader is another process, asleep in read when the write arrives.
+    const p = try chan.namec("#|", portdat.Atodir, 0, 0);
+    var p0 = try chan.cclone(p);
+    try chan.walk(&p0, &.{"data"}, true, null);
+    var p1 = try chan.cclone(p);
+    try chan.walk(&p1, &.{"data1"}, true, null);
+    chan.cclose(p);
+    p0 = try dev(p0).open(p0, lib.ORDWR);
+    p1 = try dev(p1).open(p1, lib.ORDWR);
+    pipetest.c = p1;
+    proc.kproc("pipereader", pipereader, null);
+    pause(20);
+    const msg = "through the pipe";
+    if (try dev(p0).write(p0, msg, 0) != msg.len) panic("selftest: short pipe write", .{});
+    while (!pipetest.done) mustsleep(&pipetest.r, piped, null);
+    if (!std.mem.eql(u8, pipetest.buf[0..pipetest.got], msg))
+        panic("selftest: pipe delivered \"%s\"", .{pipetest.buf[0..pipetest.got]});
+    // With one end closed, the other reads end of file.
+    chan.cclose(p0);
+    if (try dev(p1).read(p1, &buf, 0) != 0) panic("selftest: no EOF on a closed pipe", .{});
+    chan.cclose(p1);
+
+    // A copy of the name space is independent of the original.
+    const copy = try pgrp.newpgrp();
+    try pgrp.pgrpcpy(copy, up.pgrp.?, pgrp.RFNAMEG);
+    const mine = up.pgrp.?;
+    const und = try chan.namec("/env", portdat.Amount, 0, 0);
+    try chan.cunmount(und, null);
+    chan.cclose(und);
+    expecterr("/env/cputype", portdat.Aopen, "file does not exist: '/env/cputype'");
+    up.pgrp = copy;
+    if (!std.mem.eql(u8, try readfile("/env/cputype", &buf), "amd64"))
+        panic("selftest: copied name space lost /env", .{});
+    up.pgrp = mine;
+    pgrp.closepgrp(copy);
+    try bind("#e", "/env", lib.MREPL | lib.MCREATE);
+
+    print("selftest: name space ok\n", .{});
 }
 
 // The scheduling test: kernel processes that block on each other in
@@ -472,12 +703,14 @@ fn schedtest() void {
     while (proc.proctab(slots_used)) |p| : (slots_used += 1) {
         if (p.state != .Dead) alive += 1;
     }
-    // alarm, selftest, and the 16 workers at once plus one child.
-    if (slots_used > 24)
+    // alarm, selftest, closeproc, the pipe reader, and the 16 workers at
+    // once plus one child.
+    if (slots_used > 26)
         panic("selftest: %ud process slots used; exited processes are not being reused", .{slots_used});
-    if (alive != 2) {
+    // alarm, selftest and closeproc.
+    if (alive != 3) {
         proc.procdump();
-        panic("selftest: %ud processes left, expected 2", .{alive});
+        panic("selftest: %ud processes left, expected 3", .{alive});
     }
     if (arch.up().?.pid != pid0) panic("selftest: pid changed", .{});
 }

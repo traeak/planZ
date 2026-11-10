@@ -194,9 +194,25 @@ The user's test machine: AMD Ryzen 5 5500 (Zen 3), 32GB RAM, Radeon RX 6500 XT. 
 
 | Milestone | State |
 |---|---|
+| M3 | done: `chan`, `dev`, `pgrp`, `qio`, `allocb`, `parse`, 9P marshalling (`lib/fcall.zig`), and devices root, cons, env, pipe, srv, dup. The boot self-test binds `#c #d #e #s`, writes `/dev/cons`, checks error text, uses `/env`, round-trips a pipe and copies a name space |
 | M2 | done: kernel processes sleep, wake, queue on locks, get preempted, take notes and alarms, exit and are reused; the scheduling self-test ran for 60s. Not done: rendezvous, which is a system call and moves to M4 |
 | M1 | done: `zig build test` (host) and `zig build test-boot` (two boots: clean self-test, deliberate fault) pass on `SandyBridge`, `Opteron_G4` and `max`, in safe and debug builds |
 | M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=SandyBridge` (default), `Opteron_G4` and `max` |
+
+Notes from M3 for later milestones:
+
+- **Device interface** (`port/dev.zig`): entries return Zig errors; `walk` returns an error where the C returns nil; `close` returns `Error!void` and `cclose` ignores it. A device exports its table under its C name (`consdevtab`); `conf/pc64.zig` lists them and `main` sets `dev.devtab`. Entry 0 must be the root device.
+- **Ownership on error.** `namec`, `cunique`, `createdir`, device `open` and `create` take a channel and return one; if they fail the caller still owns the one it passed. `walk` leaves `*cp` untouched on failure.
+- **Deferred errors.** Where the C leaves text in `up->errstr` to raise later, the Zig returns the error at once or calls `proc.seterror`. `proc.errtext(e)` gives an error's text; `proc.swaperr()` is the C's errstr/syserrstr swap, needed only around `error.Str`.
+- `fmt`: `%C` is a rune like `%c`; `%#q` always quotes. `alloc.free` takes any pointer, slice or null; `alloc.new/snew/newslice/snewslice` give typed zeroed memory that the caller must initialise.
+- **`/dev/cons` has no input path**, exactly as in 9front: a read fails with Egreg, and user-space `kbdfs` serves the console programs read. A kernel-side shell before `kbdfs` would need a deliberate addition.
+- **Union directory reads** are `unionread` in `sysfile.c` (M4); a device `read` on a union's channel lists only its first member.
+- `port/lib.zig` holds the libc bits the kernel uses (open/mount flags, runes, `cleanname`).
+- **Private stand-ins to consolidate in M4:** `fdtochan` exists twice (`devdup.zig`, `devsrv.zig`) and belongs in `sysfile.zig`; `readstr` is in `devdup.zig` and `devcons.zig`; `strtoul` in `devcons.zig` and `devsrv.zig`; `tokenize` in `parse.zig`; `iseve` in `devenv.zig` and `devcons.zig` (auth.c); `exhausted` and `NETQID` in `devpipe.zig`; `procfdprint` in `devdup.zig` (devproc).
+- **Not done in the devices:** `/dev/random`, `/dev/reboot` and `/dev/config` are stubs; the `serialoq` output queue and "kprint replaces the screen" are not connected to `print.zig`; `devsrv`'s permission check during walk has a small race noted in the file.
+- **User memory.** `qread`/`qwrite`, `envread`/`envwrite` and `parsecmd` take kernel slices. The C frees buffers when a copy to or from user memory faults; those sites are marked `// M4:`.
+- `Dev.bread` cannot return "no block"; `devpipe` returns an empty block at end of file. Revisit when porting devmnt.
+- The agents' ports were compile-checked on three architectures and exercised only as far as `port/selftest.zig` goes: `devsrv`, `devdup`, `parse` and most `devcons` files have not been run.
 
 Notes from M2 for later milestones:
 
