@@ -2,11 +2,13 @@
 //! conversion.
 //! from 9/pc64/mmu.c
 //!
-//! DIFF: kernel half only so far; the per-process tables (mmualloc,
-//! mmuswitch, putmmu, kmap ...) arrive with user mode.  Physical memory
-//! is reached through the loader's direct map at DMAP, so kaddr is an
-//! offset and no KMAP window is needed.  kernelro is gone: the loader
-//! maps the kernel segments with the permissions the ELF asks for.
+//! DIFF: physical memory is reached through the loader's direct map at
+//! DMAP, so kaddr is an offset, kmap is kaddr, and there is no KMAP
+//! window or per-process kmap list.  For the same reason preallocpages
+//! is gone: the kernel's own memory is not confined to 2GiB, so the
+//! page array and the MMU pool come from the ordinary allocators.
+//! kernelro is gone: the loader maps the kernel segments with the
+//! permissions the ELF asks for.
 
 const bootinfo = @import("bootinfo");
 const mem = @import("mem.zig");
@@ -15,11 +17,14 @@ const l = @import("l.zig");
 const memory = @import("memory.zig");
 const bootargs = @import("bootargs.zig");
 const alloc = @import("../../port/alloc.zig");
+const taslock = @import("../../port/taslock.zig");
+const portdat = @import("../../port/portdat.zig");
 const p9 = @import("../../port/print.zig");
 const print = p9.print;
 const panic = p9.panic;
 
 const Segdesc = dat.Segdesc;
+const MMU = dat.MMU;
 const m = dat.m;
 
 fn EXECSEGM(p: u32) Segdesc {
@@ -77,18 +82,187 @@ pub fn mmuflushtlb() void {
     l.putcr3(paddr(@intFromPtr(m().pml4)));
 }
 
-/// Make `p`'s address space the current one.
-/// DIFF: kernel processes only so far, so all there is to do is point
-/// the TSS at the process's kernel stack; the user page tables arrive
-/// with user mode.
-pub fn mmuswitch(p: *dat.Proc, _: bool) void {
+var mmupool: struct {
+    lock: taslock.Lock = .{},
+    free: ?*MMU = null,
+    nalloc: u32 = 0,
+    nfree: u32 = 0,
+} = .{};
+
+// MMU.level: which table an MMU's page is entered in.
+const PML4E = 2;
+const PDPE = 1;
+const PDE = 0;
+
+const MAPBITS = 64;
+
+/// A page-table page for the current process, with its MMU record.
+fn mmualloc() ?*MMU {
+    const mach = m();
+    var p: *MMU = undefined;
+    if (mach.mmufree) |f| {
+        p = f;
+        mach.mmufree = p.next;
+        mach.mmucount -= 1;
+    } else {
+        taslock.lock(&mmupool.lock);
+        if (mmupool.free) |f| {
+            p = f;
+            mmupool.free = p.next;
+            mmupool.nfree -= 1;
+        } else {
+            taslock.unlock(&mmupool.lock);
+            const n = 256;
+            const a = alloc.newslice(MMU, n) orelse return null;
+            const pages = alloc.mallocalign(n * mem.PTSZ, mem.BY2PG, 0, 0) orelse {
+                alloc.free(a);
+                return null;
+            };
+            for (a, 0..) |*x, i| {
+                x.* = .{ .page = @ptrCast(@alignCast(pages + i * mem.PTSZ)) };
+                if (i > 0) a[i - 1].next = x;
+            }
+            p = &a[0];
+            taslock.lock(&mmupool.lock);
+            a[n - 1].next = mmupool.free;
+            mmupool.free = p.next;
+            mmupool.nalloc += n;
+            mmupool.nfree += n - 1;
+        }
+        taslock.unlock(&mmupool.lock);
+    }
+    p.next = null;
+    return p;
+}
+
+/// Drop every user entry from this processor's top-level table.
+fn mmuzap() void {
+    const mach = m();
+    const pte = mach.pml4;
+
+    // common case
+    pte[mem.PTLX(mem.UTZERO, 3)] = 0;
+    pte[mem.PTLX(mem.USTKTOP - 1, 3)] = 0;
+    mach.mmumap[mem.PTLX(mem.UTZERO, 3) / MAPBITS] &= ~(@as(u64, 1) << @intCast(mem.PTLX(mem.UTZERO, 3) % MAPBITS));
+    mach.mmumap[mem.PTLX(mem.USTKTOP - 1, 3) / MAPBITS] &= ~(@as(u64, 1) << @intCast(mem.PTLX(mem.USTKTOP - 1, 3) % MAPBITS));
+
+    for (&mach.mmumap, 0..) |*wp, i| {
+        var w = wp.*;
+        if (w == 0) continue;
+        wp.* = 0;
+        var x: usize = 0;
+        while (w != 0) : ({
+            w >>= 1;
+            x += 1;
+        }) {
+            if (w & 1 != 0)
+                pte[i * MAPBITS + x] = 0;
+        }
+    }
+}
+
+fn mmufree(p: *dat.Proc) void {
+    const mach = m();
+    const tail = p.mmu.mmutail orelse return;
+    if (mach.mmucount + p.mmu.mmucount < 256) {
+        tail.next = mach.mmufree;
+        mach.mmufree = p.mmu.mmuhead;
+        mach.mmucount += p.mmu.mmucount;
+    } else {
+        taslock.lock(&mmupool.lock);
+        tail.next = mmupool.free;
+        mmupool.free = p.mmu.mmuhead;
+        mmupool.nfree += p.mmu.mmucount;
+        taslock.unlock(&mmupool.lock);
+    }
+    p.mmu.mmuhead = null;
+    p.mmu.mmutail = null;
+    p.mmu.mmucount = 0;
+}
+
+/// Make `p`'s address space the current one; with `newtlb`, throw its
+/// page tables away first so they are rebuilt by faults.
+pub fn mmuswitch(p: *dat.Proc, newtlb: bool) void {
+    const mach = m();
+    mmuzap();
+    if (newtlb)
+        mmufree(p);
+    var it = p.mmu.mmuhead;
+    while (it) |x| : (it = x.next) {
+        if (x.level != PML4E) break;
+        mach.mmumap[x.index / MAPBITS] |= @as(u64, 1) << @intCast(x.index % MAPBITS);
+        mach.pml4[x.index] = paddr(@intFromPtr(x.page)) | mem.PTEUSER | mem.PTEWRITE | mem.PTEVALID;
+    }
     taskswitch(@intFromPtr(p));
 }
 
 /// Free the page tables of a dead process.
-pub fn mmurelease(_: *dat.Proc) void {
+pub fn mmurelease(p: *dat.Proc) void {
+    mmuzap();
+    mmufree(p);
     taskswitch(@intFromPtr(m()) + mem.MACHSIZE);
 }
+
+/// The page table entry for user address va in the current process,
+/// waiting for memory if it must.
+fn getpte(va: usize) *u64 {
+    if (mmuwalk(m().pml4, va, 0, true)) |pte| return pte;
+    flushmmu();
+    while (true) {
+        if (mmuwalk(m().pml4, va, 0, true)) |pte| return pte;
+        const x = l.spllo();
+        @import("../../port/pgrp.zig").resrcwait("out of MMU pages") catch {};
+        l.splx(x);
+    }
+}
+
+/// Enter the mapping va -> pa for the current process.  The low bits
+/// of `pa` are the PTE flags.
+pub fn putmmu(va: usize, pa: u64, _: *portdat.Page) void {
+    const x = l.splhi();
+    const pte = getpte(va);
+    const old = pte.*;
+    pte.* = pa | mem.PTEACCESSED | mem.PTEDIRTY | mem.PTEUSER;
+    l.splx(x);
+    if (old & mem.PTEVALID != 0)
+        l.invlpg(va);
+}
+
+/// Throw away the current process's page tables; faults rebuild them.
+/// from flushmmu in 9/port/proc.c
+pub fn flushmmu() void {
+    const x = l.splhi();
+    const p = dat.up().?;
+    m().tlbflush +%= 1;
+    p.tlbflush +%= 1;
+    p.newtlb = false;
+    mmuswitch(p, true);
+    l.splx(x);
+}
+
+/// Double-check the user MMU.
+/// Error checking only.
+pub fn checkmmu(va: usize, pa: u64) void {
+    const x = l.splhi();
+    const pte = mmuwalk(m().pml4, va, 0, false);
+    if (pte == null or pte.?.* & mem.PTEVALID == 0 or mem.PPN(pte.?.*) == pa) {
+        l.splx(x);
+        return;
+    }
+    const old = pte.?.*;
+    l.splx(x);
+    const p = dat.up().?;
+    print("%ld %s: va=%#p pa=%#p pte=%#p\n", .{ p.pid, p.text, va, pa, old });
+}
+
+/// A kernel address for the contents of a page.
+/// DIFF: always the direct map; the C needs a per-process window (KMAP)
+/// for pages outside the 2GiB it maps at KZERO.
+pub fn kmap(page: *portdat.Page) usize {
+    return kaddr(page.pa);
+}
+
+pub fn kunmap(_: usize) void {}
 
 pub fn mmuinit() void {
     const mach = m();
@@ -129,7 +303,7 @@ pub fn mmuinit() void {
     // enable syscall extension
     l.wrmsr(dat.Efer, l.rdmsr(dat.Efer) | 1);
     l.wrmsr(dat.Star, (@as(u64, mem.UE32SEL) << 48) | (@as(u64, mem.KESEL) << 32));
-    // DIFF: Lstar (the SYSCALL entry point) is set with user mode.
+    l.wrmsr(dat.Lstar, @intFromPtr(&l.syscallentry));
     l.wrmsr(dat.Sfmask, 0x200);
 }
 
@@ -174,13 +348,34 @@ pub fn paddr(va: usize) u64 {
     panic("paddr: va=%#p pc=%#p", .{ va, @returnAddress() });
 }
 
-fn mmucreate(tab: [*]u64, va: usize, index: usize) ?[*]u64 {
-    // DIFF: user addresses take their table pages from the per-process
-    // MMU pool, which does not exist yet.
-    if (va < mem.DMAP)
-        panic("mmucreate: user va=%#p", .{va});
-    const page: [*]u64 = @ptrFromInt(memory.rampage());
-    tab[index] = paddr(@intFromPtr(page)) | mem.PTEWRITE | mem.PTEVALID;
+fn mmucreate(tab: [*]u64, va: usize, level: u6, index: usize) ?[*]u64 {
+    var flags: u64 = mem.PTEWRITE | mem.PTEVALID;
+    var page: [*]u64 = undefined;
+    if (va < mem.DMAP) {
+        // A user address: the table belongs to the current process.
+        const up = dat.up() orelse panic("mmucreate: user va=%#p with no process", .{va});
+        if (va >= mem.USTKTOP) panic("mmucreate: va=%#p", .{va});
+        const p = mmualloc() orelse return null;
+        p.index = index;
+        p.level = level;
+        flags |= mem.PTEUSER;
+        if (level == PML4E) {
+            p.next = up.mmu.mmuhead;
+            if (p.next == null)
+                up.mmu.mmutail = p;
+            up.mmu.mmuhead = p;
+            m().mmumap[index / MAPBITS] |= @as(u64, 1) << @intCast(index % MAPBITS);
+        } else {
+            up.mmu.mmutail.?.next = p;
+            up.mmu.mmutail = p;
+        }
+        up.mmu.mmucount += 1;
+        page = p.page;
+        @memset(page[0..512], 0);
+    } else {
+        page = @ptrFromInt(memory.rampage());
+    }
+    tab[index] = paddr(@intFromPtr(page)) | flags;
     return page;
 }
 
@@ -200,7 +395,7 @@ pub fn mmuwalk(tab_: [*]u64, va: usize, level: u6, create: bool) ?*u64 {
             tab = table(pte);
         } else {
             if (!create) return null;
-            tab = mmucreate(tab, va, x) orelse return null;
+            tab = mmucreate(tab, va, i, x) orelse return null;
         }
         x = mem.PTLX(va, i);
     }

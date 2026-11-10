@@ -162,7 +162,7 @@ The user's test machine: AMD Ryzen 5 5500 (Zen 3), 32GB RAM, Radeon RX 6500 XT. 
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
-- Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail.
+- Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail. To be examined as a topic of its own before any of it is planned; `src/user` already shows that Zig can produce Plan 9 a.out binaries without a host tool.
 - File servers are user programs, so `gefs`, `cwfs` and `hjfs` run unmodified as stock binaries from M7 and need no port for the kernel to use them. When userland is ported, `gefs` (about 12K lines of C) is the file server to do first.
 
 ## Future additions
@@ -194,10 +194,24 @@ The user's test machine: AMD Ryzen 5 5500 (Zen 3), 32GB RAM, Radeon RX 6500 XT. 
 
 | Milestone | State |
 |---|---|
+| M4 | done: the first process runs `initcode` in user mode and execs `/boot/boot`; fork, exec, exits/await, pipes, brk, rendezvous, notes, alarms and FPU state work; an unmodified 9front `/amd64/bin/echo` runs. Tested on all three CPU models and in a debug build |
 | M3 | done: `chan`, `dev`, `pgrp`, `qio`, `allocb`, `parse`, 9P marshalling (`lib/fcall.zig`), and devices root, cons, env, pipe, srv, dup. The boot self-test binds `#c #d #e #s`, writes `/dev/cons`, checks error text, uses `/env`, round-trips a pipe and copies a name space |
 | M2 | done: kernel processes sleep, wake, queue on locks, get preempted, take notes and alarms, exit and are reused; the scheduling self-test ran for 60s. Not done: rendezvous, which is a system call and moves to M4 |
 | M1 | done: `zig build test` (host) and `zig build test-boot` (two boots: clean self-test, deliberate fault) pass on `SandyBridge`, `Opteron_G4` and `max`, in safe and debug builds |
 | M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=SandyBridge` (default), `Opteron_G4` and `max` |
+
+Notes from M4 for later milestones:
+
+- **Reference binaries.** The 9front amd64 ISO (release 11952) is in `ref/iso/`, and its `amd64/` and `cfg/` trees are unpacked in `ref/root/` (`ref/` is gitignored). `zig build test-boot -Dstock=ref/root/amd64/bin` adds a stock `echo` to `/boot` and requires its output; without `-Dstock` the tests need nothing outside the repository. No checksum is published for the ISO.
+- **System calls.** A handler is `fn(*Sargs) Error!usize` and takes its arguments with `a.next(T)`. `port/syscall.zig` holds the dispatcher, `donotify` and the table (`systabinit` lists every call). `syscall()` in `arch/amd64/trap.zig` returns non-zero to make the assembly restore all registers (a note or `noted`); the C patches its return address instead.
+- **User memory.** `fault.validaddr`, `userslice` and `userstr` are the only way in. `validaddr` now pre-faults every page of the range through `arch.probe`, a fault-safe touch, so a page that cannot be loaded fails the system call with an ordinary error. A validated address that still faults later (another process sharing the memory unmapped it) kills the process if it holds no kernel locks, and panics otherwise. `fault()` itself never unwinds; it returns -1 with the reason in `up.errstr`.
+- **No swap, in practice:** `page.zig` keeps a pager process whose only jobs are reclaiming idle cached image pages and, last, killing the largest process.
+- **FPU** (`arch/amd64/fpu.zig`): user state only, saved and restored lazily with XSAVE, nested for note handlers. The kernel uses no floating point, so `fpukenter`/`fpukexit` and the kernel save areas are gone.
+- **User programs in Zig** live in `src/user`: `user.ld` makes the linker write the a.out header, so `objcopy -O binary` of a link is a Plan 9 executable; `sys.zig` has the system call stubs. `initcode.zig` is the real first process; `boot.zig` is a user-mode self-test standing in for `/boot/boot`. A note handler is entered the Plan 9 way (arguments on the stack), so Zig code needs a small trampoline; see `boot.zig`. This is the seed of a Zig userland, which the user wants examined as its own topic.
+- **Not ported in M4:** debug registers and watchpoints, the breakpoint trap, syscall tracing, `segio` (devproc's memory access), `sysfversion`/`sysfauth` (they are in `auth.c`), and the mount half of `mount` (needs devmnt).
+- **Still to consolidate:** `evenaddr`, `fullrune`/`utfecpy` and the `NCONT...` constants are private in `sysproc.zig`; `dirchanstat` is private in `sysfile.zig`; `readstr`, `strtoul`, `iseve` duplicates from M3 remain.
+- **Bugs fixed relative to the C, on purpose:** `segflush1` rounds its start with `~(BY2PG-1)` (the C clears one bit, which can trip an assert from user space). Noted as upstream-looking and left as in C: the `?:` precedence in `fault()`'s permission check.
+- Most of M4 has only been run as far as `boot.zig` and one stock binary go: `segattach`/`segfree`/`segflush`, semaphores, `wstat`, union directory reads, `#!` scripts, and exec failure after the point of no return have not been exercised.
 
 Notes from M3 for later milestones:
 

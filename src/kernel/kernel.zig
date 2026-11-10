@@ -9,6 +9,7 @@ comptime {
     @export(&arch._start, .{ .name = "_start" });
     @export(&arch.main, .{ .name = "main" });
     @export(&arch.trap, .{ .name = "trap" });
+    @export(&arch.syscall, .{ .name = "syscall" });
 }
 
 fn zigpanic(msg: []const u8, _: ?usize) noreturn {

@@ -18,6 +18,9 @@ pub fn build(b: *std.Build) void {
     // XSAVE for a model that has XSAVE but not XSAVEOPT.
     const cpu = b.option([]const u8, "cpu", "QEMU cpu model (default SandyBridge)") orelse "SandyBridge";
     const memory = b.option([]const u8, "mem", "QEMU memory size (default 512M)") orelse "512M";
+    // Unmodified 9front binaries, to check binary compatibility.  They
+    // are not in the repository: unpack /amd64/bin from a 9front ISO.
+    const stock = b.option([]const u8, "stock", "Directory of stock 9front amd64 binaries, e.g. ref/root/amd64/bin");
 
     const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
     const fcall = b.createModule(.{ .root_source_file = b.path("src/lib/fcall.zig") });
@@ -34,6 +37,15 @@ pub fn build(b: *std.Build) void {
         .cpu_features_add = x86.featureSet(&.{.soft_float}),
         .cpu_features_sub = x86.featureSet(&.{ .mmx, .sse, .sse2, .avx, .avx2 }),
     });
+    // planZ's own user programs, linked as Plan 9 a.out files, which the
+    // kernel carries in its data: initcode, the first process, and the
+    // /boot/boot it execs.
+    const initcode = addUserProgram(b, "initcode", "src/user/initcode.zig", optimize);
+    const bootprog = addUserProgram(b, "boot", "src/user/boot.zig", optimize);
+
+    b.getInstallStep().dependOn(&b.addInstallFile(initcode, "user/initcode").step);
+    b.getInstallStep().dependOn(&b.addInstallFile(bootprog, "user/boot").step);
+
     const kernel = b.addExecutable(.{
         .name = "planz",
         .root_module = b.createModule(.{
@@ -53,6 +65,12 @@ pub fn build(b: *std.Build) void {
         }),
         .use_llvm = true,
         .use_lld = true,
+    });
+    kernel.root_module.addAnonymousImport("initcode", .{ .root_source_file = initcode });
+    kernel.root_module.addAnonymousImport("bootprog", .{ .root_source_file = bootprog });
+    // An empty file stands for "no stock binaries given".
+    kernel.root_module.addAnonymousImport("stockecho", .{
+        .root_source_file = if (stock) |dir| b.path(b.pathJoin(&.{ dir, "echo" })) else b.addWriteFiles().add("none", ""),
     });
     kernel.setLinkerScript(b.path("src/kernel/arch/amd64/kernel.ld"));
     kernel.entry = .{ .symbol_name = "_start" };
@@ -105,7 +123,13 @@ pub fn build(b: *std.Build) void {
     const test_boot = b.step("test-boot", "Boot in headless QEMU and check the serial output");
     const BootTest = struct { ini: ?[]const u8, expect: []const u8 };
     const boot_tests = [_]BootTest{
-        .{ .ini = null, .expect = "selftest ok" },
+        .{
+            .ini = null,
+            .expect = if (stock != null)
+                "selftest ok|usertest ok|hello from stock 9front echo"
+            else
+                "selftest ok|usertest ok",
+        },
         .{ .ini = "*selftest=fault\n*schedtest=1\n", .expect = "panic: kernel fault: write addr=0x1234" },
     };
     for (boot_tests) |t| {
@@ -133,6 +157,8 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        // Any initcode will do for a compile check.
+        obj.root_module.addAnonymousImport("initcode", .{ .root_source_file = initcode });
         check_ports.dependOn(&obj.step);
     }
 
@@ -145,6 +171,30 @@ pub fn build(b: *std.Build) void {
         }) });
         test_step.dependOn(&b.addRunArtifact(unit).step);
     }
+}
+
+/// Build a user program for the Plan 9 amd64 ABI and return its a.out.
+/// The linker script writes the a.out header, so the flat binary of the
+/// link is the executable.
+fn addUserProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize) std.Build.LazyPath {
+    const exe = b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(root),
+            .target = b.resolveTargetQuery(.{ .cpu_arch = .x86_64, .os_tag = .freestanding, .abi = .none }),
+            // Debug code is several times larger, and initcode must fit in a page.
+            .optimize = if (optimize == .debug) .small else optimize,
+            .pic = false,
+            .single_threaded = true,
+            .strip = true,
+        }),
+        .use_llvm = true,
+        .use_lld = true,
+    });
+    exe.setLinkerScript(b.path("src/user/user.ld"));
+    exe.entry = .{ .symbol_name = "_start" };
+    exe.pie = false;
+    return exe.addObjCopy(.{ .format = .binary }).getOutput();
 }
 
 /// Give QEMU a FAT disk holding the loader, the kernel and, if given, a

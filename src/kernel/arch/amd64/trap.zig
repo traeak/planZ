@@ -2,15 +2,22 @@
 //! printed when the kernel itself faults.
 //! from 9/pc64/trap.c
 //!
-//! DIFF: kernel mode only so far.  User traps, notes, system calls and
-//! the debug registers arrive with user mode; the places they attach
-//! are marked.
+//! DIFF: syscall() tells the assembly how to return with its result
+//! instead of patching its own return address.  The debug registers,
+//! watchpoints and the breakpoint trap are not ported, nor the fixups
+//! for faulting rdmsr/wrmsr/peek.  A kernel fault on a user address
+//! that cannot be resolved is a panic; see faultamd64.
 
 const mem = @import("mem.zig");
 const dat = @import("dat.zig");
 const l = @import("l.zig");
 const irq = @import("irq.zig");
 const proc = @import("../../port/proc.zig");
+const portdat = @import("../../port/portdat.zig");
+const faultmod = @import("../../port/fault.zig");
+const syscallmod = @import("../../port/syscall.zig");
+const usermod = @import("user.zig");
+const fmt = @import("fmt");
 const p9 = @import("../../port/print.zig");
 const print = p9.print;
 const iprint = p9.iprint;
@@ -99,9 +106,7 @@ pub fn userureg(ureg: *const Ureg) bool {
 pub fn trap(ureg: *Ureg) callconv(.c) void {
     const vno: usize = @intCast(ureg.type & 0xff);
     const user = proc.kenter(ureg);
-    // DIFF: fpukenter and the user half (usertrap, notes, kexit)
-    // attach here.
-    if (irq.irqhandled(ureg, vno) == 0) {
+    if (irq.irqhandled(ureg, vno) == 0 and (!user or !usertrap(vno))) {
         if (!user) {
             // early fault before trapinit()
             if (vno == dat.VectorPF)
@@ -117,6 +122,24 @@ pub fn trap(ureg: *Ureg) callconv(.c) void {
         panic("unknown trap/intr: %d", .{vno});
     }
     _ = l.splhi();
+    if (user) {
+        const p = up().?;
+        if (p.procctl != 0 or p.nnote != 0)
+            _ = syscallmod.donotify(ureg);
+        proc.kexit(ureg);
+    }
+}
+
+/// A fault in user mode becomes a note to the process.
+fn usertrap(vno: usize) bool {
+    if (vno < excname.len) {
+        _ = l.spllo();
+        var buf: [portdat.ERRMAX]u8 = undefined;
+        const s = fmt.snprint(&buf, "sys: trap: %s", .{excname[vno]});
+        _ = proc.postnote(up(), true, s, portdat.NDebug);
+        return true;
+    }
+    return false;
 }
 
 pub fn dumpregs(ureg: *const Ureg) void {
@@ -195,11 +218,136 @@ fn unexpected(ureg: *Ureg, _: ?*anyopaque) void {
 fn faultamd64(ureg: *Ureg, _: ?*anyopaque) void {
     const addr = l.getcr2();
     const read = ureg.@"error" & 2 == 0;
+    const user = userureg(ureg);
 
-    // DIFF: no user memory yet, so every fault is the kernel's own and
-    // fatal; fault() and the user half attach here.
-    dumpregs(ureg);
-    if (addr >= mem.USTKTOP)
-        panic("kernel fault: bad address pc=%#p addr=%#p", .{ ureg.pc, addr });
-    panic("kernel fault: %s addr=%#p pc=%#p", .{ if (read) "read" else "write", addr, ureg.pc });
+    if (!user) {
+        if (addr >= mem.USTKTOP) {
+            dumpregs(ureg);
+            panic("kernel fault: bad address pc=%#p addr=%#p", .{ ureg.pc, addr });
+        }
+        if (up() == null) {
+            dumpregs(ureg);
+            panic("kernel fault: no user process pc=%#p addr=%#p", .{ ureg.pc, addr });
+        }
+    }
+
+    // The kernel touching user memory faults like the user would.
+    _ = l.spllo();
+    if (faultmod.fault(addr, ureg.pc, read) < 0) {
+        if (!user) {
+            // DIFF: the C unwinds to the system call with error() when
+            // loading the page failed, and panics otherwise.  A trap
+            // cannot unwind Zig code.  Instead validaddr brings pages in
+            // with probe() before a system call uses them, and a failure
+            // there is reported here by making probe return false.
+            if (ureg.pc == @intFromPtr(&l._prober) or ureg.pc == @intFromPtr(&l._probew)) {
+                ureg.pc = @intFromPtr(&l._probefail);
+                _ = l.splhi();
+                return;
+            }
+            // What is left is a checked address that has gone away since
+            // (another process sharing the memory unmapped it), or a
+            // kernel bug.  If the process holds no locks it alone dies.
+            const p = up().?;
+            dumpregs(ureg);
+            if (p.nlocks != 0 or m().ilockdepth != 0 or p.kp)
+                panic("kernel fault: %s addr=%#p pc=%#p", .{ if (read) "read" else "write", addr, ureg.pc });
+            var buf: [portdat.ERRMAX]u8 = undefined;
+            const s = fmt.snprint(&buf, "sys: trap: fault %s addr=%#p in kernel pc=%#p", .{ if (read) "read" else "write", addr, ureg.pc });
+            _ = @import("../../port/devcons.zig").pprint("suicide: %s\n", .{s});
+            proc.pexit(s, true);
+        }
+        faultmod.faultnote("fault", if (read) "read" else "write", addr);
+    }
+    _ = l.splhi();
+}
+
+/// The system call entry in l.zig comes here.  Returns non-zero if the
+/// registers must be restored from the Ureg in full (a note was
+/// delivered or noted() ran), where the C patches its return address.
+pub fn syscall(ureg: *Ureg) callconv(.c) usize {
+    if (!proc.kenter(ureg))
+        panic("syscall: cs 0x%4.4lluX", .{ureg.cs});
+    const p = up().?;
+    var full: usize = 0;
+
+    const scallnr = ureg.bp; // RARG
+    if (syscallmod.dosyscall(scallnr, ureg.sp + mem.BY2WD, &ureg.ax))
+        full = 1;
+
+    if ((p.procctl != 0 or p.nnote != 0) and syscallmod.donotify(ureg))
+        full = 1;
+
+    // if we delayed sched because we held a lock, sched now
+    if (p.delaysched != 0)
+        proc.sched();
+    proc.kexit(ureg);
+    return full;
+}
+
+/// Call user, if necessary, with note.
+/// Pass user the Ureg struct and the note on his stack.
+pub fn notify(ureg: *Ureg, msg: []const u8) ?*Ureg {
+    const ERRMAX = portdat.ERRMAX;
+    const BY2WD = mem.BY2WD;
+    const p = up().?;
+
+    var sp = ureg.sp;
+    sp -%= 256; // debugging: preserve context causing problem
+    sp -%= @sizeOf(Ureg);
+
+    if (!faultmod.okaddr(sp -% (ERRMAX + 4 * BY2WD), @sizeOf(Ureg) + ERRMAX + 4 * BY2WD, true))
+        return null;
+
+    const nureg: *Ureg = @ptrFromInt(sp);
+    nureg.* = ureg.*;
+    sp -= BY2WD + ERRMAX;
+    const dst: *[ERRMAX]u8 = @ptrFromInt(sp);
+    @memset(dst, 0);
+    @memcpy(dst[0..@min(msg.len, ERRMAX - 1)], msg[0..@min(msg.len, ERRMAX - 1)]);
+    sp -= 3 * BY2WD;
+    const w: [*]usize = @ptrFromInt(sp);
+    w[2] = sp + 3 * BY2WD; // arg2 string
+    w[1] = @intFromPtr(nureg); // arg1 is ureg*
+    w[0] = 0; // arg0 is pc
+    ureg.sp = sp;
+    ureg.pc = p.notify;
+    ureg.bp = @intFromPtr(nureg); // arg1 passed in RARG
+    ureg.cs = mem.UESEL;
+    ureg.ss = mem.UDSEL;
+    return nureg;
+}
+
+// arguments of noted(), from 9/port/lib.h
+pub const NCONT = 0; // continue after note
+pub const NDFLT = 1; // terminate after note
+pub const NSAVE = 2; // clear note but hold state
+pub const NRSTR = 3; // restore saved state
+
+/// Return user to state before notify()
+pub fn noted(ureg: *Ureg, nureg: *Ureg, arg0: i32) bool {
+    const BY2WD = mem.BY2WD;
+    const oureg = @intFromPtr(nureg);
+
+    // don't let user change system flags or segment registers
+    usermod.setregisters(ureg, nureg);
+
+    switch (arg0) {
+        NCONT, NRSTR => {
+            if (!faultmod.okaddr(ureg.pc, 1, false) or !faultmod.okaddr(ureg.sp, BY2WD, false))
+                return false;
+        },
+        NSAVE => {
+            const sp = oureg - 4 * BY2WD - portdat.ERRMAX;
+            if (!faultmod.okaddr(ureg.pc, 1, false) or !faultmod.okaddr(sp, 4 * BY2WD, true))
+                return false;
+            ureg.sp = sp;
+            ureg.bp = oureg; // arg 1 passed in RARG
+            const w: [*]usize = @ptrFromInt(sp);
+            w[1] = oureg; // arg 1 0(FP) is ureg*
+            w[0] = 0; // arg 0 is pc
+        },
+        else => {},
+    }
+    return true;
 }

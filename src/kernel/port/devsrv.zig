@@ -20,8 +20,7 @@
 //!     may not search.  srvgen returns -1 there, and srvwalk makes the
 //!     same checks first (walkperm) so that the walk still fails with
 //!     Eperm.
-//!   - fdtochan is from sysfile.c and is private here until that file
-//!     is ported (M4).  iseve comes from devcons.zig until auth.c (M7).
+//!   - iseve comes from devcons.zig until auth.c (M7).
 
 const std = @import("std");
 const fcall = @import("fcall");
@@ -35,6 +34,7 @@ const alloc = @import("alloc.zig");
 const proc = @import("proc.zig");
 const chan = @import("chan.zig");
 const devmod = @import("dev.zig");
+const sysfile = @import("sysfile.zig");
 const devcons = @import("devcons.zig");
 const p9 = @import("print.zig");
 
@@ -640,47 +640,6 @@ fn strtoul(s: []const u8) u32 {
     return if (neg) 0 -% n else n;
 }
 
-/// The channel behind a file descriptor of the current process.
-/// from 9/port/sysfile.c
-// M4: move to sysfile.zig
-fn fdtochan(fd: i32, mode: i32, chkmnt: bool, iref: bool) Error!*Chan {
-    const f = up().fgrp.?;
-
-    taslock.lock(&f.lock);
-    const c = blk: {
-        if (fd >= 0 and @as(usize, @intCast(fd)) < f.fd.len) {
-            if (f.fd[@intCast(fd)]) |c| break :blk c;
-        }
-        taslock.unlock(&f.lock);
-        return error.Ebadfd;
-    };
-    if (iref)
-        _ = incref(&c.ref);
-    taslock.unlock(&f.lock);
-
-    if (chkmnt and c.flag & portdat.CMSG != 0) {
-        if (iref)
-            chan.cclose(c);
-        return error.Ebadusefd;
-    }
-
-    if (mode < 0 or c.mode == lib.ORDWR)
-        return c;
-
-    if (mode & lib.OTRUNC != 0 and c.mode == lib.OREAD) {
-        if (iref)
-            chan.cclose(c);
-        return error.Ebadusefd;
-    }
-
-    if (mode & ~@as(i32, lib.OTRUNC) != c.mode) {
-        if (iref)
-            chan.cclose(c);
-        return error.Ebadusefd;
-    }
-    return c;
-}
-
 fn srvwrite(c: *Chan, va: []const u8, _: i64) Error!usize {
     const n = va.len;
 
@@ -691,7 +650,7 @@ fn srvwrite(c: *Chan, va: []const u8, _: i64) Error!usize {
         return error.Etoobig;
     const fd: i32 = @bitCast(strtoul(std.mem.sliceTo(va, 0)));
 
-    const c1 = try fdtochan(fd, -1, false, true); // error check and inc ref
+    const c1 = try sysfile.fdtochan(fd, -1, false, true); // error check and inc ref
     // after srvlk is released: closing a #s channel takes it
     errdefer chan.cclose(c1);
 

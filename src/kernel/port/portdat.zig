@@ -187,8 +187,190 @@ var nostrbuf: [1]u8 = .{0};
 /// field that owns no memory.
 pub const nostr: []u8 = nostrbuf[0..0];
 
-// Not ported yet.
-pub const Segment = opaque {};
+// Page.modref
+pub const PG_MOD = 0x01; // software modified bit
+pub const PG_REF = 0x02; // software referenced bit
+pub const PG_PRIV = 0x04; // private page
+
+pub const Page = struct {
+    ref: Ref = .{},
+    next: ?*Page = null, // Free list or Hash chains
+    pa: usize = 0, // Physical address in memory
+    va: usize = 0, // Virtual address for user
+    daddr: usize = 0, // Offset in the image the page caches
+    image: ?*Image = null, // Associated text image
+    modref: u8 = 0, // Simulated modify/reference bits
+    // DIFF: no refage (swap) and no color (page colouring).
+    /// Flush icache bitmap for putmmu(); empty where the processor
+    /// keeps its caches coherent.
+    txtflush: arch.Txtflush = .{},
+};
+
+pub const Pte = struct {
+    pages: [arch.mem.PTEPERTAB]?*Page = @splat(null), // Page map for this chunk of pte
+    /// Indices of the first and last used entries.  An empty Pte has
+    /// first = PTEPERTAB and last = 0.  DIFF: the C keeps pointers.
+    first: usize = arch.mem.PTEPERTAB,
+    last: usize = 0,
+};
+
+// Segment types
+pub const SG_TYPE = 0o7; // Mask type of segment
+pub const SG_TEXT = 0o0;
+pub const SG_DATA = 0o1;
+pub const SG_BSS = 0o2;
+pub const SG_STACK = 0o3;
+pub const SG_SHARED = 0o4;
+pub const SG_PHYSICAL = 0o5;
+pub const SG_FIXED = 0o6;
+pub const SG_STICKY = 0o7;
+
+pub const SG_RONLY = 0o040; // Segment is read only
+pub const SG_CEXEC = 0o100; // Detach at exec
+pub const SG_FAULT = 0o200; // Fault on access
+pub const SG_CACHED = 0o400; // Normal cached memory
+pub const SG_DEVICE = 0o1000; // Memory mapped device
+pub const SG_NOEXEC = 0o2000; // No execute
+
+pub const Physseg = struct {
+    attr: u32 = 0, // Segment attributes
+    name: []const u8 = "", // Attach name
+    pa: usize = 0, // Physical address
+    size: usize = 0, // Maximum segment size in bytes
+};
+
+pub const Sema = struct {
+    r: Rendez = .{},
+    addr: ?*i32 = null,
+    waiting: bool = false,
+    next: ?*Sema = null,
+    prev: ?*Sema = null,
+};
+
+pub const Segment = struct {
+    ref: Ref = .{},
+    qlock: QLock = .{},
+    type: u32 = 0, // segment type
+    size: usize = 0, // size in pages
+
+    base: usize = 0, // virtual base
+    top: usize = 0, // virtual top
+    fstart: usize = 0, // start address in file for demand load
+    flen: usize = 0, // length of segment in file
+
+    flushme: bool = false, // maintain icache for this segment
+    image: ?*Image = null, // text in file attached to this segment
+    pseg: ?*Physseg = null,
+    profile: ?[]u32 = null, // Tick profile area
+
+    /// effective map array; map.len is mapsize in the C
+    map: []?*Pte = &.{},
+
+    // pre-allocated Pte and (small-) map array as part of this Segment's allocation
+    freepte: ?*Pte = null,
+    ssegmap: [arch.mem.SSEGMAPSIZE]?*Pte = @splat(null),
+
+    used: usize = 0, // pages used
+    // DIFF: no swapped count.
+
+    sema: Sema = .{},
+
+    firstproc: i32 = 0, // lowest proc->index having segment attached
+    lastproc: i32 = 0, // highest proc->index having segment attached
+    segno: i32 = 0, // last attached proc->seg[segno] number
+};
+
+pub const Image = struct {
+    ref: Ref = .{},
+    lock: Lock = .{},
+
+    pgref: i32 = 0, // number of cached pages (pgref <= ref)
+
+    nattach: u32 = 0, // usage frequency
+
+    link: ?*?*Image = null, // idle list
+    next: ?*Image = null, // idle list
+
+    hash: ?*Image = null, // Qid hash chains
+
+    s: ?*Segment = null, // TEXT segment for image if running
+
+    c: ?*Chan = null, // channel to text file, nil when not used
+    qid: Qid = .{}, // Qid for page cache coherence
+    dev: u32 = 0, // Device id of owning channel
+    type: u16 = 0, // Device type of owning channel
+    notext: bool = false, // no file associated
+
+    /// page cache; pghash.len is pghsize in the C.  Stored after the
+    /// Image in the same allocation.
+    pghash: []?*Page = &.{},
+
+    /// PGHASH in the C: the hash chain for a file offset.
+    pub fn pghashp(i: *Image, daddr: usize) *?*Page {
+        return &i.pghash[(daddr >> arch.mem.PGSHIFT) & (i.pghash.len - 1)];
+    }
+};
+
+pub const Rendezq = struct {
+    qlock: QLock = .{},
+    r: Rendez = .{},
+};
+
+pub const Palloc = struct {
+    lock: Lock = .{},
+    head: ?*Page = null, // freelist head
+    freecount: usize = 0, // how many pages on free list now
+    user: usize = 0, // how many user pages
+    pages: []Page = &.{}, // array of all pages
+    pwait: [2]Rendezq = .{ .{}, .{} }, // Queues of procs waiting for memory
+};
+
+pub const MAXSYSARG = 5; // for mount(fd, afd, mpt, flag, arg)
+
+/// The arguments of a system call, as the words the user pushed.
+/// DIFF: the C handlers take a va_list and va_arg each argument off it;
+/// here they take *Sargs and call next(T).
+pub const Sargs = struct {
+    args: [MAXSYSARG]usize = @splat(0),
+    i: usize = 0,
+
+    /// The next argument, as T: an integer of any width (the low bits
+    /// of the word, as va_arg(list, int) gives), a bool, or usize for a
+    /// user address.
+    pub fn next(a: *Sargs, comptime T: type) T {
+        const v = a.args[a.i];
+        a.i += 1;
+        return switch (@typeInfo(T)) {
+            .int => |info| if (info.signedness == .signed)
+                @bitCast(@as(@Int(.unsigned, info.bits), @truncate(v)))
+            else
+                @truncate(v),
+            .bool => v != 0,
+            else => @compileError("Sargs.next: " ++ @typeName(T)),
+        };
+    }
+};
+
+/// The top of every user stack: data the kernel and the process share.
+/// from /sys/include/tos.h; the layout is ABI.
+pub const Tos = extern struct {
+    // Per process profiling
+    prof: extern struct {
+        pp: usize = 0, // known to be 0(ptr)
+        next: usize = 0, // known to be 4(ptr)
+        last: usize = 0,
+        first: usize = 0,
+        pid: u32 = 0,
+        what: u32 = 0,
+    } = .{},
+    cyclefreq: u64 = 0, // cycle clock frequency if there is one, 0 otherwise
+    kcycles: i64 = 0, // cycles spent in kernel
+    pcycles: i64 = 0, // cycles spent in process (kernel + user)
+    pid: u32 = 0, // might as well put the pid here
+    clock: u32 = 0,
+    // top of stack is here
+};
+
 pub const Watchpt = opaque {};
 pub const Mntcache = opaque {};
 pub const Mnt = opaque {};
@@ -428,6 +610,7 @@ pub const Proc = struct {
     kpfun: ?*const fn (?*anyopaque) void = null,
     kparg: ?*anyopaque = null,
 
+    s: Sargs = .{}, // syscall arguments
     scallnr: i32 = 0, // sys call number
     // DIFF: no errlab/nerrlab; errors are Zig error returns.
     syserrstr: *[ERRMAX]u8 = undefined, // last error from a system call, errbuf0 or 1

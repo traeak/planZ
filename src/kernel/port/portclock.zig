@@ -5,9 +5,8 @@
 //! programs its interrupt for the first one.  The HZ clock tick is one
 //! of those timers.
 //!
-//! DIFF: hzclock leaves out what is not ported yet (flushmmu for a
-//! process whose page tables changed, dtracy, kmap invalidation, the
-//! profiler, the user-mode profiling clock, shutdown).
+//! DIFF: hzclock leaves out what is not ported (dtracy, kmap
+//! invalidation, the kernel profiler, shutdown).
 
 const arch = @import("../arch.zig");
 const portdat = @import("portdat.zig");
@@ -16,6 +15,7 @@ const alloc = @import("alloc.zig");
 const proc = @import("proc.zig");
 const tod = @import("tod.zig");
 const alarm = @import("alarm.zig");
+const segment = @import("segment.zig");
 const p9 = @import("print.zig");
 
 const panic = p9.panic;
@@ -146,6 +146,11 @@ fn hzclock(ur: *Ureg) void {
     if (mach.proc) |p|
         p.pc = ur.pc;
 
+    if (arch.up()) |up| {
+        if (up.newtlb)
+            arch.flushmmu();
+    }
+
     proc.accounttime();
 
     if (!arch.active.machs[@intCast(mach.machno)])
@@ -155,8 +160,15 @@ fn hzclock(ur: *Ureg) void {
         alarm.checkalarms();
 
     if (arch.up()) |up| {
-        if (up.state == .Running)
+        if (up.state == .Running) {
+            if (arch.userureg(ur)) {
+                // user profiling clock
+                const tos: *portdat.Tos = @ptrFromInt(arch.mem.USTKTOP - @sizeOf(portdat.Tos));
+                tos.clock +%= 1000 / HZ;
+                segment.segclock(ur.pc);
+            }
             proc.hzsched(); // in proc.c
+        }
     }
 }
 

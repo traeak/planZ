@@ -32,6 +32,8 @@ const alloc = @import("alloc.zig");
 const xalloc = @import("xalloc.zig");
 const portclock = @import("portclock.zig");
 const chanmod = @import("chan.zig");
+const pagemod = @import("page.zig");
+const segmod = @import("segment.zig");
 const pgrpmod = @import("pgrp.zig");
 const errmod = @import("error.zig");
 const fmt = @import("fmt");
@@ -178,6 +180,18 @@ pub fn kenter(ureg: *Ureg) bool {
     return user;
 }
 
+/// Leaving the kernel for user mode: precise time accounting.
+pub fn kexit(_: *Ureg) void {
+    const up = cur();
+    const t = arch.cycles();
+
+    // precise time accounting, kernel exit
+    const tos: *portdat.Tos = @ptrFromInt(mem.USTKTOP - @sizeOf(portdat.Tos));
+    tos.kcycles +%= @bitCast(t -% up.kentry);
+    tos.pcycles = @bitCast(t +% @as(u64, @bitCast(up.pcycles)));
+    tos.pid = up.pid;
+}
+
 fn procswitch() void {
     const p = cur();
 
@@ -223,8 +237,7 @@ pub fn sched() void {
     // in the middle of taslock when a process holds a lock
     // but Lock.p has not yet been initialized.
     if (p.nlocks != 0 and p.state == .Running) {
-        // M4: also palloc.Lock.p == up
-        if (p.delaysched < 20 or procalloc.lock.p == p) {
+        if (p.delaysched < 20 or pagemod.palloc.lock.p == p or procalloc.lock.p == p) {
             p.delaysched += 1;
             delayedscheds +%= 1;
             return;
@@ -885,10 +898,69 @@ pub fn procinterrupt(p: *Proc) void {
             unlock(&q.use);
         },
         .Rendezvous => {
-            // M4: Try and pull out of a rendezvous (needs Rgrp).
+            // Try and pull out of a rendezvous
+            const rg = p.rgrp orelse return;
+            lock(&rg.lock);
+            if (p.state == .Rendezvous) {
+                var l: *?*Proc = &rg.rendhash[p.rendtag & (portdat.RENDHASH - 1)];
+                while (l.*) |d| : (l = &d.rendhash) {
+                    if (d == p) {
+                        l.* = p.rendhash;
+                        p.rendval = ~@as(usize, 0);
+                        unlock(&rg.lock);
+                        // hands off p->rgrp
+                        ready(p);
+                        return;
+                    }
+                }
+            }
+            unlock(&rg.lock);
         },
         else => {},
     }
+}
+
+/// pop a note from the calling process or suicide if theres
+/// no note handler or notify during note handling.
+/// Called from notify() with up->debug lock held.
+pub fn popnote(u: ?*Ureg) ?[]const u8 {
+    const up = cur();
+    up.notepending = false;
+    if (up.nnote == 0)
+        return null;
+
+    const first = up.note[0] orelse panic("popnote: no note", .{});
+    if (first.ref.ref <= 0) panic("popnote: ref", .{});
+
+    // hold off user notes during note handling
+    if (up.notified and first.flag == portdat.NUser)
+        return null;
+
+    freenote(up.lastnote);
+    up.lastnote = first;
+    up.nnote -= 1;
+    const n: usize = @intCast(up.nnote);
+    if (n > 0)
+        std.mem.copyForwards(?*Note, up.note[0..n], up.note[1 .. n + 1]);
+    up.note[n] = null;
+
+    const msg = std.mem.sliceTo(&first.msg, 0);
+    var text: []const u8 = msg;
+    if (u != null and first.ref.ref == 1 and std.mem.startsWith(u8, msg, "sys:")) {
+        const l = msg.len;
+        const more = fmt.snprint(first.msg[l .. portdat.ERRMAX - 1], " pc=%#p", .{u.?.pc});
+        first.msg[l + more.len] = 0;
+        text = first.msg[0 .. l + more.len];
+    }
+
+    if (up.notify == 0 or up.notified) {
+        ql.qunlock(&up.debug);
+        if (first.flag == portdat.NDebug)
+            _ = @import("devcons.zig").pprint("suicide: %s\n", .{text});
+        pexit(text, first.flag != portdat.NDebug);
+    }
+    up.notified = true;
+    return text;
 }
 
 fn mknote(msg: []const u8, flag: i32) *Note {
@@ -1088,7 +1160,11 @@ pub fn pexit(exitstr_: ?[]const u8, freemem: bool) noreturn {
     }
 
     ql.qlock(&up.seglock);
-    // M4: putseg(detachseg(up, i)) for every segment.
+    var sno: usize = portdat.NSEG;
+    while (sno > 0) {
+        sno -= 1;
+        segmod.putseg(segmod.detachseg(up, sno));
+    }
     ql.qunlock(&up.seglock);
 
     ql.qlock(&up.debug);
@@ -1175,8 +1251,7 @@ pub fn proctab(i: usize) ?*Proc {
 
 pub fn dumpaproc(p_: ?*Proc) void {
     const p = p_ orelse return;
-    // M4: bss is the top of the BSS segment.
-    const bss: usize = 0;
+    const bss: usize = if (p.seg[portdat.BSEG]) |b| b.top else 0;
     const s = p.psstate orelse statename(p.state);
     const ll = p.lastlock;
     print("%3lud:%10s pc %#p dbgpc %#p  %8s (%s) ut %ld st %ld bss %lux qpc %#p nl %d nd %lud lpc %#p pri %lud\n", .{
@@ -1285,6 +1360,43 @@ pub fn swaperr() void {
     const t = up.errstr;
     up.errstr = up.syserrstr;
     up.syserrstr = t;
+}
+
+/// called splhi() by notify().  See comment in notify for the
+/// reasoning.
+pub fn procctl() void {
+    const up = cur();
+    switch (up.procctl) {
+        portdat.Proc_exitbig => {
+            _ = arch.spllo();
+            print("%s %lud: Killed: Insufficient physical memory\n", .{ up.text, up.pid });
+            pexit("Killed: Insufficient physical memory", true);
+        },
+        portdat.Proc_exitme => {
+            _ = arch.spllo(); // pexit has locks in it
+            pexit("Killed", true);
+        },
+        portdat.Proc_traceme, portdat.Proc_stopme => {
+            if (up.procctl == portdat.Proc_traceme and up.nnote == 0)
+                return;
+            up.procctl = 0;
+            const state = up.psstate;
+            up.psstate = statename(.Stopped);
+            // free a waiting debugger
+            _ = arch.spllo();
+            ql.qlock(&up.debug);
+            if (up.pdbg) |d| {
+                _ = wakeup(&d.sleep);
+                up.pdbg = null;
+            }
+            ql.qunlock(&up.debug);
+            _ = arch.splhi();
+            up.state = .Stopped;
+            sched();
+            up.psstate = state;
+        },
+        else => {},
+    }
 }
 
 /// Set up.errstr from a format and return the error that says to look

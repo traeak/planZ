@@ -5,9 +5,9 @@
 //! DIFF:
 //!   - dupgen also stops when the descriptor is past the end of the fd
 //!     array, which the C takes on trust from maxfd.
-//!   - fdtochan (9/port/sysfile.c), procfdprint (9/port/devproc.c) and
-//!     readstr (9/port/devcons.c) are private copies here until those
-//!     files are ported; each is marked with where it goes.
+//!   - procfdprint (9/port/devproc.c) and readstr (9/port/devcons.c)
+//!     are private copies here until those files are ported; each is
+//!     marked with where it goes.
 //!   - procfdprint prints a missing path as chanpath does, where the C
 //!     would dereference nil.
 
@@ -21,6 +21,7 @@ const taslock = @import("taslock.zig");
 const proc = @import("proc.zig");
 const chan = @import("chan.zig");
 const devmod = @import("dev.zig");
+const sysfile = @import("sysfile.zig");
 const p9 = @import("print.zig");
 
 const panic = p9.panic;
@@ -28,6 +29,7 @@ const lock = taslock.lock;
 const unlock = taslock.unlock;
 const incref = portdat.incref;
 const cclose = chan.cclose;
+const fdtochan = sysfile.fdtochan;
 
 const Error = proc.Error;
 const Chan = portdat.Chan;
@@ -42,50 +44,6 @@ const QTFILE = fcall.QTFILE;
 const QTAUTH = fcall.QTAUTH;
 const DEVDOTDOT = portdat.DEVDOTDOT;
 const COPEN = portdat.COPEN;
-
-/// The Chan of a file descriptor of the current process, checked
-/// against the access mode wanted (mode < 0: any).  With iref the
-/// caller gets a reference to it.
-/// from 9/port/sysfile.c
-// M4: move to sysfile.zig
-fn fdtochan(fd: i32, mode: i32, chkmnt: bool, iref: bool) Error!*Chan {
-    const f = arch.up().?.fgrp.?;
-
-    lock(&f.lock);
-    const c = blk: {
-        if (fd >= 0 and fd < f.fd.len) {
-            if (f.fd[@intCast(fd)]) |c|
-                break :blk c;
-        }
-        unlock(&f.lock);
-        return error.Ebadfd;
-    };
-    if (iref)
-        _ = incref(&c.ref);
-    unlock(&f.lock);
-
-    if (chkmnt and c.flag & portdat.CMSG != 0) {
-        if (iref)
-            cclose(c);
-        return error.Ebadusefd;
-    }
-
-    if (mode < 0 or c.mode == lib.ORDWR)
-        return c;
-
-    if (mode & lib.OTRUNC != 0 and c.mode == lib.OREAD) {
-        if (iref)
-            cclose(c);
-        return error.Ebadusefd;
-    }
-
-    if (mode & ~@as(i32, lib.OTRUNC) != c.mode) {
-        if (iref)
-            cclose(c);
-        return error.Ebadusefd;
-    }
-    return c;
-}
 
 /// One line of /proc/n/fd; returns the part of s written.
 /// from 9/port/devproc.c

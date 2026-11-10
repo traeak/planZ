@@ -159,6 +159,10 @@ pub const Mach = extern struct {
 
     dr7: u64 = 0, // shadow copy of dr7
     xcr0: u64 = 0,
+
+    mmufree: ?*MMU = null, // freelist for MMU structures
+    mmucount: u32 = 0, // number of MMU structures in freelist
+    mmumap: [4]u64 = @splat(0), // bitmap of pml4 entries for zapping
 };
 
 comptime {
@@ -196,16 +200,59 @@ pub const FPactive = 1;
 pub const FPprotected = 2;
 pub const FPinactive = 3; // fpsave valid when fpstate >= FPincative
 
+pub const FPnotify = 0x100; // fp in note handler
+
+/// An XSAVE area: the legacy FXSAVE image, the XSAVE header, and the
+/// upper halves of the AVX registers.
+pub const FPalloc = struct {
+    save: [512 + 64 + 256]u8 align(mem.FPalign) = @splat(0),
+    link: ?*FPalloc = null, // when context nests
+
+    /// x87 control word
+    pub fn fcw(a: *const FPalloc) u32 {
+        return @as(u32, a.save[0]) | @as(u32, a.save[1]) << 8;
+    }
+    /// x87 status word
+    pub fn fsw(a: *const FPalloc) u32 {
+        return @as(u32, a.save[2]) | @as(u32, a.save[3]) << 8;
+    }
+    /// last x87 instruction pointer
+    pub fn rip(a: *const FPalloc) usize {
+        return @bitCast(a.save[8..16].*);
+    }
+    pub fn mxcsr(a: *const FPalloc) u32 {
+        return @bitCast(a.save[24..28].*);
+    }
+};
+
 /// Machine-specific FPU state of a process.
-/// DIFF: only the state word so far; the save areas arrive with user mode.
+/// DIFF: no kfpstate/kfpsave; the kernel does not use the FPU.
 pub const PFPU = struct {
     fpstate: i32 = FPinit,
-    kfpstate: i32 = FPinit,
+    fpsave: ?*FPalloc = null,
+};
+
+/// MMU structure for PDP, PD, PT pages.
+pub const MMU = struct {
+    next: ?*MMU = null,
+    page: [*]u64 = undefined,
+    index: usize = 0,
+    level: u6 = 0,
 };
 
 /// Machine-specific MMU state of a process.
-/// DIFF: empty until user mode.
-pub const PMMU = struct {};
+/// DIFF: no kmap list; physical memory is always mapped (DMAP).
+pub const PMMU = struct {
+    mmuhead: ?*MMU = null,
+    mmutail: ?*MMU = null,
+    mmucount: u32 = 0,
+
+    dr: [8]u64 = @splat(0),
+};
+
+/// Per-page record of which processors must flush their instruction
+/// cache before running it.  The x86 keeps its caches coherent itself.
+pub const Txtflush = struct {};
 
 pub const Active = struct {
     machs: [mem.MAXMACH]bool = @splat(false), // bitmap of active CPUs

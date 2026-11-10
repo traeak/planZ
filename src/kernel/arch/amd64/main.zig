@@ -23,6 +23,13 @@ const selftest = @import("../../port/selftest.zig");
 const devmod = @import("../../port/dev.zig");
 const chan = @import("../../port/chan.zig");
 const conf_pc64 = @import("../../conf/pc64.zig");
+const devroot = @import("../../port/devroot.zig");
+const devenv = @import("../../port/devenv.zig");
+const page = @import("../../port/page.zig");
+const userinit = @import("../../port/userinit.zig");
+const syscallmod = @import("../../port/syscall.zig");
+const portdat = @import("../../port/portdat.zig");
+const fmt = @import("fmt");
 const fpu = @import("fpu.zig");
 const Uart16550 = @import("../../drv/uart16550.zig").Uart16550;
 
@@ -150,6 +157,33 @@ fn archinit() void {
         panic("no ACPI tables", .{});
 }
 
+/// The first process, still in the kernel: finish what needs a process
+/// to do it, then leave for user mode and initcode.
+fn init0() noreturn {
+    chan.chandevinit();
+
+    var buf: [64]u8 = undefined;
+    devenv.ksetenv("terminal", fmt.snprint(&buf, "%s %s", .{ "generic", "pc64" }), false) catch {};
+    devenv.ksetenv("cputype", "amd64", false) catch {};
+    devenv.ksetenv("service", if (dat.cpuserver) "cpu" else "terminal", false) catch {};
+    // M5: setconfenv(), the plan9.ini settings as #ec variables.
+    proc.kproc("alarm", alarm.alarmkproc, null);
+
+    // DIFF: not in 9front; see port/selftest.zig.
+    proc.kproc("selftest", selftest.selftest, null);
+
+    // The stack initcode starts with: no return address, argv[0] "boot".
+    const sp: [*]usize = @ptrFromInt(mem.USTKTOP - @sizeOf(portdat.Tos) - 8 - @sizeOf(usize) * 4);
+    sp[3] = 0;
+    sp[2] = 0;
+    sp[1] = @intFromPtr(&sp[4]);
+    @as(*[5]u8, @ptrCast(&sp[4])).* = "boot\x00".*;
+    sp[0] = 0;
+
+    _ = l.splhi();
+    l.touser(@intFromPtr(sp));
+}
+
 pub fn main(bipa: u64) callconv(.c) noreturn {
     const bi: *const BootInfo = @ptrFromInt(mem.DMAP + bipa);
     bootargs.bootargsinit(bi);
@@ -177,13 +211,17 @@ pub fn main(bipa: u64) callconv(.c) noreturn {
 
     proc.procinit0();
     devmod.devtab = &conf_pc64.devtab;
+    devroot.addbootfile("boot", @embedFile("bootprog"));
+    // Given with -Dstock: an unmodified 9front binary for the user test
+    // to run.
+    const stockecho = @embedFile("stockecho");
+    if (stockecho.len != 0)
+        devroot.addbootfile("echo", stockecho);
     chan.chandevreset();
-
-    // DIFF: this is as far as the kernel goes for now; pageinit and
-    // userinit follow in later milestones.  In their place
-    // the first processes are the alarm process, which userinit's init0
-    // starts in the C, and the self-test.
-    proc.kproc("alarm", alarm.alarmkproc, null);
-    proc.kproc("selftest", selftest.selftest, null);
+    syscallmod.systabinit();
+    page.pageinit();
+    page.pagerinit();
+    userinit.init0 = init0;
+    userinit.userinit();
     proc.schedinit();
 }

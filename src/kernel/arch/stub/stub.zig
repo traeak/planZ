@@ -17,6 +17,26 @@ pub const mem = struct {
     pub const KSTACK = 16 * KiB;
     pub const MACHSIZE = 2 * KSTACK;
     pub const HZ = 100;
+    pub const BY2WD = 8;
+    pub const UTZERO: usize = 0x200000;
+    pub const USTKTOP: usize = 0x00007ffffffff000;
+    pub const USTKSIZE = 16 * MiB;
+    pub const KZERO: usize = 0xffffffff80000000;
+    pub const FPalign = 64;
+    pub const PTEMAPMEM = 1 * MiB;
+    pub const PTEPERTAB = PTEMAPMEM / BY2PG;
+    pub const SEGMAPSIZE = 65536;
+    pub const SSEGMAPSIZE = 16;
+    pub const PTEVALID: u64 = 1 << 0;
+    pub const PTEWRITE: u64 = 1 << 1;
+    pub const PTERONLY: u64 = 0 << 1;
+    pub const PTEUSER: u64 = 1 << 2;
+    pub const PTEUNCACHED: u64 = 1 << 4;
+    pub const PTECACHED: u64 = 0 << 4;
+
+    pub fn PGROUND(s: usize) usize {
+        return (s + BY2PG - 1) & ~@as(usize, BY2PG - 1);
+    }
 };
 
 pub const Proc = portdat.Proc;
@@ -61,11 +81,60 @@ pub const Mach = struct {
     load: i32 = 0,
     ilockdepth: i32 = 0,
     tlbflush: u32 = 0,
+    pfault: u32 = 0,
+    syscall: i32 = 0,
     perf: Perf = .{},
 };
 
 pub const PFPU = struct {};
 pub const PMMU = struct {};
+/// A real aarch64 or riscv64 port keeps a per-processor bitmap here.
+pub const Txtflush = struct {};
+pub fn inittxtflush(_: *portdat.Page) void {}
+pub fn settxtflush(_: *portdat.Page, _: bool) void {}
+pub const AOUT_MAGIC: u32 = 0;
+
+pub fn putmmu(_: usize, _: u64, _: *portdat.Page) void {}
+pub fn flushmmu() void {}
+pub fn checkmmu(_: usize, _: u64) void {}
+pub fn kmap(page: *portdat.Page) usize {
+    return page.pa;
+}
+pub fn kunmap(_: usize) void {}
+pub fn probe(_: usize, _: bool) callconv(.c) bool {
+    return true;
+}
+pub fn PTENOEXEC() u64 {
+    return 0;
+}
+pub fn procsetup(_: *Proc) void {}
+pub fn procfork(_: *Proc) void {}
+pub fn forkchild(_: *Proc, _: *Ureg) void {}
+pub fn execregs(_: usize, _: usize, _: usize, _: usize) usize {
+    return 0;
+}
+pub fn userpc() usize {
+    return 0;
+}
+pub fn setregisters(_: *Ureg, _: *const Ureg) void {}
+pub fn setkernur(_: *Ureg, _: *Proc) void {}
+pub fn validalign(_: usize) bool {
+    return true;
+}
+pub fn touser(_: usize) callconv(.c) noreturn {
+    while (true) {}
+}
+pub fn notify(_: *Ureg, _: []const u8) ?*Ureg {
+    return null;
+}
+pub fn noted(_: *Ureg, _: *Ureg, _: i32) bool {
+    return false;
+}
+pub fn fpunotify(_: *Proc) void {}
+pub fn fpunoted(_: *Proc) void {}
+pub fn syscall(_: *Ureg) callconv(.c) usize {
+    return 0;
+}
 
 pub const Active = struct {
     machs: [mem.MAXMACH]bool = @splat(false),
