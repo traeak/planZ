@@ -13,10 +13,14 @@ const mmu = @import("mmu.zig");
 const trap = @import("trap.zig");
 const apic = @import("apic.zig");
 const clock = @import("clock.zig");
-const alloc = @import("../../port/alloc.zig");
 const xalloc = @import("../../port/xalloc.zig");
 const p9 = @import("../../port/print.zig");
 const screen = @import("../../port/screen.zig");
+const proc = @import("../../port/proc.zig");
+const portclock = @import("../../port/portclock.zig");
+const alarm = @import("../../port/alarm.zig");
+const selftest = @import("../../port/selftest.zig");
+const fpu = @import("fpu.zig");
 const Uart16550 = @import("../../drv/uart16550.zig").Uart16550;
 
 const print = p9.print;
@@ -164,91 +168,17 @@ pub fn main(bipa: u64) callconv(.c) noreturn {
     cpu.cpuidprint();
     mmu.mmuinit();
     apic.intrinit();
+    fpu.mathinit();
+    portclock.timersinit();
     apic.clockenable();
 
-    // DIFF: this is as far as the kernel goes for now; procinit0,
-    // chandevreset, pageinit, userinit and schedinit follow in later
-    // milestones.
-    selftest();
-    l.idle();
-}
+    proc.procinit0();
 
-/// Exercise what M1 built.  `*selftest=fault` in plan9.ini ends with a
-/// deliberate kernel fault instead of a clean report.
-fn selftest() void {
-    print("%lludM memory: %lludM kernel data, %lludM user\n", .{
-        conf.npage * mem.BY2PG / mem.MiB,
-        (conf.npage - conf.upages) * mem.BY2PG / mem.MiB,
-        conf.upages * mem.BY2PG / mem.MiB,
-    });
-
-    malloctest();
-
-    _ = l.spllo();
-    const t0 = m().ticks;
-    const start = l.cycles();
-    while (m().ticks -% t0 < mem.HZ / 4) {
-        if (l.cycles() - start > 5 * m().cpuhz)
-            panic("selftest: clock is not ticking", .{});
-        l.halt();
-    }
-    const us = (l.cycles() - start) * 1000000 / m().cpuhz;
-    print("selftest: %d ticks in %lludms\n", .{ mem.HZ / 4, us / 1000 });
-    if (us < 200000 or us > 300000)
-        panic("selftest: clock rate is wrong", .{});
-
-    if (getconf("*selftest")) |t| {
-        if (std.mem.eql(u8, t, "fault")) {
-            print("selftest: faulting on purpose\n", .{});
-            const p: *volatile u32 = @ptrFromInt(0x1234);
-            p.* = 1;
-        }
-    }
-    print("selftest ok\n", .{});
-}
-
-fn malloctest() void {
-    const before = alloc.mallocstats().curalloc;
-    var slots: [128]?[]u8 = @splat(null);
-    var seed: u32 = 1;
-    var rounds: usize = 0;
-    while (rounds < 20000) : (rounds += 1) {
-        seed = seed *% 1103515245 +% 12345;
-        const i = (seed >> 16) % slots.len;
-        if (slots[i]) |s| {
-            for (s) |c| {
-                if (c != @as(u8, @truncate(i)))
-                    panic("selftest: malloc block %d damaged", .{i});
-            }
-            alloc.free(s.ptr);
-            slots[i] = null;
-            continue;
-        }
-        // Mostly small, now and then large.
-        const n: usize = if (seed & 0xff == 0) 100000 + (seed >> 8) % 400000 else 1 + (seed >> 8) % 3000;
-        const p = alloc.malloc(n) orelse panic("selftest: malloc(%lud) failed", .{n});
-        for (p[0..n]) |c| {
-            if (c != 0) panic("selftest: malloc memory not zeroed", .{});
-        }
-        @memset(p[0..n], @truncate(i));
-        slots[i] = p[0..n];
-    }
-    for (slots) |s| {
-        if (s) |b| alloc.free(b.ptr);
-    }
-
-    const a = alloc.mallocalign(3 * mem.BY2PG, mem.BY2PG, 0, 0) orelse panic("selftest: mallocalign failed", .{});
-    if (@intFromPtr(a) % mem.BY2PG != 0) panic("selftest: mallocalign not aligned", .{});
-    if (alloc.msize(a) < 3 * mem.BY2PG) panic("selftest: msize of aligned block", .{});
-    alloc.free(a);
-
-    var r = alloc.malloc(10).?;
-    @memcpy(r[0..10], "0123456789");
-    r = alloc.realloc(r, 5000).?;
-    if (!std.mem.eql(u8, r[0..10], "0123456789")) panic("selftest: realloc lost data", .{});
-    alloc.free(r);
-
-    if (alloc.mallocstats().curalloc != before)
-        panic("selftest: malloc leaked %lud bytes", .{alloc.mallocstats().curalloc - before});
-    print("selftest: malloc ok, %lludK in the arena\n", .{alloc.mallocstats().cursize / mem.KiB});
+    // DIFF: this is as far as the kernel goes for now; chandevreset,
+    // pageinit and userinit follow in later milestones.  In their place
+    // the first processes are the alarm process, which userinit's init0
+    // starts in the C, and the self-test.
+    proc.kproc("alarm", alarm.alarmkproc, null);
+    proc.kproc("selftest", selftest.selftest, null);
+    proc.schedinit();
 }

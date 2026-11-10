@@ -74,7 +74,7 @@ pub fn iprint(comptime format: []const u8, args: anytype) void {
     arch.splx(s);
 }
 
-var panicking: bool = false;
+pub var panicking: bool = false;
 
 pub fn panic(comptime format: []const u8, args: anytype) noreturn {
     _ = arch.splhi();
@@ -84,5 +84,5 @@ pub fn panic(comptime format: []const u8, args: anytype) noreturn {
         print("panic: " ++ format ++ "\n", args);
         arch.dumpstack();
     }
-    while (true) asm volatile ("hlt");
+    arch.stop();
 }

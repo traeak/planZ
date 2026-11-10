@@ -10,6 +10,7 @@ const mem = @import("mem.zig");
 const dat = @import("dat.zig");
 const l = @import("l.zig");
 const irq = @import("irq.zig");
+const proc = @import("../../port/proc.zig");
 const p9 = @import("../../port/print.zig");
 const print = p9.print;
 const iprint = p9.iprint;
@@ -90,15 +91,15 @@ const excname = [32][]const u8{
     "31 (reserved)",
 };
 
-fn userureg(ureg: *const Ureg) bool {
+pub fn userureg(ureg: *const Ureg) bool {
     return ureg.cs & 0xFFFF == mem.UESEL;
 }
 
 /// All traps and interrupts come here from the stubs in l.zig.
 pub fn trap(ureg: *Ureg) callconv(.c) void {
     const vno: usize = @intCast(ureg.type & 0xff);
-    const user = userureg(ureg);
-    // DIFF: kenter, fpukenter and the user half (usertrap, notes, kexit)
+    const user = proc.kenter(ureg);
+    // DIFF: fpukenter and the user half (usertrap, notes, kexit)
     // attach here.
     if (irq.irqhandled(ureg, vno) == 0) {
         if (!user) {
@@ -148,11 +149,14 @@ fn _dumpstack(ureg: *const Ureg) void {
 
     iprint("dumpstack\n", .{});
     iprint("ktrace /kernel/path %#p %#p <<EOF\n", .{ ureg.pc, ureg.sp });
-    // DIFF: a process's kernel stack is recognised here too, once there
-    // are processes.
-    if (!(sp >= mach and sp <= mach + mem.MACHSIZE))
+    var estack: usize = undefined;
+    const p = @intFromPtr(up());
+    if (p != 0 and sp >= p - mem.KSTACK and sp <= p)
+        estack = p
+    else if (sp >= mach and sp <= mach + mem.MACHSIZE)
+        estack = mach + mem.MACHSIZE
+    else
         return;
-    const estack = mach + mem.MACHSIZE;
     iprint("estackx %p\n", .{estack});
 
     var i: usize = 0;
@@ -192,7 +196,7 @@ fn faultamd64(ureg: *Ureg, _: ?*anyopaque) void {
     const addr = l.getcr2();
     const read = ureg.@"error" & 2 == 0;
 
-    // DIFF: no processes yet, so every fault is the kernel's own and
+    // DIFF: no user memory yet, so every fault is the kernel's own and
     // fatal; fault() and the user half attach here.
     dumpregs(ureg);
     if (addr >= mem.USTKTOP)

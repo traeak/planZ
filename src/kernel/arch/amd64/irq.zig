@@ -2,14 +2,15 @@
 //! from 9/pc/irq.c
 //!
 //! DIFF: the PCArch indirection is gone (there is one interrupt
-//! architecture, the APIC); the service-time histogram, preemption on
-//! the clock interrupt and the irqalloc file are not here yet.
+//! architecture, the APIC); the service-time histogram and the
+//! irqalloc file are not here yet.
 
 const std = @import("std");
 const dat = @import("dat.zig");
 const l = @import("l.zig");
 const apic = @import("apic.zig");
 const taslock = @import("../../port/taslock.zig");
+const proc = @import("../../port/proc.zig");
 const xalloc = @import("../../port/xalloc.zig");
 const p9 = @import("../../port/print.zig");
 const print = p9.print;
@@ -42,6 +43,7 @@ pub fn irqhandled(ureg: *Ureg, vno: usize) i32 {
         var v: ?*Vctl = ctl;
         while (v) |h| : (v = h.next) h.f(ureg, h.a);
         if (ctl.eoi) |eoi| _ = eoi(@intCast(vno));
+        proc.preempted(ctl == vclock);
         return 1;
     }
 

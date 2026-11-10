@@ -24,7 +24,7 @@ Consequences:
 - The xAPIC (memory-mapped) path is the baseline; x2APIC is the optional one.
 - The timer must work in LAPIC one-shot/periodic mode calibrated against HPET; TSC-deadline is the optional one.
 - Stock 9front binaries need nothing beyond SSE2, so the baseline constrains only the kernel.
-- Default test CPU is QEMU `SandyBridge`; `-Dcpu=Opteron_G4` is the AMD counterpart and `-Dcpu=max` the newest. A milestone is done only when `test-boot` passes on all three.
+- Default test CPU is QEMU `SandyBridge`; `-Dcpu=Opteron_G4` is the AMD counterpart and `-Dcpu=max` the newest. A milestone is done only when `test-boot` passes on all three. (`Opteron_G4` has to be written `Opteron_G4,+xsaveopt`; see the notes from M2.)
 
 ## What is kept exactly
 
@@ -127,7 +127,7 @@ Each ends with something visible on the QEMU serial console, checked by `zig bui
 
 ### M2 — Processes
 `proc` (scheduler without EDF), `taslock`, `qlock`, `portclock`, `tod`, `alarm`, `kproc`, kernel-side FPU state. `check-ports` build step added.
-- **Done when:** several kprocs sleep/wakeup/rendezvous under preemption for a minute.
+- **Done when:** several kprocs sleep/wakeup under preemption for a minute. (Rendezvous needs `Rgrp` and is a system call; it is tested in M4.)
 
 ### M3 — Channels and namespace
 `chan`, `dev`, `pgrp`, `qio`, `allocb`, `parse`, `fcall`; `devroot`, `devcons`, `devenv`, `devpipe`, `devdup`, `devsrv`.
@@ -194,8 +194,24 @@ The user's test machine: AMD Ryzen 5 5500 (Zen 3), 32GB RAM, Radeon RX 6500 XT. 
 
 | Milestone | State |
 |---|---|
+| M2 | done: kernel processes sleep, wake, queue on locks, get preempted, take notes and alarms, exit and are reused; the scheduling self-test ran for 60s. Not done: rendezvous, which is a system call and moves to M4 |
 | M1 | done: `zig build test` (host) and `zig build test-boot` (two boots: clean self-test, deliberate fault) pass on `SandyBridge`, `Opteron_G4` and `max`, in safe and debug builds |
 | M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=SandyBridge` (default), `Opteron_G4` and `max` |
+
+Notes from M2 for later milestones:
+
+- **Context switch.** `setlabel`/`gotolabel` are gone. `arch.swtch(from, to)` saves the callee-saved registers on the stack, stores SP in a `Label`, and returns once, later, in the context that called it. `sched()` is split: the half that runs in a process switches to the scheduler; the half that picks the next process is the loop in `schedinit()` on the processor's own stack.
+- **`up` is not a register.** Where the C relies on `up` staying set after `m->proc = nil` (in `schedinit`), the Zig passes that fact as a parameter (`ready0`, `updatecpu`, `reprioritize` take `isup`/`running`). Never hold `arch.m()` across anything that can switch; `m()` is `asm volatile` so the compiler re-reads it.
+- **Errors.** `port/error.zig` is generated from `error.h`: each E-string is an error tag, `errstr()` gives its text, `error.Str` means the text is in `up.errstr` (`proc.errorf` sets it). `sleep`, `tsleep`, `eqlock` and `pwait` return error unions; callers that must not be interrupted write `catch {}` and say why.
+- **`sleep` returns on any wakeup**, not only when its condition holds, exactly as in C. Callers loop.
+- **Stubs left in `proc.zig`**, each marked with the milestone: namespace and file groups in `pexit`/`kproc` and `forceclosefgrp` (M3); segments, `popnote`, the rendezvous case of `procinterrupt`, `procflushmmu`, `palloc` in `sched` (M4). `kproc` panics instead of waiting when the process table is full, until `resrcwait` arrives with `pgrp.c`.
+- **edf**: every hook is marked `// DIFF: edf` in `proc.zig`, `taslock.zig` and `portdat.zig`.
+- `hzclock` leaves out `flushmmu`, dtracy, kmap invalidation, profiling and shutdown.
+- `fpu.zig` only enables XSAVE and leaves CR0.TS set, so any floating-point use in the kernel traps. Process FPU state is M4.
+- Kernel stacks are 8K, 32K in Debug builds. `port/selftest.zig` keeps its tables static for that reason.
+- `zig build check-ports` compiles `port/`, `plat/acpi.zig` and the UART driver for aarch64 and riscv64 against `arch/stub/stub.zig`. Add each new portable file to `src/kernel/portcheck.zig`.
+- `tools/qrun.sh` boots `zig-out/esp` and prints the kernel's serial output; `*schedtest=N` in `plan9.ini` runs the scheduling test for N seconds.
+- **QEMU quirk:** QEMU's software CPU hangs on setting CR4.OSXSAVE for any model with XSAVE but without XSAVEOPT. Plain `Opteron_G4` hits it; the AMD test model is `Opteron_G4,+xsaveopt`. This is the emulator, not the kernel: `SandyBridge,-xsaveopt` hangs the same way.
 
 Notes from M1 for later milestones:
 

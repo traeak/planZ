@@ -4,14 +4,11 @@
 //!
 //! DIFF: the fast clock is always the time stamp counter, which the CPU
 //! baseline requires to be invariant; its rate is measured against the
-//! HPET.  The clock interrupt handler here only counts ticks and re-arms
-//! itself; port/portclock.c's timers replace it in M2.
+//! HPET.
 
 const acpi = @import("../../plat/acpi.zig");
-const mem = @import("mem.zig");
 const dat = @import("dat.zig");
 const l = @import("l.zig");
-const apic = @import("apic.zig");
 const hpet = @import("hpet.zig");
 const p9 = @import("../../port/print.zig");
 const panic = p9.panic;
@@ -43,11 +40,4 @@ pub fn microdelay(us: u64) void {
 
 pub fn delay(ms: u64) void {
     microdelay(ms * 1000);
-}
-
-/// The clock interrupt.
-pub fn timerintr(_: *dat.Ureg) void {
-    const mach = m();
-    mach.ticks +%= 1;
-    apic.lapictimerset(l.cycles() + mach.cpuhz / mem.HZ);
 }

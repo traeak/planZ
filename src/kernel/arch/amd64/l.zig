@@ -304,12 +304,44 @@ pub fn islo() bool {
     return getflags() & 0x200 != 0;
 }
 
+/// Stop this processor for good.
+pub fn stop() noreturn {
+    while (true) asm volatile (
+        \\ cli
+        \\ hlt
+    );
+}
+
 /// Wait for an interrupt.
 pub fn halt() void {
     asm volatile (
         \\ sti
         \\ hlt
     );
+}
+
+/// Halt until the next interrupt, unless a process became ready in the
+/// meantime.  The test and the halt cannot be separated by an
+/// interrupt: STI takes effect after the instruction that follows it.
+/// from halt in l.s
+pub fn idlehands(nrdy: *const i32) void {
+    asm volatile (
+        \\ cli
+        \\ cmpl $0, (%[nrdy])
+        \\ jne 1f
+        \\ sti
+        \\ hlt
+        \\1:
+        \\ sti
+        :
+        : [nrdy] "r" (nrdy),
+    );
+}
+
+/// Low bits of the cycle counter, for the idle and interrupt time
+/// statistics.
+pub fn perfticks() u32 {
+    return @truncate(cycles());
 }
 
 // Synchronisation
@@ -412,8 +444,54 @@ comptime {
             \\1:
             \\ addq $40, %rsp
             \\ iretq
+            \\
+            \\ /*
+            \\  * swtch(from, to): save the running context in Label *from
+            \\  * and resume the one saved in Label *to.  Returns when some
+            \\  * later swtch resumes *from.  The callee-saved registers
+            \\  * live on the stack being left; a Label holds the stack
+            \\  * pointer, and the return pc for the debugger's benefit.
+            \\  * DIFF: replaces setlabel and gotolabel.
+            \\  */
+            \\ .globl swtch
+            \\swtch:
+            \\ pushq %rbp
+            \\ pushq %rbx
+            \\ pushq %r12
+            \\ pushq %r13
+            \\ pushq %r14
+            \\ pushq %r15
+            \\ movq %rsp, 0(%rdi)
+            \\ movq 48(%rsp), %rax
+            \\ movq %rax, 8(%rdi)
+            \\ movq 0(%rsi), %rsp
+            \\ popq %r15
+            \\ popq %r14
+            \\ popq %r13
+            \\ popq %r12
+            \\ popq %rbx
+            \\ popq %rbp
+            \\ ret
+            \\
         , .{ .kesel = mem.KESEL }));
 }
 
 /// 256 six-byte entries; see trapinit0.
 pub extern const vectortable: [256 * 6]u8;
+
+pub extern fn swtch(from: *dat.Label, to: *dat.Label) callconv(.c) void;
+
+/// Make `p` start in `entry` the first time it is switched to: build
+/// the stack frame swtch expects to find.
+/// from kprocchild in 9/pc64/trap.c
+pub fn kprocchild(p: *dat.Proc, entry: *const fn () callconv(.c) noreturn) void {
+    // The kernel stack ends where the Proc begins.
+    const top = @intFromPtr(p);
+    const frame: *[8]usize = @ptrFromInt(top - 8 * @sizeOf(usize));
+    frame.* = @splat(0); // r15, r14, r13, r12, rbx, rbp ...
+    frame[6] = @intFromPtr(entry); // ... swtch's return address ...
+    // ... and a null return address for entry itself, which also leaves
+    // the stack aligned as the ABI wants on function entry.
+    p.sched.sp = @intFromPtr(frame);
+    p.sched.pc = @intFromPtr(entry);
+}

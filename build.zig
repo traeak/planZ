@@ -13,7 +13,9 @@ pub fn build(b: *std.Build) void {
         "UEFI firmware image for QEMU",
     ) orelse "/usr/share/qemu/edk2-x86_64-code.fd";
     // Sandy Bridge is a 2011 processor: the oldest hardware planZ aims at.
-    // Its AMD counterpart in QEMU is Opteron_G4 (Bulldozer).
+    // Its AMD counterpart in QEMU is Opteron_G4 (Bulldozer), which must be
+    // given as "Opteron_G4,+xsaveopt": QEMU's emulator hangs on enabling
+    // XSAVE for a model that has XSAVE but not XSAVEOPT.
     const cpu = b.option([]const u8, "cpu", "QEMU cpu model (default SandyBridge)") orelse "SandyBridge";
     const memory = b.option([]const u8, "mem", "QEMU memory size (default 512M)") orelse "512M";
 
@@ -102,7 +104,7 @@ pub fn build(b: *std.Build) void {
     const BootTest = struct { ini: ?[]const u8, expect: []const u8 };
     const boot_tests = [_]BootTest{
         .{ .ini = null, .expect = "selftest ok" },
-        .{ .ini = "*selftest=fault\n", .expect = "panic: kernel fault: write addr=0x1234" },
+        .{ .ini = "*selftest=fault\n*schedtest=1\n", .expect = "panic: kernel fault: write addr=0x1234" },
     };
     for (boot_tests) |t| {
         const bt = b.addSystemCommand(&.{ "sh", "tools/boottest.sh", "60", t.expect });
@@ -110,6 +112,25 @@ pub fn build(b: *std.Build) void {
         bt.addArgs(&.{ "-display", "none" });
         addEsp(b, bt, loader, kernel, t.ini);
         test_boot.dependOn(&bt.step);
+    }
+
+    // The portable kernel must compile for the architectures planZ means
+    // to reach later, against an architecture layer that does nothing.
+    const check_ports = b.step("check-ports", "Compile the portable kernel for aarch64 and riscv64");
+    for ([_]std.Target.Cpu.Arch{ .aarch64, .riscv64 }) |cpu_arch| {
+        const obj = b.addObject(.{
+            .name = b.fmt("portcheck-{s}", .{@tagName(cpu_arch)}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/kernel/portcheck.zig"),
+                .target = b.resolveTargetQuery(.{ .cpu_arch = cpu_arch, .os_tag = .freestanding, .abi = .none }),
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "bootinfo", .module = bootinfo },
+                    .{ .name = "fmt", .module = fmt },
+                },
+            }),
+        });
+        check_ports.dependOn(&obj.step);
     }
 
     // Unit tests of the parts that do not need the machine, run on the host.

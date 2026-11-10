@@ -77,6 +77,19 @@ pub fn mmuflushtlb() void {
     l.putcr3(paddr(@intFromPtr(m().pml4)));
 }
 
+/// Make `p`'s address space the current one.
+/// DIFF: kernel processes only so far, so all there is to do is point
+/// the TSS at the process's kernel stack; the user page tables arrive
+/// with user mode.
+pub fn mmuswitch(p: *dat.Proc, _: bool) void {
+    taskswitch(@intFromPtr(p));
+}
+
+/// Free the page tables of a dead process.
+pub fn mmurelease(_: *dat.Proc) void {
+    taskswitch(@intFromPtr(m()) + mem.MACHSIZE);
+}
+
 pub fn mmuinit() void {
     const mach = m();
 

@@ -176,9 +176,10 @@ pub fn MACHP(n: usize) *Mach {
     return machp[n].?;
 }
 
-/// This processor.
+/// This processor.  Not to be held across anything that can switch
+/// processes: the process may resume on another one.
 pub inline fn m() *Mach {
-    return asm ("movq %%gs:0, %[ret]"
+    return asm volatile ("movq %%gs:0, %[ret]"
         : [ret] "=r" (-> *Mach),
     );
 }
@@ -188,6 +189,23 @@ pub inline fn m() *Mach {
 pub inline fn up() ?*Proc {
     return m().proc;
 }
+
+// FPU states, Proc.fpu.fpstate
+pub const FPinit = 0;
+pub const FPactive = 1;
+pub const FPprotected = 2;
+pub const FPinactive = 3; // fpsave valid when fpstate >= FPincative
+
+/// Machine-specific FPU state of a process.
+/// DIFF: only the state word so far; the save areas arrive with user mode.
+pub const PFPU = struct {
+    fpstate: i32 = FPinit,
+    kfpstate: i32 = FPinit,
+};
+
+/// Machine-specific MMU state of a process.
+/// DIFF: empty until user mode.
+pub const PMMU = struct {};
 
 pub const Active = struct {
     machs: [mem.MAXMACH]bool = @splat(false), // bitmap of active CPUs

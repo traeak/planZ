@@ -16,6 +16,7 @@ const mmu = @import("mmu.zig");
 const irq = @import("irq.zig");
 const clock = @import("clock.zig");
 const taslock = @import("../../port/taslock.zig");
+const portclock = @import("../../port/portclock.zig");
 const p9 = @import("../../port/print.zig");
 const print = p9.print;
 const panic = p9.panic;
@@ -240,7 +241,7 @@ pub fn lapictimerset(next: u64) void {
 }
 
 fn lapicclock(ureg: *Ureg, _: ?*anyopaque) void {
-    clock.timerintr(ureg);
+    portclock.timerintr(ureg, 0);
 }
 
 pub fn lapicintron() void {

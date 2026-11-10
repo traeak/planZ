@@ -33,7 +33,10 @@ pub fn PGROUND(s: usize) usize {
 
 pub const MAXMACH = 128; // max # cpus system can run
 
-pub const KSTACK = 8 * KiB; // Size of Proc kernel stack
+// Size of Proc kernel stack.
+// DIFF: unoptimised Zig code uses several times the stack, so Debug
+// builds get more.
+pub const KSTACK = if (@import("builtin").mode == .debug) 32 * KiB else 8 * KiB;
 pub const MACHSIZE = 2 * KSTACK;
 
 // Time
