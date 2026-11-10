@@ -8,6 +8,7 @@
 const std = @import("std");
 const arch = @import("../arch.zig");
 const fmt = @import("fmt");
+const taslock = @import("taslock.zig");
 
 const PRINTSIZE = 256;
 
@@ -49,11 +50,19 @@ fn kmesgputs(s: []const u8) void {
 /// Print a string on the console.
 pub fn putstrn(s: []const u8) void {
     if (s.len == 0) return;
+    // One writer at a time, so lines from different processors do not
+    // mix.  A panic prints regardless: the lock's holder may be the
+    // processor that is panicking, or one that will never run again.
+    const locked = !panicking;
+    if (locked) taslock.ilock(&conslock);
     kmesgputs(s);
     for (consoles) |c| {
         if (c) |f| f(s);
     }
+    if (locked) taslock.iunlock(&conslock);
 }
+
+var conslock: taslock.Lock = .{};
 
 fn flush(f: *fmt.Fmt) void {
     putstrn(f.buf[0..f.n]);

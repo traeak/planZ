@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) void {
     // XSAVE for a model that has XSAVE but not XSAVEOPT.
     const cpu = b.option([]const u8, "cpu", "QEMU cpu model (default SandyBridge)") orelse "SandyBridge";
     const memory = b.option([]const u8, "mem", "QEMU memory size (default 512M)") orelse "512M";
+    const smp = b.option([]const u8, "smp", "QEMU processors (default 4)") orelse "4";
     // Unmodified 9front binaries, to check binary compatibility.  They
     // are not in the repository; see "Reference binaries" in PLAN.md for
     // what the directory must hold.
@@ -105,6 +106,8 @@ pub fn build(b: *std.Build) void {
         cpu,
         "-m",
         memory,
+        "-smp",
+        smp,
         "-drive",
         b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{firmware}),
         "-net",

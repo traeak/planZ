@@ -103,7 +103,10 @@ fn malloctest() void {
 
     stdalloctest();
 
-    if (alloc.mallocstats().curalloc != before)
+    // Other processes allocate while this runs, so the total in use is
+    // not ours to compare; only on one processor, where they have not
+    // started yet, can a leak be told.
+    if (arch.conf.nmach == 1 and alloc.mallocstats().curalloc != before)
         panic("selftest: malloc leaked %lud bytes", .{alloc.mallocstats().curalloc - before});
     print("selftest: malloc ok, %lludK in the arena\n", .{alloc.mallocstats().cursize / mem.KiB});
 }
@@ -661,6 +664,28 @@ fn alarmed(_: ?*anyopaque) void {
     done();
 }
 
+// Every processor runs processes: one process is wired to each and
+// reports where it found itself.
+
+var wiredon: [arch.mem.MAXMACH]i32 = @splat(-1);
+
+fn wiredproc(arg: ?*anyopaque) void {
+    const want = @intFromPtr(arg);
+    proc.procwired(arch.up().?, @intCast(want));
+    // Wiring takes effect the next time the process is scheduled.
+    pause(10);
+    var i: u32 = 0;
+    while (i < 5) : (i += 1) {
+        const on = arch.m().machno;
+        if (on != want)
+            panic("selftest: process wired to cpu%lud ran on cpu%d", .{ want, on });
+        proc.yield();
+        pause(1);
+    }
+    wiredon[want] = arch.m().machno;
+    done();
+}
+
 fn schedtest() void {
     var secs: u32 = 3;
     if (arch.getconf("*schedtest")) |s|
@@ -682,6 +707,7 @@ fn schedtest() void {
     spawn("notesleeper", notesleeper, null);
     spawn("notelocker", notelocker, null);
     spawn("alarmed", alarmed, null);
+    for (0..arch.conf.nmach) |i| spawn("wired", wiredproc, @ptrFromInt(i));
 
     // Let the two note victims get going, then post their notes.  With
     // three hogs taking full quanta that can take a while.
@@ -715,6 +741,12 @@ fn schedtest() void {
     });
     print("selftest: %ud delayed scheds, %ud cooperative, %ud preemptive\n", .{ proc.delayedscheds, proc.skipscheds, proc.preempts });
 
+    for (0..arch.conf.nmach) |i| {
+        if (wiredon[i] != @as(i32, @intCast(i)))
+            panic("selftest: nothing ran on cpu%lud", .{i});
+    }
+    print("selftest: %lud processors scheduling\n", .{arch.conf.nmach});
+
     if (pp.count[0] == 0 or pp.count[1] == 0) panic("selftest: pingpong did not run", .{});
     if (pc.consumed == 0 or pc.produced < pc.consumed) panic("selftest: queue did not run", .{});
     for (hogcount) |c| {
@@ -731,11 +763,11 @@ fn schedtest() void {
     if (!nt.slept or !nt.locked or !nt.alarmed) panic("selftest: notes: sleep %d eqlock %d alarm %d", .{ nt.slept, nt.locked, nt.alarmed });
 
     // The processes made here are gone and their slots are being used
-    // again: there were 17 at once, and the kernel and the user test
-    // have a few more.
+    // again: there were 17 and one per processor at once, and the
+    // kernel and the user test have a few more.
     var slots_used: u32 = 0;
     while (proc.proctab(slots_used) != null) slots_used += 1;
-    if (slots_used > 40)
+    if (slots_used > 48 + arch.conf.nmach)
         panic("selftest: %ud process slots used; exited processes are not being reused", .{slots_used});
     if (arch.up().?.pid != pid0) panic("selftest: pid changed", .{});
 }

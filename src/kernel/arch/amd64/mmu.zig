@@ -40,7 +40,7 @@ fn DATA32SEGM(p: u32) Segdesc {
     return .{ .d0 = 0xFFFF, .d1 = mem.SEGB | mem.SEGG | (0xF << 16) | mem.SEGP | mem.SEGPL(p) | mem.SEGDATA | mem.SEGW };
 }
 
-const gdt: [mem.NGDT]Segdesc = blk: {
+pub const gdt: [mem.NGDT]Segdesc = blk: {
     var g: [mem.NGDT]Segdesc = @splat(.{});
     g[mem.KESEG] = EXECSEGM(0); // kernel code
     g[mem.KDSEG] = DATASEGM(0); // kernel data
@@ -319,6 +319,11 @@ fn dmapnoexec() void {
             if (pde.* & mem.PTEVALID != 0) pde.* |= nx;
         }
     }
+    // The first 2MiB stay executable: an application processor starts
+    // in the AP bootstrap code there (see mp.zig).  Nothing else in
+    // that range is used.
+    const lo = mmuwalk(m().pml4, mem.DMAP, 1, false).?;
+    lo.* &= ~nx;
 }
 
 /// The page-table page a valid entry points to.

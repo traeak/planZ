@@ -322,7 +322,7 @@ pub fn intrinit() void {
         panic("no ACPI MADT: cannot find the interrupt controllers", .{});
     if (madt.nioapic == 0)
         panic("no I/O APIC", .{});
-    dat.conf.nmach = @intCast(@max(1, @min(madt.ncpu, mem.MAXMACH)));
+    // conf.nmach counts processors as they come on line; see mp.zig.
 
     i8259off();
 
@@ -343,6 +343,54 @@ pub fn intrinit() void {
 
     irq.intrenable(dat.IrqSPURIOUS, lapicspurious, null, dat.BUSUNKNOWN, "lapicspurious");
     irq.intrenable(dat.IrqERROR, lapicerror, null, dat.BUSUNKNOWN, "lapicerror");
+}
+
+const LapicFIELD = 0x00000000; // ICR: No shorthand
+const LapicASSERT = 0x00004000; // ICR: Assert level-sensitive interrupt
+const LapicDEASSERT = 0x00000000; // ICR: Deassert level-sensitive interrupt
+const ApicEDGE = 0x00000000; // Trigger Mode: edge
+const ApicSTARTUP = 0x00000600; // Startup IPI
+const MaxAPICNO = 254; // 255 is physical broadcast
+
+fn lapicicr(cmd: u64) void {
+    if (lapicbase == null) {
+        l.wrmsr(0x800 + (LapicICRLO >> 4), cmd);
+        return;
+    }
+    lapicw(LapicICRHI, @truncate(cmd >> 32));
+    lapicw(LapicICRLO, @truncate(cmd));
+}
+
+/// The processors the firmware lists, for mp.zig.
+pub fn cpus() []const acpi.Cpu {
+    return madt.cpu[0..madt.ncpu];
+}
+
+/// This processor's APIC id.
+pub fn apicno() u32 {
+    return lapicid();
+}
+
+/// Make the processor with APIC id `apicid` start in real mode at
+/// physical address v.
+pub fn lapicstartap(apicid: u32, v: u32) void {
+    // physical destination id
+    var crhi: u64 = @as(u64, apicid) << 32;
+    if (lapicbase != null and apicid <= MaxAPICNO)
+        crhi <<= 24;
+
+    // make apic's processor do a warm reset
+    lapicicr(crhi | LapicFIELD | ApicLEVEL | LapicASSERT | ApicINIT);
+    clock.microdelay(200);
+    lapicicr(crhi | LapicFIELD | ApicLEVEL | LapicDEASSERT | ApicINIT);
+    clock.delay(10);
+
+    // assumes apic is not an 82489dx
+    for (0..2) |_| {
+        // make apic's processor start at v in real mode
+        lapicicr(crhi | LapicFIELD | ApicEDGE | ApicSTARTUP | (v / mem.BY2PG));
+        clock.microdelay(200);
+    }
 }
 
 /// Start the clock interrupt and accept interrupts on this processor.

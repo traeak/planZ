@@ -32,6 +32,7 @@ const portdat = @import("../../port/portdat.zig");
 const fmt = @import("fmt");
 const fpu = @import("fpu.zig");
 const uartpc = @import("uartpc.zig");
+const mp = @import("mp.zig");
 const Uart16550 = @import("../../drv/uart16550.zig").Uart16550;
 
 const print = p9.print;
@@ -108,7 +109,7 @@ fn confinit() void {
 }
 
 /// Initialise the Mach of the processor this runs on.
-fn machinit() void {
+pub fn machinit() void {
     const mach = m();
     const machno = mach.machno;
     const pml4 = mach.pml4;
@@ -247,5 +248,6 @@ pub fn main(bipa: u64) callconv(.c) noreturn {
     page.pagerinit();
     userinit.init0 = init0;
     userinit.userinit();
+    mp.mpinit();
     proc.schedinit();
 }

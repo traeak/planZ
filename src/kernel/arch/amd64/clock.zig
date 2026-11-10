@@ -24,6 +24,11 @@ pub fn clockinit() void {
     hpet.hpetinit();
 }
 
+/// An application processor takes the bootstrap processor's measurement.
+pub fn clockinitap() void {
+    hpet.hpetinit();
+}
+
 /// Cycles since boot, and optionally how many there are per second.
 pub fn fastticks(hz: ?*u64) u64 {
     if (hz) |h| h.* = m().cpuhz;

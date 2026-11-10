@@ -194,12 +194,26 @@ The user's test machine: AMD Ryzen 5 5500 (Zen 3), 32GB RAM, Radeon RX 6500 XT. 
 
 | Milestone | State |
 |---|---|
+| M6 | working: all processors start and schedule; `test-boot` and `test-9front` pass with 1, 4 and 8 processors on all three CPU models. The plan's one-hour parallel run was still in progress when this was committed; its result is not yet known |
 | M5 | done: stock 9front `boot`, `paqfs` and `bootrc` run on the kernel and reach an interactive `rc` on the serial console; `/dev`, `/proc`, `/env`, `/srv` and union directories work from the shell. Tested by a scripted console session on all three CPU models and in a debug build |
 | M4 | done: the first process runs `initcode` in user mode and execs `/boot/boot`; fork, exec, exits/await, pipes, brk, rendezvous, notes, alarms and FPU state work; an unmodified 9front `/amd64/bin/echo` runs. Tested on all three CPU models and in a debug build |
 | M3 | done: `chan`, `dev`, `pgrp`, `qio`, `allocb`, `parse`, 9P marshalling (`lib/fcall.zig`), and devices root, cons, env, pipe, srv, dup. The boot self-test binds `#c #d #e #s`, writes `/dev/cons`, checks error text, uses `/env`, round-trips a pipe and copies a name space |
 | M2 | done: kernel processes sleep, wake, queue on locks, get preempted, take notes and alarms, exit and are reused; the scheduling self-test ran for 60s. Not done: rendezvous, which is a system call and moves to M4 |
 | M1 | done: `zig build test` (host) and `zig build test-boot` (two boots: clean self-test, deliberate fault) pass on `SandyBridge`, `Opteron_G4` and `max`, in safe and debug builds |
 | M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=SandyBridge` (default), `Opteron_G4` and `max` |
+
+Notes from M6 for later milestones:
+
+- **Processors** come from the ACPI MADT and are started by `arch/amd64/mp.zig` just before the bootstrap processor enters the scheduler. `conf.nmach` counts them as they come on line; `*ncpu=N` in `plan9.ini` limits them. QEMU runs with `-smp 4` by default (`-Dsmp=N`).
+- **AP start-up** uses two pages of low memory: the bootstrap code at 0x7000 (`apbootstrap` in `l.zig`, 16-, 32- and 64-bit code assembled to run at that address) and a start-up page table at 0x8000. If the firmware's memory map does not show both as ordinary RAM the kernel says so and stays on one processor. The first 2MiB stay executable through the direct map for this.
+- **Kernel page-table sharing.** Each processor has its own top-level table whose kernel half (entries 256-511) is copied when the processor starts. A top-level kernel entry created after that would exist on one processor only: `mpinit` creates the two for VMAP first, and nothing else may add one.
+- **No TLB shootdown interrupts**, as in 9front: a process whose mappings must change gets `newtlb` set and flushes at its next clock tick or switch; `procflushmmu` waits for that.
+- **Idle processors halt** and notice new work at their next clock tick (up to 10ms); 9front can use MWAIT instead where the CPU has it. Not ported.
+- **No TSC synchronisation** between processors (`syncclock`); the baseline's invariant TSC is assumed to be in step.
+- Console output takes a lock (`print.zig`), except while panicking.
+- Interrupts from devices all go to the bootstrap processor.
+- `conf.copymode` is 1 with more than one processor (copy on reference instead of copy on write), as in 9front.
+- The self-test wires a process to each processor and checks that it runs there. Its malloc leak check only runs with one processor, since other processes allocate concurrently.
 
 Notes from M5 for later milestones:
 

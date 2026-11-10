@@ -624,3 +624,147 @@ pub fn kprocchild(p: *dat.Proc, entry: *const fn () callconv(.c) noreturn) void 
     p.sched.sp = @intFromPtr(frame);
     p.sched.pc = @intFromPtr(entry);
 }
+
+/// Where the AP bootstrap code is copied to and started: a page in the
+/// first 64KB of physical memory.
+pub const APBOOTSTRAP = 0x7000;
+
+comptime {
+    asm (std.fmt.comptimePrint(
+            \\ /*
+            \\  * Start an Application Processor.  This is copied to a 4KB boundary
+            \\  * in the first 64KB of memory (APBOOTSTRAP).  The AP starts in
+            \\  * real-mode, with
+            \\  *   CS selector set to the startup memory address/16;
+            \\  *   CS base set to startup memory address;
+            \\  *   CS limit set to 64KB;
+            \\  *   CPL and IP set to 0.
+            \\  * from 9/pc64/apbootstrap.s
+            \\  *
+            \\  * DIFF: the code runs at APBOOTSTRAP, not where it is linked, so every
+            \\  * address in it is written as AP+(label-apbootstrap).  The processor is
+            \\  * handed its Mach in the first argument register; there is no Apic
+            \\  * structure to pass.
+            \\  */
+            \\ .section .rodata
+            \\ .balign 16
+            \\ .globl apbootstrap
+            \\ .globl apbootstrapend
+            \\ .set AP, {[ap]d}
+            \\apbootstrap:
+            \\ .code16
+            \\ ljmpw $0, $(AP + (_apstart - apbootstrap))
+            \\ .balign 8
+            \\_apvector:                         /* address APBOOTSTRAP+0x08 */
+            \\ .quad 0
+            \\_appml4:                           /* address APBOOTSTRAP+0x10 */
+            \\ .quad 0
+            \\_apmach:                           /* address APBOOTSTRAP+0x18 */
+            \\ .quad 0
+            \\_apefer:                           /* address APBOOTSTRAP+0x20 */
+            \\ .quad 0x100                       /* Long Mode Enable */
+            \\_apstart:
+            \\ movw %cs, %ax
+            \\ movw %ax, %ds                     /* initialise DS */
+            \\ lgdtl AP + (_apgdtptr - apbootstrap)   /* load a basic gdt */
+            \\ movl %cr0, %eax
+            \\ orl $1, %eax
+            \\ movl %eax, %cr0                   /* turn on protected mode */
+            \\ ljmpl $(3 << 3), $(AP + (_ap32 - apbootstrap))
+            \\
+            \\ /*
+            \\  * Enable and activate Long Mode. From the manual:
+            \\  *  make sure Page Size Extentions are off, and Page Global
+            \\  *  Extensions and Physical Address Extensions are on in CR4;
+            \\  *  set Long Mode Enable in the Extended Feature Enable MSR;
+            \\  *  set Paging Enable in CR0;
+            \\  *  make an inter-segment jump to the Long Mode code.
+            \\  * It's all in 32-bit mode until the jump is made.
+            \\  */
+            \\ .code32
+            \\_ap32:
+            \\ movw $(2 << 3), %ax
+            \\ movw %ax, %ds
+            \\ movw %ax, %es
+            \\ movw %ax, %fs
+            \\ movw %ax, %gs
+            \\ movw %ax, %ss
+            \\ movl AP + (_appml4 - apbootstrap), %eax   /* physical address of PML4 */
+            \\ movl %eax, %cr3                   /* load the mmu */
+            \\ movl %cr4, %eax
+            \\ andl $~0x00000010, %eax           /* Page Size */
+            \\ orl $0x000000A0, %eax             /* Page Global, Phys. Address */
+            \\ movl %eax, %cr4
+            \\ movl $0xc0000080, %ecx            /* Extended Feature Enable */
+            \\ rdmsr
+            \\ orl AP + (_apefer - apbootstrap), %eax
+            \\ wrmsr
+            \\ movl %cr0, %edx
+            \\ andl $~0x6000000a, %edx
+            \\ orl $0x80010000, %edx             /* Paging Enable, Write Protect */
+            \\ movl %edx, %cr0
+            \\ ljmpl $(1 << 3), $(AP + (_ap64 - apbootstrap))
+            \\
+            \\ /*
+            \\  * Long mode. Welcome to 2003.
+            \\  * Initialise the stack and call the startup code in _apvector,
+            \\  * which is in the kernel proper and loads the real tables.
+            \\  */
+            \\ .code64
+            \\_ap64:
+            \\ xorl %eax, %eax
+            \\ movw %ax, %ds
+            \\ movw %ax, %es
+            \\ movw %ax, %fs
+            \\ movw %ax, %gs
+            \\ movw %ax, %ss
+            \\ movl $(AP + (_apmach - apbootstrap)), %eax
+            \\ movq (%rax), %rdi                 /* Mach* */
+            \\ movq %rdi, %rsp
+            \\ addq ${[machsize]d}, %rsp
+            \\ xorl %ebp, %ebp
+            \\ pushq $0                          /* clear flags */
+            \\ popfq
+            \\ movl $(AP + (_apvector - apbootstrap)), %eax
+            \\ movq (%rax), %rax
+            \\ call *%rax
+            \\1:
+            \\ hlt
+            \\ jmp 1b
+            \\
+            \\ .balign 8
+            \\_apgdt:
+            \\ /* null descriptor */
+            \\ .long 0
+            \\ .long 0
+            \\ /* (KESEG) 64 bit long mode exec segment */
+            \\ .long 0xFFFF
+            \\ .long {[seg64]d}
+            \\ /* 32 bit data segment descriptor for 4 gigabytes (PL 0) */
+            \\ .long 0xFFFF
+            \\ .long {[seg32d]d}
+            \\ /* 32 bit exec segment descriptor for 4 gigabytes (PL 0) */
+            \\ .long 0xFFFF
+            \\ .long {[seg32x]d}
+            \\_apgdtptr:
+            \\ .word 4*8-1
+            \\ .long AP + (_apgdt - apbootstrap)
+            \\apbootstrapend:
+            \\ .text
+        , .{
+            .ap = APBOOTSTRAP,
+            .machsize = mem.MACHSIZE,
+            .seg64 = mem.SEGL | mem.SEGG | mem.SEGP | (0xF << 16) | mem.SEGPL(0) | mem.SEGEXEC | mem.SEGR,
+            .seg32d = mem.SEGG | mem.SEGB | (0xF << 16) | mem.SEGP | mem.SEGPL(0) | mem.SEGDATA | mem.SEGW,
+            .seg32x = mem.SEGG | mem.SEGD | (0xF << 16) | mem.SEGP | mem.SEGPL(0) | mem.SEGEXEC | mem.SEGR,
+        }));
+}
+
+/// The AP bootstrap code and where it ends.  Its first words, at fixed
+/// offsets, are filled in before each processor is started.
+pub extern const apbootstrap: u8;
+pub extern const apbootstrapend: u8;
+pub const ApVector = 0x08; // address of the startup function
+pub const ApPml4 = 0x10; // physical address of the page tables to start on
+pub const ApMach = 0x18; // the processor's Mach
+pub const ApEfer = 0x20; // bits to set in the EFER MSR
