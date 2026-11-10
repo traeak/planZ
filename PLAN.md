@@ -8,9 +8,23 @@ Source of truth: `~/master/9front` (commit `aea3a900e`). Zig 0.17.0. Test machin
 |---|---|
 | Where to start | Kernel first; userland later |
 | First architecture | amd64. aarch64 and riscv64 must stay possible (see "Portability rules") |
-| Hardware baseline | Post-2010 machines and QEMU only: 64-bit, UEFI, ACPI, APIC, PCIe, MSI |
+| Hardware baseline | 2011 and later (Intel Sandy Bridge, AMD Bulldozer) and QEMU: 64-bit, UEFI, ACPI, APIC, PCIe, MSI. See "CPU baseline" |
 | Style | **Faithful interfaces, lean internals.** What programs observe is ported exactly; the platform layer is written fresh; optional subsystems are left out |
 | ABI | Plan 9 amd64 syscall ABI and a.out loader are kept, so stock 9front binaries run |
+
+## CPU baseline
+
+**Required** (the kernel panics at boot without them): XSAVE, invariant TSC, NX, SYSCALL/SYSRET, local APIC.
+
+**Used when CPUID reports them, never required:** x2APIC, TSC-deadline timer, RDRAND/RDSEED, 1GiB pages, PCID, SMEP, SMAP, XSAVEOPT. Each is a feature check, not a second implementation of a subsystem. They cannot be required because AMD gained TSC-deadline and x2APIC only with Zen-era parts, years after Intel.
+
+Consequences:
+
+- `fpu.c` is ported with the XSAVE path only; the FXSAVE path and the `fpsave`/`fprestore` function-pointer switch are dropped (`// DIFF: xsave only`).
+- The xAPIC (memory-mapped) path is the baseline; x2APIC is the optional one.
+- The timer must work in LAPIC one-shot/periodic mode calibrated against HPET; TSC-deadline is the optional one.
+- Stock 9front binaries need nothing beyond SSE2, so the baseline constrains only the kernel.
+- Default test CPU is QEMU `SandyBridge`; `-Dcpu=Opteron_G4` is the AMD counterpart and `-Dcpu=max` the newest. A milestone is done only when `test-boot` passes on all three.
 
 ## What is kept exactly
 
@@ -43,7 +57,8 @@ These define Plan 9 to user programs. Port them file-for-file from `9/port`, kee
 | Interrupt controllers | 8259 PIC, MP tables | LAPIC + IOAPIC from the ACPI MADT |
 | PCI interrupts | INTx routed through ACPI AML (`libaml`) | MSI/MSI-X on PC. No AML interpreter |
 | PCI config access | Ports 0xCF8/0xCFC, PCI BIOS | ECAM (memory-mapped, from ACPI MCFG) |
-| Timers | 8253 PIT | HPET for calibration, LAPIC timer for ticks, TSC for fast ticks |
+| Timers | 8253 PIT | HPET for calibration, LAPIC timer for ticks, invariant TSC for fast ticks |
+| FPU state | FXSAVE and XSAVE paths chosen at boot | XSAVE only |
 | Display | CGA text, VGA drivers, real-mode VESA | Linear framebuffer handed over by the boot loader |
 | Storage / net drivers | ~60 drivers incl. IDE, ISA, PCMCIA | virtio-blk, virtio-net, NVMe, AHCI, xHCI; real NICs as needed |
 | Boot | 32-bit multiboot, BIOS e820 | UEFI loader written in Zig, passes a `BootInfo` |
@@ -141,7 +156,7 @@ Framebuffer `screen`, `libmemdraw`, `libmemlayer`, `devdraw`, `devmouse`, `devkb
 - **Done when:** stock `rio` runs.
 
 ### M9 — Real hardware
-Boot on one physical post-2010 machine; add the NIC and quirks it needs; audio (HDA) if wanted.
+Boot on one physical 2011-or-later machine; add the NIC and quirks it needs; audio (HDA) if wanted.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
@@ -162,7 +177,7 @@ Boot on one physical post-2010 machine; add the NIC and quirks it needs; audio (
 | Error-union rewrite changes behaviour where C relied on longjmp (notes interrupting `sleep`, `error()` deep in drivers) | Convert each site by hand against the original |
 | ABI drift (Ureg, Tos, notes, `/proc` text) breaks stock binaries | Comptime layout asserts; compare against stock 9front running in a reference VM |
 | MSI-only excludes a device someone needs | Interrupt interface allows a static INTx table; add per platform |
-| Some 2010–2012 machines are BIOS-only | Out of scope unless hit; a multiboot front end can fill the same `BootInfo` |
+| Some 2011–2012 machines are BIOS-only | Out of scope unless hit; a multiboot front end can fill the same `BootInfo` |
 | x86-only assumptions creep into `port/` | `check-ports` build from M2 |
 
 ## Working method
@@ -176,7 +191,7 @@ Boot on one physical post-2010 machine; add the NIC and quirks it needs; audio (
 
 | Milestone | State |
 |---|---|
-| M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=Westmere` (default) and `-Dcpu=max`, 512M and 8G |
+| M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=SandyBridge` (default), `Opteron_G4` and `max` |
 
 Notes from M0 for later milestones:
 

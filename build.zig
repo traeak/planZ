@@ -12,8 +12,9 @@ pub fn build(b: *std.Build) void {
         "firmware",
         "UEFI firmware image for QEMU",
     ) orelse "/usr/share/qemu/edk2-x86_64-code.fd";
-    // Westmere is a 2010 processor: the oldest hardware planZ aims at.
-    const cpu = b.option([]const u8, "cpu", "QEMU cpu model (default Westmere)") orelse "Westmere";
+    // Sandy Bridge is a 2011 processor: the oldest hardware planZ aims at.
+    // Its AMD counterpart in QEMU is Opteron_G4 (Bulldozer).
+    const cpu = b.option([]const u8, "cpu", "QEMU cpu model (default SandyBridge)") orelse "SandyBridge";
     const memory = b.option([]const u8, "mem", "QEMU memory size (default 512M)") orelse "512M";
 
     const bootinfo = b.createModule(.{ .root_source_file = b.path("src/boot/bootinfo.zig") });
