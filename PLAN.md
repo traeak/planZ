@@ -176,4 +176,14 @@ Boot on one physical post-2010 machine; add the NIC and quirks it needs; audio (
 
 | Milestone | State |
 |---|---|
-| M0 | not started |
+| M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=Westmere` (default) and `-Dcpu=max`, 512M and 8G |
+
+Notes from M0 for later milestones:
+
+- Zig 0.17 renames met so far: `std.lang.Optimize` with `.debug/.safe/.fast/.small`; `@backingInt` instead of `@intFromEnum`; `run.addPassthruArgs()` instead of `b.args`; no install-path query at configure time (QEMU boots from a `addWriteFiles` directory in the cache).
+- The kernel file on the boot volume is `planz`; the loader is `EFI/BOOT/BOOTX64.EFI`. `zig build` also installs both under `zig-out/esp`.
+- The loader maps physical memory `[0, max(4GiB, top of RAM))` at `DMAP` and at 0. Device memory above that is not mapped; M1's `vmap` must handle it (the QEMU framebuffer is below 4GiB, a real one may not be).
+- The loader refuses to boot if the firmware has 5-level paging on.
+- `test-boot` is `tools/boottest.sh` (POSIX sh), not a Zig tool.
+- `port/print.zig` is a placeholder (`puts`, `hex`, `dec`); replace it with the Plan 9 verb formatter first thing in M1.
+- No `zig build test` step yet; add it with the first host-testable module (`lib/fmt`).
