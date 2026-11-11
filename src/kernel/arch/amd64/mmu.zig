@@ -345,6 +345,9 @@ pub fn paddr(va: usize) u64 {
         const bi = bootargs.bootinfop;
         if (va - bi.kernel_virt < bi.kernel_size)
             return va - bi.kernel_virt + bi.kernel_phys;
+    } else if (va >= mem.VMAPHI) {
+        if (vmaphipa(va)) |pa|
+            return pa;
     } else if (va >= mem.VMAP) {
         return va - mem.VMAP;
     } else if (va >= mem.DMAP) {
@@ -499,10 +502,62 @@ pub fn punmap(va_: usize, size_: usize) void {
     }
 }
 
+/// Device memory mapped by vmap() from above VMAPSIZE, where the rule
+/// "VMAP plus the physical address" has no room.  Not in the C; see
+/// vmap().
+const Hi = struct {
+    va: usize = 0, // of the page holding the first byte
+    pa: u64 = 0,
+    size: usize = 0, // 0: entry not in use
+};
+
+var vmaphi: struct {
+    lock: taslock.Lock = .{},
+    /// Next unused address of the VMAPHI region.
+    next: usize = mem.VMAPHI,
+    maps: [64]Hi = @splat(.{}),
+} = .{};
+
+/// Physical address of `va` in the VMAPHI region, if it is mapped.
+fn vmaphipa(va: usize) ?u64 {
+    taslock.lock(&vmaphi.lock);
+    defer taslock.unlock(&vmaphi.lock);
+    for (&vmaphi.maps) |*h| {
+        if (h.size != 0 and va >= h.va and va - h.va < h.size)
+            return h.pa + (va - h.va);
+    }
+    return null;
+}
+
+/// Take `size` bytes of the VMAPHI region for the pages at `pa`.
+fn vmaphialloc(pa: u64, size: usize) ?usize {
+    taslock.lock(&vmaphi.lock);
+    defer taslock.unlock(&vmaphi.lock);
+    const h = for (&vmaphi.maps) |*h| {
+        if (h.size == 0) break h;
+    } else return null;
+    // The same offset within a 2MiB page as the memory has, so that
+    // pmap can use large pages.
+    const big = mem.PGLSZ(1);
+    const va = ((vmaphi.next + big - 1) & ~(big - 1)) + (pa & (big - 1));
+    if (size > mem.VMAPHISIZE or va - mem.VMAPHI > mem.VMAPHISIZE - size)
+        return null;
+    vmaphi.next = va + size;
+    h.* = .{ .va = va, .pa = pa, .size = size };
+    return va;
+}
+
 /// Map device memory at `pa`; returns its kernel address, or null.
 /// The mapping is uncached and not executable.
+///
+/// DIFF: memory that ends above VMAPSIZE.  The C finds unused physical
+/// address space below VMAPSIZE with upaalloc and maps the memory at
+/// VMAP plus that.  Here it gets a slot of the VMAPHI region instead,
+/// which does not depend on knowing what the firmware left unused.
+/// Addresses of that region are not used again after vunmap: another
+/// processor may still have the old translation, and there is room.
 pub fn vmap(pa_: u64, size_: usize) ?usize {
-    if (pa_ < mem.BY2PG or size_ == 0 or pa_ +% size_ < pa_ or pa_ + size_ > mem.VMAPSIZE) {
+    if (pa_ < mem.BY2PG or size_ == 0 or pa_ +% size_ < pa_) {
         print("vmap pa=%llux size=%lld pc=%#p\n", .{ pa_, size_, @returnAddress() });
         return null;
     }
@@ -510,13 +565,38 @@ pub fn vmap(pa_: u64, size_: usize) ?usize {
     const o = pa_ & (mem.BY2PG - 1);
     const pa = pa_ - o;
     const size = mem.PGROUND(size_ + o);
-    const va = mem.VMAP + pa;
+    if (size < size_ or pa +% size < pa) {
+        print("vmap pa=%llux size=%lld pc=%#p\n", .{ pa_, size_, @returnAddress() });
+        return null;
+    }
+    const va = if (pa + size > mem.VMAPSIZE)
+        vmaphialloc(pa, size) orelse {
+            print("vmap pa=%llux size=%lld pc=%#p: no room\n", .{ pa_, size_, @returnAddress() });
+            return null;
+        }
+    else
+        mem.VMAP + pa;
     pmap(pa | mem.PTEUNCACHED | mem.PTEWRITE | PTENOEXEC() | mem.PTEVALID, va, size);
     return va + o;
 }
 
+/// DIFF: a mapping in the VMAPHI region is removed and forgotten; one
+/// in VMAP stays, as in the C.
 pub fn vunmap(va: usize, _: usize) void {
     _ = paddr(va); // will panic on error
+    if (va < mem.VMAPHI or va >= mem.KZERO)
+        return;
+    taslock.lock(&vmaphi.lock);
+    const found: ?Hi = for (&vmaphi.maps) |*h| {
+        if (h.size != 0 and va >= h.va and va - h.va < h.size) {
+            const copy = h.*;
+            h.size = 0;
+            break copy;
+        }
+    } else null;
+    taslock.unlock(&vmaphi.lock);
+    if (found) |h|
+        punmap(h.va, h.size);
 }
 
 /// mark pages as write combining (used for framebuffer)

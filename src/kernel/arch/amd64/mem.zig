@@ -57,6 +57,12 @@ pub const USTKSIZE = 16 * MiB; // size of user stack
 pub const DMAP: usize = bootinfo.dmap_base; // direct map of physical memory
 pub const VMAP: usize = 0xfffffe8000000000;
 pub const VMAPSIZE = 1024 * GiB;
+/// Where device memory above VMAPSIZE is mapped: slots are handed out
+/// from here by mmu.zig's vmap.  It lies between the end of VMAP and
+/// KZERO, under the kernel's own top-level page-table entry, which all
+/// processors share.
+pub const VMAPHI: usize = VMAP + VMAPSIZE;
+pub const VMAPHISIZE = 256 * GiB;
 pub const KZERO: usize = 0xffffffff80000000;
 pub const KTZERO: usize = KZERO + 1 * MiB + 64 * KiB; // must match kernel.ld
 
