@@ -34,8 +34,6 @@
 //!   - There is no ISA configuration layer; ISAConf and isaconfig are
 //!     private stand-ins here (M7).  The options of an ISAConf are
 //!     slices into a private copy of the configuration string.
-//!   - mainmem->maxsize, which caps the output queue size, does not
-//!     exist; the size of kernel memory from conf stands in for it.
 //!   - fmtinstall('E', eipfmt) is gone: an address prints itself when
 //!     wrapped with ea(), `print("%E", .{ea(ether.ea)})`.
 //!   - The network console (console=net ... in plan9.ini) is not
@@ -544,9 +542,7 @@ fn etheroqsize(ether: *Ether) i32 {
     var q: i64 = 128 * 1024;
     while (q < b)
         q <<= 1;
-    // DIFF: mainmem->maxsize in the C
-    const conf = arch.conf;
-    const maxsize: i64 = @intCast(@min((conf.npage - conf.upages) * arch.mem.BY2PG, 1 << 40));
+    const maxsize: i64 = @intCast(@min(alloc.mainmem.maxsize, 1 << 40));
     if (@divTrunc(maxsize, 8) < q)
         q = @divTrunc(maxsize, 8);
     return @intCast(@min(q, std.math.maxInt(i32)));

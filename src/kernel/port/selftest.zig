@@ -79,6 +79,8 @@ fn malloctest() void {
         // Mostly small, now and then large.
         const n: usize = if (seed & 0xff == 0) 100000 + (seed >> 8) % 400000 else 1 + (seed >> 8) % 3000;
         const p = alloc.malloc(n) orelse panic("selftest: malloc(%lud) failed", .{n});
+        if (@intFromPtr(p) % 16 != 0) panic("selftest: malloc memory not aligned to 16", .{});
+        if (alloc.msize(p) < n) panic("selftest: msize less than the request", .{});
         for (p[0..n]) |c| {
             if (c != 0) panic("selftest: malloc memory not zeroed", .{});
         }
@@ -95,11 +97,37 @@ fn malloctest() void {
     if (alloc.msize(a) < 3 * mem.BY2PG) panic("selftest: msize of aligned block", .{});
     alloc.free(a);
 
+    // a block that may not cross a 64K boundary, with an offset
+    for (0..64) |i| {
+        const n = 3000 + 500 * i;
+        const b = alloc.mallocalign(n, 64, 8, 64 * mem.KiB) orelse panic("selftest: mallocalign with span failed", .{});
+        if (@intFromPtr(b) % 64 != 8) panic("selftest: mallocalign offset", .{});
+        if (@intFromPtr(b) / (64 * mem.KiB) != (@intFromPtr(b) + n - 1) / (64 * mem.KiB))
+            panic("selftest: mallocalign block crosses its span", .{});
+        slots[i] = b[0..n];
+    }
+    for (slots[0..64]) |*s| {
+        alloc.free(s.*.?.ptr);
+        s.* = null;
+    }
+
+    // the tags are the callers
+    const t = alloc.malloc(1).?;
+    const tag = alloc.getmalloctag(t);
+    if (tag < @intFromPtr(&malloctest) or tag > @intFromPtr(&malloctest) + 16 * mem.KiB)
+        panic("selftest: malloc tag %#p is not in malloctest", .{tag});
+    alloc.free(t);
+
     var r = alloc.malloc(10).?;
     @memcpy(r[0..10], "0123456789");
     r = alloc.realloc(r, 5000).?;
     if (!std.mem.eql(u8, r[0..10], "0123456789")) panic("selftest: realloc lost data", .{});
-    alloc.free(r);
+    r = alloc.realloc(r, 3).?;
+    if (!std.mem.eql(u8, r[0..3], "012")) panic("selftest: realloc lost data", .{});
+    if (alloc.realloc(r, 0) != null) panic("selftest: realloc to nothing", .{});
+    // nothing to nothing is a block of no bytes
+    alloc.free(alloc.realloc(null, 0).?);
+    alloc.free(alloc.malloc(0).?);
 
     stdalloctest();
 

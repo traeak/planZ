@@ -2,23 +2,20 @@
 //! From /sys/src/libmemdraw/alloc.c.
 //!
 //! DIFF:
-//!   - The image pool.  The C takes pixel memory from the kernel's
-//!     `imagmem` pool (poolalloc/poolfree), a pool that may compact
-//!     itself and then calls memimagemove for every block it moved.
-//!     planZ has one allocator and it never moves a block, so pixel
-//!     memory comes from it (kernel.zig's malloc, port/alloc.zig in the
-//!     kernel).  The block layout is kept: Memdata.base points at the
-//!     allocation, whose first word points back at the Memdata, then a
-//!     32-bit word with the allocator's caller, then the pixels at
-//!     Memdata.bdata.  memimagemove is ported and nothing calls it.
-//!   - Pixel memory comes back zeroed; poolalloc does not clear.
-//!   - allocmemimage asks for one word more than the C does.  draw.c's
-//!     readbyte and writebyte go through a 4-byte word for pixels of 2
-//!     and 3 bytes, so at the last pixel of an image they read, and
-//!     write back unchanged, up to 3 bytes past the pixels.  In C that
-//!     lands in the pool's slack; here it would land in the next
-//!     block's header, where a write-back could undo a concurrent
-//!     change.
+//!   - The image pool.  As in C, pixel memory comes from the kernel's
+//!     `imagmem` pool with poolalloc and poolfree, reached through
+//!     kernel.zig's imagalloc and imagfree (a test allocator in host
+//!     tests), and it is not cleared.  Not as in C, the pool never
+//!     compacts itself: the C's memimageinit sets imagmem->move to
+//!     memimagemove, after which poolnewarena moves the pixels of
+//!     every image down over the free blocks whenever the pool has
+//!     reached its maximum size.  Here the hook stays nil, so a full
+//!     image pool just fails the allocation.  memimagemove is ported
+//!     and nothing calls it; pool.zig's compaction is ported and
+//!     tested on the host.  Nothing has checked that every holder of
+//!     an image's bdata (the software cursor, the console) could
+//!     stand the pixels moving.
+//!   - memimagemove panics where the C prints and calls abort.
 //!   - werrstr is kernel.zig's (up.errstr in the kernel).
 //!   - byteaddr does its arithmetic on addresses: the intermediate
 //!     bdata+zero is outside the allocation for most rectangles.  The
@@ -131,8 +128,7 @@ pub fn allocmemimage(r: Rectangle, chan: u32) ?*Memimage {
     const md = kernel.new(Memdata) orelse return null;
 
     md.ref = 1;
-    // DIFF: one more word than the C asks for, see the header.
-    const base = kernel.malloc(@sizeOf(*Memdata) + (1 + @as(usize, @intCast(nw)) + 1) * @sizeOf(u32)) orelse {
+    const base = kernel.imagalloc(@sizeOf(*Memdata) + (1 + @as(usize, @intCast(nw))) * @sizeOf(u32)) orelse {
         kernel.free(md);
         return null;
     };
@@ -150,7 +146,7 @@ pub fn allocmemimage(r: Rectangle, chan: u32) ?*Memimage {
     md.allocd = true;
 
     const i = allocmemimaged(r, chan, md) orelse {
-        kernel.free(md.base);
+        kernel.imagfree(md.base);
         kernel.free(md);
         return null;
     };
@@ -163,7 +159,7 @@ pub fn freememimage(i_: ?*Memimage) void {
     i.data.ref -= 1;
     if (i.data.ref == 0 and i.data.allocd) {
         if (i.data.base) |b|
-            kernel.free(b);
+            kernel.imagfree(b);
         kernel.free(i.data);
     }
     kernel.free(i);

@@ -13,7 +13,7 @@
 //!     variable, where the C keeps an empty table of ROUND(from->nent)
 //!     slots.
 //!   - envrealloc takes an unsigned size, so its test for a negative one
-//!     is gone, and it does not call setmalloctag (alloc.zig has none).
+//!     is gone.
 //!   - envread treats a negative offset as end of file and envwrite
 //!     answers it with Etoobig, where the C would index before the value.
 //!   - envhash hashes bytes as unsigned; the C's char is signed.  Only
@@ -183,6 +183,7 @@ fn envrealloc(eg: *Egrp, old: ?*anyopaque, newsize: usize) Error!?[*]u8 {
         return error.Enomem;
     eg.alloc += alloc.msize(new);
     eg.alloc -= oldsize;
+    alloc.setmalloctag(new, @returnAddress());
     return new;
 }
 

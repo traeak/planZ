@@ -1,12 +1,14 @@
 //! What libmemdraw and libmemlayer need from their surroundings: memory
 //! and werrstr.  Not from a C file.
 //!
-//! In the kernel these are port/alloc.zig and up.errstr (the kernel's
-//! werrstr, 9/port/sysproc.c).  In a host test build (`zig test`) they
-//! are a small allocator over std.testing.allocator, which also checks
-//! for leaks and puts guard bytes around every block (checkguards), and
-//! nothing.  The choice is made at compile time so that
-//! the libraries' own test blocks run on the host without the kernel.
+//! In the kernel these are port/alloc.zig, its image pool `imagmem`
+//! for pixels (poolalloc/poolfree, as libmemdraw/alloc.c has it), and
+//! up.errstr (the kernel's werrstr, 9/port/sysproc.c).  In a host test
+//! build (`zig test`) they are a small allocator over
+//! std.testing.allocator, which also checks for leaks and puts guard
+//! bytes around every block (checkguards), and nothing.  The choice is
+//! made at compile time so that the libraries' own test blocks run on
+//! the host without the kernel.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -14,6 +16,7 @@ const builtin = @import("builtin");
 pub const hosted = builtin.is_test;
 
 const impl = if (hosted) host else @import("../port/alloc.zig");
+const pool = if (hosted) struct {} else @import("../port/pool.zig");
 
 /// Zeroed memory, or null.
 pub const malloc = impl.malloc;
@@ -23,6 +26,18 @@ pub const free = impl.free;
 pub const new = impl.new;
 /// Zeroed memory for n Ts, or null.
 pub const newslice = impl.newslice;
+
+/// poolalloc(imagmem, size): memory for pixels, not cleared.
+pub fn imagalloc(size: usize) ?[*]u8 {
+    if (hosted) return host.imagalloc(size);
+    return pool.poolalloc(impl.imagmem, size);
+}
+
+/// poolfree(imagmem, v)
+pub fn imagfree(v: ?*anyopaque) void {
+    if (hosted) return host.free(v);
+    pool.poolfree(impl.imagmem, v);
+}
 
 /// Host tests only: is every live block's surrounding guard intact,
 /// and how many blocks are live.
@@ -168,6 +183,22 @@ const host = struct {
         if (h.next) |x| x.prev = h.prev;
         nlive -= 1;
         std.testing.allocator.free(p[0..h.size]);
+    }
+
+    /// The image pool of the tests.  draw.zig's readbyte and writebyte
+    /// go through a 4-byte word for pixels of 2 and 3 bytes, so at the
+    /// last pixel of an image they read, and write back unchanged, up
+    /// to 3 bytes past the pixels.  In the pool those are the block's
+    /// own slack or tail, which nothing else writes while the image
+    /// lives; here they would be guard bytes, or with pageguard an
+    /// inaccessible page, so every block gets a word more than asked.
+    /// The memory is zeroed, which poolalloc's is not, because the
+    /// expected values of the tests come from the C built with a
+    /// poolalloc that clears (tools/drawref/support.c).  Filled with
+    /// 0x5A instead, one value of the layer test changes
+    /// (k2.origin1.a), and the C changes to the same value.
+    pub fn imagalloc(size: usize) ?[*]u8 {
+        return host.malloc(size + 4);
     }
 
     pub fn new(comptime T: type) ?*T {

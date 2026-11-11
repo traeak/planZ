@@ -4,3 +4,5 @@ ref/
 tools/drawref/obj/
 tools/drawref/cref
 core.[0-9]*
+tools/poolref/obj/
+tools/poolref/pref

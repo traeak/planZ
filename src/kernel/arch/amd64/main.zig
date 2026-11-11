@@ -14,6 +14,7 @@ const trap = @import("trap.zig");
 const apic = @import("apic.zig");
 const clock = @import("clock.zig");
 const xalloc = @import("../../port/xalloc.zig");
+const alloc = @import("../../port/alloc.zig");
 const p9 = @import("../../port/print.zig");
 const screen = @import("../../port/screen.zig");
 const draw = @import("../../libdraw/draw.zig");
@@ -108,6 +109,11 @@ fn confinit() void {
         if (userpcnt < 10)
             userpcnt = if (conf.npage * mem.BY2PG < 16 * mem.MiB) 50 else 60;
         kpages = conf.npage - (conf.npage * userpcnt) / 100;
+
+        // Make sure terminals with low memory get at least
+        // 4MB on the first Image chunk allocation.
+        if (conf.npage * mem.BY2PG < 16 * mem.MiB)
+            alloc.imagmem.minarena = 4 * mem.MiB;
     }
 
     // DIFF: the C stops the kernel's share at the size of its part of
@@ -122,8 +128,33 @@ fn confinit() void {
     conf.upages = conf.npage - kpages;
     conf.ialloc = (kpages / 2) * mem.BY2PG;
 
-    // DIFF: the C goes on to size the main and image pools; the
-    // allocator here has no limits to set.
+    // Guess how much is taken by the large permanent
+    // datastructures. Mntcache and Mntrpc are not accounted for.
+    kpages *= mem.BY2PG;
+    kpages -|= @as(usize, conf.nproc) * @sizeOf(*portdat.Proc) +
+        @as(usize, conf.nimage) * @sizeOf(portdat.Image) +
+        @as(usize, @intCast(conf.nswap)) +
+        @as(usize, @intCast(conf.nswppo)) * @sizeOf(*portdat.Page);
+    alloc.mainmem.maxsize = kpages;
+
+    // the dynamic allocation will balance the load properly,
+    // hopefully. be careful with 32-bit overflow.
+    alloc.imagmem.maxsize = kpages - (kpages / 10);
+    if (getconf("*imagemaxmb")) |p| {
+        alloc.imagmem.maxsize = (std.fmt.parseInt(usize, p, 0) catch 0) *| mem.MiB;
+        if (alloc.imagmem.maxsize > alloc.mainmem.maxsize)
+            alloc.imagmem.maxsize = alloc.mainmem.maxsize;
+    }
+
+    // DIFF (new): *poolflags=N turns on the pools' debugging flags
+    // (pool.zig's POOL_*: 1 antagonism, 2 paranoia, 64 noreuse ...)
+    // for the main and image pools.  The C has them only at compile
+    // time.
+    if (getconf("*poolflags")) |p| {
+        const f = std.fmt.parseInt(u32, p, 0) catch 0;
+        alloc.mainmem.flags |= f;
+        alloc.imagmem.flags |= f;
+    }
 }
 
 /// Initialise the Mach of the processor this runs on.

@@ -6,9 +6,11 @@
 //!     of memdraw.zig; memimageinit sets them.
 //!   - memimageinit returns nothing and panics if it cannot allocate
 //!     its two one-pixel images (the C returns -1, which the kernel
-//!     never checks).  The `imagmem->move = memimagemove` hook-up is
-//!     gone with the compacting pool (see alloc.zig), and so are the
-//!     fmtinstall calls: %R and %P are fmt9 methods in libdraw/draw.zig
+//!     never checks).  The C sets `imagmem->move =
+//!     memimagemove` here, which lets the image pool compact itself
+//!     when it has reached its maximum size; that is left out (see
+//!     alloc.zig), so the pool never moves a block.  The fmtinstall
+//!     calls are gone: %R and %P are fmt9 methods in libdraw/draw.zig
 //!     and %b is not used by the library.
 //!   - hwdraw is hwdraw.zig's, which calls the screen's hook.
 //!   - Buffer: the three mask fields m, bm, em and their skip counts,
@@ -27,8 +29,10 @@
 //!     fits the old size would use nil.  Here the size is reset to 0.
 //!   - As the C does, readbyte and writebyte handle a pixel of fewer
 //!     than 4 bytes through a 4-byte word, so they touch up to 3 bytes
-//!     past the last pixel of an image; alloc.zig allocates one spare
-//!     word for that.
+//!     past the last pixel of an image.  In the image pool that is
+//!     the block's slack or the first bytes of its own tail, written
+//!     back as they were; see kernel.zig's host.imagalloc for the
+//!     tests.
 //!   - A bug of the C fixed on purpose.  In the word-at-a-time branch
 //!     of alphacalc2810 and alphacalc3679 (32-bit source and
 //!     destination with matching channels) the C advances bdst.alpha

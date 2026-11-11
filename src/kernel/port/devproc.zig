@@ -26,8 +26,7 @@
 //!     kernel's direct map of physical memory lies below KZERO here.
 //!     Kernel addresses are readable by eve only inside conf.mem's
 //!     kbase..klimit, and inside the kernel image only if the
-//!     architecture says where it ends (arch.end).  There is no secrmem
-//!     pool to exclude (alloc.secalloc uses the ordinary one).
+//!     architecture says where it ends (arch.end).
 //!   - segio, with segmentioproc and docmd, is ported here from
 //!     9/port/segment.c (marked `M5: belongs in segment.zig`).  The C
 //!     kproc simply copies and relies on error() unwinding out of a
@@ -54,6 +53,7 @@ const arch = @import("../arch.zig");
 const portdat = @import("portdat.zig");
 const lib = @import("lib.zig");
 const alloc = @import("alloc.zig");
+const pool = @import("pool.zig");
 const taslock = @import("taslock.zig");
 const ql = @import("qlock.zig");
 const proc = @import("proc.zig");
@@ -840,8 +840,7 @@ fn procread(c: *Chan, va: []u8, off: i64) Error!usize {
             if (addr < mem.USTKTOP)
                 return procctlmemio(c, p, addr, va, true);
 
-            // DIFF: no poolisoverlap(secrmem, addr, n)
-            if (!iseve())
+            if (!iseve() or pool.poolisoverlap(alloc.secrmem, addr, n))
                 return error.Eperm;
 
             // validate kernel addresses

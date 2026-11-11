@@ -6,8 +6,6 @@
 //!   - allocb waits for memory with a plain tsleep until resrcwait
 //!     exists (M3, pgrp.c); an interrupting note is ignored there as in
 //!     the C.
-//!   - setmalloctag and mallocsummary do not exist in alloc.zig; the
-//!     calls are left out.
 //!   - The poison freeb leaves in a dead block is Bdead ("QIOB") for the
 //!     byte pointers, but Bdeadp (Bdead rounded down to the alignment
 //!     of a Block) for next, list and pool: a Zig pointer to a struct
@@ -120,10 +118,13 @@ pub fn allocb(size: usize) *Block {
     const up = arch.up() orelse
         panic("allocb without up: %#p", .{@returnAddress()});
     while (true) {
-        if (_allocb(size, BLOCKALIGN)) |b|
+        if (_allocb(size, BLOCKALIGN)) |b| {
+            alloc.setmalloctag(b, @returnAddress());
             return b;
+        }
         if (up.nlocks != 0 or arch.m().ilockdepth != 0 or !arch.islo()) {
             xalloc.xsummary();
+            alloc.mallocsummary();
             panic("allocb: no memory for %lud bytes", .{size});
         }
         // M3: resrcwait("no memory for allocb"), once pgrp.c is ported.
@@ -144,12 +145,14 @@ pub fn iallocb(size: usize) ?*Block {
         if ((n % 10000) == 0) {
             if (S.nerr > 10000000) {
                 xalloc.xsummary();
+                alloc.mallocsummary();
                 panic("iallocb: out of memory", .{});
             }
             iprint("iallocb: no memory for %lud bytes\n", .{size});
         }
         return null;
     };
+    alloc.setmalloctag(b, @returnAddress());
     b.flag = BINTR;
 
     return b;
@@ -211,6 +214,7 @@ pub fn iallocbp(p: *Bpool) ?*Block {
         p.@"align" = _alignment(p.@"align");
         const b = _allocb(p.size, p.@"align") orelse
             return null;
+        alloc.setmalloctag(b, @returnAddress());
         b.pool = p;
         b.flag = BINTR;
         return b;
@@ -229,6 +233,7 @@ pub fn growbp(p: *Bpool, n_: usize) void {
         alloc.free(b);
         return;
     };
+    alloc.setmalloctag(b, @returnAddress());
     while (n > 0) {
         b[0] = .{
             .base = a,

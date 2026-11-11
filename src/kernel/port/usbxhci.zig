@@ -15,9 +15,6 @@
 //!     with it; Hci.aux points at the Xhci and ctlrof gets the Ctlr.
 //!   - dmaflush is gone: arch.zig has no such service, and no platform
 //!     so far needs one (memory is coherent with device DMA).
-//!   - mallocalign's `span` argument (the block may not cross a multiple
-//!     of span) is not implemented in alloc.zig; dmaalloc gets the same
-//!     effect by raising the alignment to the block's size.
 //!   - Registers, rings and device contexts are volatile pointers, and
 //!     the 64-bit values in them are written as two 32-bit words, low
 //!     word first (the C stores through a u64int pointer).  xecp
@@ -394,14 +391,8 @@ fn dma(ctlr: *Ctlr, va: anytype) u64 {
     return ctlr.xhci.dmaaddr(@intFromPtr(va));
 }
 
-/// DIFF: mallocalign(size, alignment, 0, span), see the top of the file.
 fn dmaalloc(size: usize, alignment: usize, span: usize) ?[*]u8 {
-    var a = alignment;
-    if (span != 0) {
-        while (a < size and a < span)
-            a <<= 1;
-    }
-    return alloc.mallocalign(size, a, 0, 0);
+    return alloc.mallocalign(size, alignment, 0, span);
 }
 
 /// DIFF: the Epio pair of an open endpoint (ep->aux).

@@ -23,6 +23,13 @@ const Hole = struct {
 
 // DIFF: size is a full word; the C uses ulong, which cannot describe
 // the multi-gigabyte arrays a machine with a lot of memory needs.
+// That makes the header 16 bytes, and xallocz rounds sizes to Xalign,
+// 16, where the C rounds to 8: what xalloc returns is then aligned to
+// 16 as long as holes start on multiples of 16, which those from
+// xinit (pages), xfree and xspanalloc without a span do.  The pools
+// of alloc.zig need that for their arenas; see there.
+const Xalign = 16;
+
 const Xhdr = extern struct {
     size: usize,
     magix: usize,
@@ -82,7 +89,8 @@ pub fn xspanalloc(size: usize, alignment: usize, span: usize) usize {
 
 pub fn xallocz(size_: usize, zero: bool) ?usize {
     // add room for magix & size overhead, round up to nearest vlong
-    const size = (size_ + mem.BY2V + hdrsize) & ~@as(usize, mem.BY2V - 1);
+    // DIFF: to Xalign, see Xhdr
+    const size = (size_ + Xalign + hdrsize) & ~@as(usize, Xalign - 1);
 
     taslock.ilock(&xlists.lock);
     var l: *?*Hole = &xlists.table;
@@ -119,6 +127,32 @@ pub fn xfree(p: usize) void {
         panic("xfree(%#p) %#ux != %#lux", .{ p, @as(usize, Magichole), x.magix });
     }
     xhole(arch.paddr(@intFromPtr(x)), x.size);
+}
+
+/// Were p and q, both from xalloc, allocated one after the other?  Then
+/// they become one allocation, p's.
+pub fn xmerge(vp: usize, vq: usize) bool {
+    const p: *Xhdr = @ptrFromInt(vp - hdrsize);
+    const q: *Xhdr = @ptrFromInt(vq - hdrsize);
+    if (p.magix != Magichole or q.magix != Magichole) {
+        xsummary();
+        const badp: usize = @intFromPtr(if (p.magix != Magichole) p else q);
+        var wd: [*]u32 = @ptrFromInt(badp - 12 * @sizeOf(u32));
+        var i: usize = 24;
+        while (i > 0) : (i -= 1) {
+            print("%#p: %lux", .{ @intFromPtr(wd), wd[0] });
+            if (@intFromPtr(wd) == badp)
+                print(" <-", .{});
+            print("\n", .{});
+            wd += 1;
+        }
+        panic("xmerge(%#p, %#p) bad magic %#lux, %#lux", .{ vp, vq, p.magix, q.magix });
+    }
+    if (@intFromPtr(p) + p.size == @intFromPtr(q)) {
+        p.size += q.size;
+        return true;
+    }
+    return false;
 }
 
 /// Give [addr, addr+size) of physical memory to the allocator.

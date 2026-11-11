@@ -34,6 +34,7 @@ const files = .{
     @import("port/fis.zig"),
     @import("port/lib.zig"),
     @import("port/pgrp.zig"),
+    @import("port/pool.zig"),
     @import("port/memmap.zig"),
     @import("port/netif.zig"),
     @import("port/page.zig"),

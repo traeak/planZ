@@ -22,10 +22,7 @@
 //!     time.  Here libmemdraw/hwdraw.zig keeps `pub var hook`, nil by
 //!     default (meaning "not handled", as hwdraw.c answers); screen.zig
 //!     sets `hwdraw.hook = &its_hwdraw` when it attaches the screen.
-//!   - The image pool: see libmemdraw/alloc.zig.  Pixel memory comes
-//!     from alloc.zig, there is no compaction, memimagemove exists but
-//!     nothing calls it.  Memdata.base still points at the allocation
-//!     and its first word still points back at the Memdata.
+//!   - The image pool: see libmemdraw/alloc.zig and kernel.zig.
 //!   - libmemdraw/kernel.zig (not from a C file) is where the library
 //!     gets malloc, free and werrstr: port/alloc.zig and up.errstr in
 //!     the kernel, a test allocator under `zig test`.  A file that

@@ -11,12 +11,6 @@
 //!   - The directory has no "swapfile".
 //!   - Reading swap reports "0/0 swap".  reclaim counts only idle image
 //!     pages: there is no fscache (no mount cache) and no swapimage.
-//!   - "kernel malloc" comes from alloc.mallocstats(); the allocator
-//!     has no maximum size, so the third figure is the size of kernel
-//!     memory, (conf.npage-conf.upages)*BY2PG, which is what confinit
-//!     sets mainmem->maxsize to in 9/pc64/main.c.  There are no draw
-//!     and secret pools (secalloc uses the one allocator): those lines
-//!     read 0/0/0.
 //!   - Writing a file descriptor number, which in 9front makes that
 //!     file the swap file, fails with "no swap".  "start" still kicks
 //!     the pager.
@@ -75,7 +69,6 @@ fn swapread(c: *Chan, va: []u8, off: i64) Error!usize {
         Qswap => {
             const conf = arch.conf;
             const reclaim: usize = segment.imagecached();
-            const ms = alloc.mallocstats();
             const kpages: usize = conf.npage - conf.upages;
             const s = fmt.snprint(&tmp, "%llud memory\n" ++
                 "%llud pagesize\n" ++
@@ -95,15 +88,15 @@ fn swapread(c: *Chan, va: []u8, off: i64) Error!usize {
                 @as(usize, 0),
                 reclaim,
                 page.palloc.user,
-                @as(u64, ms.curalloc),
-                @as(u64, ms.cursize),
-                @as(u64, kpages) * BY2PG,
-                @as(u64, 0),
-                @as(u64, 0),
-                @as(u64, 0),
-                @as(u64, 0),
-                @as(u64, 0),
-                @as(u64, 0),
+                @as(u64, alloc.mainmem.curalloc),
+                @as(u64, alloc.mainmem.cursize),
+                @as(u64, alloc.mainmem.maxsize),
+                @as(u64, alloc.imagmem.curalloc),
+                @as(u64, alloc.imagmem.cursize),
+                @as(u64, alloc.imagmem.maxsize),
+                @as(u64, alloc.secrmem.curalloc),
+                @as(u64, alloc.secrmem.cursize),
+                @as(u64, alloc.secrmem.maxsize),
             });
             return readstr(@as(u32, @truncate(@as(u64, @bitCast(off)))), va, s);
         },

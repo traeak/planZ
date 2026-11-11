@@ -308,6 +308,18 @@ pub fn build(b: *std.Build) void {
         }) });
         test_step.dependOn(&b.addRunArtifact(unit).step);
     }
+    {
+        // The pool allocator; see the top of the file.
+        const unit = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path("src/kernel/pooltest.zig"),
+            .target = b.graph.host,
+            .optimize = .safe,
+            .imports = &.{
+                .{ .name = "fmt", .module = fmt },
+            },
+        }) });
+        test_step.dependOn(&b.addRunArtifact(unit).step);
+    }
 }
 
 /// Build a user program for the Plan 9 amd64 ABI and return its a.out.
