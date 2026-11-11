@@ -34,9 +34,14 @@ pub fn PGROUND(s: usize) usize {
 pub const MAXMACH = 128; // max # cpus system can run
 
 // Size of Proc kernel stack.
-// DIFF: unoptimised Zig code uses several times the stack, so Debug
-// builds get more.
-pub const KSTACK = if (@import("builtin").mode == .debug) 32 * KiB else 8 * KiB;
+// DIFF: 16K where the C has 8K.  LLVM's frames are much larger than the
+// Plan 9 compilers', mostly from inlining: drawing into a window under
+// rio, measured, took 5.3K of the stack and each further level of
+// screens nested in windows (rio inside rio) 1.2K more, so a client of
+// rio running inside rio came within 450 bytes of the end of 8K, and one
+// level more ran off it.  Unoptimised Zig code uses several times the
+// stack again, so Debug builds get 32K.
+pub const KSTACK = if (@import("builtin").mode == .debug) 32 * KiB else 16 * KiB;
 pub const MACHSIZE = 2 * KSTACK;
 
 // Time
