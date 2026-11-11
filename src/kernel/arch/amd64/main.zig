@@ -84,9 +84,11 @@ fn confinit() void {
     }
 
     var userpcnt: usize = 0;
+    var asked = false;
     if (getconf("*kernelpercent")) |p| {
         const k = std.fmt.parseInt(usize, p, 0) catch 0;
         userpcnt = 100 -| k;
+        asked = userpcnt >= 10;
     }
 
     conf.npage = 0;
@@ -107,6 +109,15 @@ fn confinit() void {
             userpcnt = if (conf.npage * mem.BY2PG < 16 * mem.MiB) 50 else 60;
         kpages = conf.npage - (conf.npage * userpcnt) / 100;
     }
+
+    // DIFF: the C stops the kernel's share at the size of its part of
+    // the address space, 2GiB ("can't go past the end of virtual
+    // memory").  The direct map has no such end, and without a limit
+    // the kernel would keep 40% of a large machine's memory that it
+    // cannot give back.  The limit here is 4GiB, unless
+    // *kernelpercent asks for a share.
+    if (!asked and kpages > 4 * mem.GiB / mem.BY2PG)
+        kpages = 4 * mem.GiB / mem.BY2PG;
 
     conf.upages = conf.npage - kpages;
     conf.ialloc = (kpages / 2) * mem.BY2PG;
