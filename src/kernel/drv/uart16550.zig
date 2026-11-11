@@ -34,7 +34,7 @@
 //!     platform uses them yet; they are here so that `zig build
 //!     check-ports` compiles the whole driver for the other
 //!     architectures, which a generic function alone does not do.
-//!   - `init`, `putc` and `puts` at the end are not in the C.  They are
+//!   - `probe`, `init`, `putc` and `puts` at the end are not in the C.  They are
 //!     the polled console the kernel uses from its first instructions,
 //!     before there is a Uart, a clock or an allocator.
 
@@ -567,6 +567,25 @@ pub fn Uart16550(comptime Io: type) type {
 
         // The polled early console (see DIFF): no Uart, no Ctlr, no
         // locks, no clock.
+
+        /// Is there a UART behind `io`?  Where nothing decodes the
+        /// address every register reads the same (all ones on a PC),
+        /// and then i8250enable's wait for the transmitter could last
+        /// for ever and every polled character would cost a timeout.
+        /// The scratch register of a 16450 or later keeps what was
+        /// written to it.
+        pub fn probe(self: Self) bool {
+            if (self.io.read(Lsr) == 0xFF)
+                return false;
+            const old = self.io.read(Scr);
+            defer self.io.write(Scr, old);
+            for ([_]u8{ 0x5A, 0xA5 }) |v| {
+                self.io.write(Scr, v);
+                if (self.io.read(Scr) != v)
+                    return false;
+            }
+            return true;
+        }
 
         pub fn init(self: Self, baud: u32) void {
             const div: u16 = @intCast(Freq / 16 / baud);

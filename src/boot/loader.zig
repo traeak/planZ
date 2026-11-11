@@ -78,6 +78,9 @@ pub fn main() uefi.Status {
         puts("planz loader: ");
         puts(@errorName(err));
         puts("\r\n");
+        // Leave the message up for a while: the firmware's boot menu
+        // or the next boot entry will cover it.
+        bs.stall(15 * 1000 * 1000) catch {};
         return .load_error;
     };
     unreachable;
@@ -93,6 +96,7 @@ fn boot() !noreturn {
     const root = try openVolume();
     const file = (try readFile(root, kernel_path)) orelse return error.NoKernel;
     const image = try loadElf(file);
+    putf("kernel {d} bytes at {x}\r\n", .{ file.len, image.phys });
     // Optional: name=value lines for the kernel.
     const ini: []const u8 = (try readFile(root, ini_path)) orelse "";
 
@@ -102,7 +106,7 @@ fn boot() !noreturn {
         .kernel_phys = image.phys,
         .kernel_virt = image.virt,
         .kernel_size = image.size,
-        .framebuffer = findFramebuffer(),
+        .framebuffer = findFramebuffer(iniValue(ini, "*gopmode")),
         .acpi_rsdp = findRsdp(),
         .cmdline = if (ini.len != 0) @intFromPtr(ini.ptr) else 0,
         .cmdline_len = ini.len,
@@ -132,13 +136,27 @@ fn boot() !noreturn {
     const top = @max(4 * GiB, std.mem.alignForward(u64, try memoryTop(), GiB));
     info.dmap_size = top;
 
-    const pml4 = try buildPageTables(image, file, top);
+    // What a photograph of the screen needs to show if the kernel is
+    // never heard from.
+    const fb = info.framebuffer;
+    if (fb.base != 0)
+        putf("framebuffer {d}x{d} stride {d} format {d} at {x} size {x}\r\n", .{ fb.width, fb.height, fb.stride, @backingInt(fb.format), fb.base, fb.size })
+    else
+        puts("no usable framebuffer: the kernel will have no screen\r\n");
+    putf("acpi rsdp {x}, memory top {x}, {d} boot files\r\n", .{ info.acpi_rsdp, top, nboot });
+    if (info.acpi_rsdp == 0)
+        puts("no ACPI tables: the kernel will not run\r\n");
+    if (fb.base == 0 or info.acpi_rsdp == 0)
+        bs.stall(10 * 1000 * 1000) catch {};
+
+    const pml4 = try buildPageTables(image, file, top, fb);
+    puts("starting the kernel\r\n");
 
     // Buffers for the final memory map.  Nothing may be allocated after
     // it has been fetched, so leave room for the map to grow by the
     // allocations made here.
     const probe = try bs.getMemoryMapInfo();
-    const slots = probe.len + 16;
+    const slots = probe.len + 32;
     const raw_bytes = slots * probe.descriptor_size;
     const raw_pages = try allocPages(pagesFor(raw_bytes));
     const raw: []align(8) u8 = @alignCast(std.mem.sliceAsBytes(raw_pages)[0..raw_bytes]);
@@ -333,7 +351,7 @@ fn descend(t: Table, i: usize) !Table {
     return @ptrFromInt(t[i] & 0x000f_ffff_ffff_f000);
 }
 
-fn buildPageTables(image: Image, file: []const u8, top: u64) !Table {
+fn buildPageTables(image: Image, file: []const u8, top: u64, fb: bootinfo.Framebuffer) !Table {
     const nx: u64 = if (haveNx()) PTENOEXEC else 0;
     const pml4 = try newTable();
 
@@ -346,6 +364,18 @@ fn buildPageTables(image: Image, file: []const u8, top: u64) !Table {
     while (pa < top) : (pa += 2 * MiB) {
         const pd = try descend(pdp, ptlx(pa, 2));
         pd[ptlx(pa, 1)] = pa | PTESIZE | PTEVALID | PTEWRITE;
+    }
+
+    // The framebuffer too, wherever it is (a 64-bit BAR can sit far
+    // above RAM), so the kernel can show signs of life before it has
+    // an allocator to map anything with; see bootinfo.zig.
+    if (fb.base != 0 and fb.base + fb.size <= bootinfo.dmap_span) {
+        pa = std.mem.alignBackward(u64, fb.base, 2 * MiB);
+        while (pa < fb.base + fb.size) : (pa += 2 * MiB) {
+            if (pa < top) continue;
+            const pd = try descend(pdp, ptlx(pa, 2));
+            pd[ptlx(pa, 1)] = pa | PTESIZE | PTEVALID | PTEWRITE | nx;
+        }
     }
 
     // The kernel, with 4KiB pages and the permissions the ELF asks for.
@@ -411,22 +441,91 @@ fn memKind(t: uefi.tables.MemoryType) bootinfo.MemKind {
     };
 }
 
-fn findFramebuffer() bootinfo.Framebuffer {
-    const gop = (bs.locateProtocol(uefi.protocol.GraphicsOutput, null) catch null) orelse return .{};
+const Gop = uefi.protocol.GraphicsOutput;
+
+/// The framebuffer of a graphics device in its current mode, if it
+/// has one the kernel can draw on: 32 bits a pixel, 8 each of red,
+/// green and blue.
+fn gopFramebuffer(gop: *Gop) ?bootinfo.Framebuffer {
     const mode = gop.mode;
     const format: bootinfo.PixelFormat = switch (mode.info.pixel_format) {
         .red_green_blue_reserved_8_bit_per_color => .rgbx8,
         .blue_green_red_reserved_8_bit_per_color => .bgrx8,
-        else => return .{},
+        // Some firmware describes the usual formats by their masks.
+        .bit_mask => blk: {
+            const pm = mode.info.pixel_information;
+            if (pm.green_mask != 0x0000ff00) return null;
+            if (pm.red_mask == 0x00ff0000 and pm.blue_mask == 0x000000ff) break :blk .bgrx8;
+            if (pm.red_mask == 0x000000ff and pm.blue_mask == 0x00ff0000) break :blk .rgbx8;
+            return null;
+        },
+        // blt_only: there is no framebuffer to write to.
+        else => return null,
     };
+    if (mode.frame_buffer_base == 0 or mode.info.horizontal_resolution == 0 or
+        mode.info.pixels_per_scan_line < mode.info.horizontal_resolution)
+        return null;
+    // Firmware has been seen to report a size that is not that of the
+    // mode; the kernel needs at least the visible lines.
+    const visible = @as(u64, mode.info.pixels_per_scan_line) * mode.info.vertical_resolution * 4;
     return .{
         .base = mode.frame_buffer_base,
-        .size = mode.frame_buffer_size,
+        .size = @max(mode.frame_buffer_size, visible),
         .width = mode.info.horizontal_resolution,
         .height = mode.info.vertical_resolution,
         .stride = mode.info.pixels_per_scan_line,
         .format = format,
     };
+}
+
+/// The value of the last `name=value` line of plan9.ini that sets
+/// `name`; what the kernel's getconf does.
+fn iniValue(ini: []const u8, name: []const u8) ?[]const u8 {
+    var val: ?[]const u8 = null;
+    var it = std.mem.tokenizeAny(u8, ini, "\r\n");
+    while (it.next()) |line| {
+        const l = std.mem.trimStart(u8, line, " \t");
+        const eq = std.mem.findScalar(u8, l, '=') orelse continue;
+        if (std.mem.eql(u8, std.mem.trimEnd(u8, l[0..eq], " \t"), name))
+            val = std.mem.trim(u8, l[eq + 1 ..], " \t");
+    }
+    return val;
+}
+
+/// *gopmode=WIDTHxHEIGHT in plan9.ini: put the display in that mode,
+/// if it has one, instead of staying in the mode the firmware chose.
+fn setMode(gop: *Gop, want: []const u8) void {
+    const x = std.mem.findScalar(u8, want, 'x') orelse return;
+    const w = std.fmt.parseInt(u32, want[0..x], 10) catch return;
+    const h = std.fmt.parseInt(u32, want[x + 1 ..], 10) catch return;
+    var i: u32 = 0;
+    while (i < gop.mode.max_mode) : (i += 1) {
+        const info = gop.queryMode(i) catch continue;
+        if (info.horizontal_resolution != w or info.vertical_resolution != h)
+            continue;
+        if (info.pixel_format == .blt_only)
+            continue;
+        if (i != gop.mode.mode)
+            gop.setMode(i) catch continue;
+        return;
+    }
+    putf("no display mode {d}x{d}\r\n", .{ w, h });
+}
+
+fn findFramebuffer(want: ?[]const u8) bootinfo.Framebuffer {
+    // The console's own graphics device first.  With several displays
+    // the firmware puts a virtual one in front that can only be drawn
+    // on through its Blt function; then look at each device.
+    if (bs.locateProtocol(Gop, null) catch null) |gop| {
+        if (want) |w| setMode(gop, w);
+        if (gopFramebuffer(gop)) |fb| return fb;
+    }
+    const handles = (bs.locateHandleBuffer(.{ .by_protocol = &Gop.guid }) catch null) orelse return .{};
+    for (handles) |h| {
+        const gop = (bs.handleProtocol(Gop, h) catch null) orelse continue;
+        if (gopFramebuffer(gop)) |fb| return fb;
+    }
+    return .{};
 }
 
 fn findRsdp() u64 {
@@ -449,6 +548,11 @@ fn pagesFor(bytes: usize) usize {
 
 fn allocPages(n: usize) ![]align(4096) uefi.Page {
     return bs.allocatePages(.any, .loader_data, n);
+}
+
+fn putf(comptime format: []const u8, args: anytype) void {
+    var buf: [200]u8 = undefined;
+    puts(std.fmt.bufPrint(&buf, format, args) catch "planz loader: message too long\r\n");
 }
 
 fn puts(s: []const u8) void {

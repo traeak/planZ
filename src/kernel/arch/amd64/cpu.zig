@@ -4,7 +4,7 @@
 //! DIFF: the tables of processor names and delay-loop timings are gone,
 //! along with the Pentium-era quirks.  New: the processor is checked
 //! against the planZ baseline (see PLAN.md, "CPU baseline") and the
-//! kernel refuses to go on without it.  Machine check and MTRR set-up
+//! kernel refuses to go on without it (cpucheck).  Machine check and MTRR set-up
 //! are not ported yet.
 
 const std = @import("std");
@@ -70,20 +70,8 @@ pub fn cpuidentify() void {
     if (maxext >= Advpower)
         invtsc = l.cpuid(Advpower, 0).dx & (1 << 8) != 0;
 
-    // The baseline.
-    if (!mach.havetsc) panic("cpu: no time stamp counter", .{});
-    if (mach.cpuiddx & dat.Cpuapic == 0) panic("cpu: no local APIC", .{});
-    if (mach.cpuidcx & dat.Xsave == 0) panic("cpu: no XSAVE; planZ needs a 2011 or later processor", .{});
-    if (!mach.havenx) panic("cpu: no NX", .{});
-    if (!syscall) panic("cpu: no SYSCALL", .{});
-    if (!invtsc) {
-        // Emulators and hypervisors often hide the flag while still
-        // providing a steady counter.
-        if (mach.cpuidcx & dat.Hypervisor != 0 or mach.machno != 0) {
-            if (mach.machno == 0)
-                print("cpu%d: no invariant TSC reported (virtual machine)\n", .{mach.machno});
-        } else panic("cpu: time stamp counter is not invariant", .{});
-    }
+    mach.havesyscall = syscall;
+    mach.haveinvtsc = invtsc;
 
     // Enable the page global bit.  We flag all kernel pages with it:
     // ``don't bother removing this from the TLB when CR3 changes.''
@@ -104,6 +92,27 @@ pub fn cpuidentify() void {
         pat &= ~(@as(u64, 255) << (mem.PATWC * 8));
         pat |= @as(u64, 1) << (mem.PATWC * 8); // WC
         l.wrmsr(0x277, pat);
+    }
+}
+
+/// Refuse to run on a processor without the planZ baseline.
+/// DIFF: not in the C.  Apart from cpuidentify so that the bootstrap
+/// processor can put the console on the screen in between: on a
+/// machine with no serial port a panic before that is never seen.
+pub fn cpucheck() void {
+    const mach = m();
+    if (!mach.havetsc) panic("cpu: no time stamp counter", .{});
+    if (mach.cpuiddx & dat.Cpuapic == 0) panic("cpu: no local APIC", .{});
+    if (mach.cpuidcx & dat.Xsave == 0) panic("cpu: no XSAVE; planZ needs a 2011 or later processor", .{});
+    if (!mach.havenx) panic("cpu: no NX", .{});
+    if (!mach.havesyscall) panic("cpu: no SYSCALL", .{});
+    if (!mach.haveinvtsc) {
+        // Emulators and hypervisors often hide the flag while still
+        // providing a steady counter.
+        if (mach.cpuidcx & dat.Hypervisor != 0 or mach.machno != 0) {
+            if (mach.machno == 0)
+                print("cpu%d: no invariant TSC reported (virtual machine)\n", .{mach.machno});
+        } else panic("cpu: time stamp counter is not invariant", .{});
     }
 }
 

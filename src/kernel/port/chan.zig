@@ -95,7 +95,10 @@ pub fn isdotdot(p: []const u8) bool {
 
 pub fn chandevreset() void {
     tod.todinit(); // avoid later reentry causing infinite recursion
-    for (devmod.devtab) |d| d.reset();
+    for (devmod.devtab) |d| {
+        p9.progress(d.name); // DIFF: see print.zig
+        d.reset();
+    }
 }
 
 pub fn chandevinit() void {

@@ -33,6 +33,7 @@ const mainmod = @import("main.zig");
 const xalloc = @import("../../port/xalloc.zig");
 const proc = @import("../../port/proc.zig");
 const portclock = @import("../../port/portclock.zig");
+const fmt = @import("fmt");
 const p9 = @import("../../port/print.zig");
 
 const print = p9.print;
@@ -41,12 +42,22 @@ const m = dat.m;
 /// The page table the APs start on, next to the bootstrap code.
 const APPML4 = l.APBOOTSTRAP + mem.BY2PG;
 
+// Mach.apstate
+const Starting = 0; // the bootstrap processor is waiting for it
+const Running = 1; // it has arrived in squidboy
+const Abandoned = 2; // it did not arrive in time
+
 /// Set by each AP when it is running; what the C keeps in Apic.online.
 var online: [mem.MAXMACH]bool = @splat(false);
 
 /// An application processor starts here, from the bootstrap code, on
 /// its own Mach's stack, with the start-up page table and segments.
 fn squidboy(mach: *dat.Mach) callconv(.c) noreturn {
+    // DIFF: a processor that turns up after mpstartap has given up on
+    // it must touch nothing: its processor number has gone to another.
+    if (@cmpxchgStrong(u32, &mach.apstate, Starting, Running, .seq_cst, .seq_cst) != null)
+        l.stop();
+
     const machno: usize = @intCast(mach.machno);
 
     // The kernel's own segment tables, GS for m(), then this
@@ -58,8 +69,14 @@ fn squidboy(mach: *dat.Mach) callconv(.c) noreturn {
     mainmod.machinit();
     mmu.mmuinit();
     cpu.cpuidentify();
+    cpu.cpucheck();
     clock.clockinitap();
-    cpu.cpuidprint();
+    // DIFF: the C prints every processor.  One that is the same as
+    // the first says nothing, to keep a dozen identical lines off a
+    // screen that is the only console; mpinit names it as it starts.
+    const m0 = dat.MACHP(0);
+    if (mach.cpuidax != m0.cpuidax or mach.cpuidcx != m0.cpuidcx or mach.cpuiddx != m0.cpuiddx)
+        cpu.cpuidprint();
     fpu.mathinit();
 
     dat.active.machs[machno] = true;
@@ -67,10 +84,24 @@ fn squidboy(mach: *dat.Mach) callconv(.c) noreturn {
 
     apic.lapicinit();
     portclock.timersinit();
+
+    // DIFF: wait for the bootstrap processor to finish mpinit.  It
+    // starts the processors one after another with interrupts off, on
+    // real hardware for 10ms and more each, and the first process is
+    // ready by then: were it to run here meanwhile, it would see a
+    // machine whose first processor's clock stands still for a tenth
+    // of a second.  (The C starts the processors before there is
+    // anything to run.)
+    while (!@atomicLoad(bool, &go, .seq_cst))
+        asm volatile ("pause");
+
     apic.clockenable();
 
     proc.schedinit();
 }
+
+/// Set by mpinit when every processor has been started.
+var go: bool = false;
 
 /// Is the page at physical address pa ordinary memory that nothing
 /// from the firmware lives in?
@@ -131,6 +162,17 @@ fn mpstartap(apicid: u32, machno: usize) void {
             break;
         clock.delay(1);
     }
+    // DIFF: see squidboy.  If it has got as far as squidboy it is
+    // only slow; give it the time again to finish there.
+    if (!@atomicLoad(bool, &online[machno], .seq_cst) and
+        @cmpxchgStrong(u32, &mach.apstate, Starting, Abandoned, .seq_cst, .seq_cst) != null)
+    {
+        i = 0;
+        while (i < 5000 and !@atomicLoad(bool, &online[machno], .seq_cst)) : (i += 1)
+            clock.delay(1);
+        if (!@atomicLoad(bool, &online[machno], .seq_cst))
+            p9.panic("mp: cpu%d (apic id %ud) hung while starting", .{ machno, apicid });
+    }
     devrtc.nvramwrite(0x0F, 0x00);
 }
 
@@ -148,7 +190,7 @@ pub fn mpinit() void {
         return;
 
     if (!usablepage(l.APBOOTSTRAP) or !usablepage(APPML4)) {
-        print("mp: no memory at %#ux for the AP bootstrap; running on one processor\n", .{@as(u32, l.APBOOTSTRAP)});
+        print("mp: the firmware uses the memory at %#ux-%#ux needed to start processors; running on one\n", .{ @as(u32, l.APBOOTSTRAP), @as(u32, APPML4 + mem.BY2PG) });
         return;
     }
 
@@ -177,6 +219,8 @@ pub fn mpinit() void {
         if (conf.nmach >= ncpu)
             break;
         const machno = conf.nmach;
+        var name: [16]u8 = undefined;
+        p9.progress(fmt.snprint(&name, "cpu%d", .{machno}));
         mpstartap(c.apicid, machno);
         if (!@atomicLoad(bool, &online[machno], .seq_cst)) {
             print("mp: cpu with apic id %ud did not start\n", .{c.apicid});
@@ -190,4 +234,6 @@ pub fn mpinit() void {
     // set conf.copymode here if nmach > 1.
     if (conf.nmach > 1)
         conf.copymode = 1;
+    print("mp: %d processors\n", .{conf.nmach});
+    @atomicStore(bool, &go, true, .seq_cst);
 }

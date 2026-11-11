@@ -8,6 +8,8 @@
 //!
 //! DIFF: delay() counts cycles of the time stamp counter, so the
 //! delayloop calibration (loopconst, delaylcycles) is not measured.
+//! hpetinit's setting of the processor's speed is in clock.zig, which
+//! can also measure against the ACPI timer.
 
 const mem = @import("mem.zig");
 const dat = @import("dat.zig");
@@ -15,8 +17,6 @@ const l = @import("l.zig");
 const mmu = @import("mmu.zig");
 const taslock = @import("../../port/taslock.zig");
 const print = @import("../../port/print.zig").print;
-
-const m = dat.m;
 
 // Registers, as indices of 32-bit words.
 const Cap = 0x00 / 4;
@@ -38,44 +38,46 @@ pub fn hpetprobe(pa: u64) bool {
     hpet.mmio = @ptrFromInt(va);
     const cap = hpet.mmio[Cap];
     const period = hpet.mmio[Period]; // femtoseconds per tick
-    if (period == 0 or period > 0x05F4E100)
+    // DIFF: also refuses a period under a nanosecond, which no HPET
+    // has and which the arithmetic below does not allow for.
+    if (period < 1000000 or period > 0x05F4E100)
         return false;
     hpet.freq = 1000000000000000 / @as(u64, period);
     print("HPET: %llux %.8ux %d MHz \n", .{ pa, cap, (hpet.freq + 500000) / 1000000 });
+
+    // start counting
+    hpet.mmio[Config] |= 1;
+
+    // DIFF: the C trusts it to count.  Firmware can describe an HPET
+    // it has switched off, and waiting on one that stands still would
+    // hang the boot with nothing on the screen to say why.
+    const x = hpet.mmio[Ctrlo];
+    var i: usize = 0;
+    while (hpet.mmio[Ctrlo] == x) : (i += 1) {
+        if (i > 1000000) {
+            print("HPET: counter does not advance\n", .{});
+            return false;
+        }
+    }
     return true;
 }
 
-/// Count time stamp counter cycles over one clock tick of the HPET.
-fn hpetcpufreq() u64 {
+/// Count time stamp counter cycles over one clock tick of the HPET;
+/// 0 if the HPET stops counting.
+pub fn hpetcpufreq() u64 {
     taslock.ilock(&hpet.lock);
     defer taslock.iunlock(&hpet.lock);
     const want: u32 = @intCast(hpet.freq / mem.HZ);
     const a = l.cycles();
     const x = hpet.mmio[Ctrlo];
     var y: u32 = 0;
-    while (y < want) y = hpet.mmio[Ctrlo] -% x;
+    while (y < want) {
+        y = hpet.mmio[Ctrlo] -% x;
+        // DIFF: bounded; no processor counts 2^34 cycles in 10ms.
+        if (l.cycles() -% a > 1 << 34) return 0;
+    }
     const b = l.cycles();
     return (b - a) * hpet.freq / y;
-}
-
-pub fn hpetinit() void {
-    const mach = m();
-    if (mach.machno != 0) {
-        const m0 = dat.MACHP(0);
-        mach.cpuhz = m0.cpuhz;
-        mach.cpumhz = m0.cpumhz;
-        mach.cyclefreq = m0.cyclefreq;
-        return;
-    }
-
-    // start counting
-    hpet.mmio[Config] |= 1;
-
-    const cpufreq = hpetcpufreq();
-    mach.cyclefreq = cpufreq;
-    mach.cpuhz = cpufreq;
-    // round to the nearest megahz
-    mach.cpumhz = @intCast(@max(1, (cpufreq + 500000) / 1000000));
 }
 
 pub fn hpetread(hz: ?*u64) u64 {

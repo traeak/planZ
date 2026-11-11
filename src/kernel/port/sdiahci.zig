@@ -69,6 +69,32 @@
 //!     reported an error).  The C looks only for SDeio and SDretry, so
 //!     after printing "i/o error" it counts the sectors as transferred
 //!     and a read returns whatever was in the buffer.
+//!   - Real hardware.  None of this is in the C:
+//!       * Missing interrupts.  io() and ahciwait sleep 10ms at a time
+//!         and look at the controller in between (io) or at the command
+//!         issue register (ahciwait); the C sleeps until the interrupt
+//!         or, in io(), until the iasata kproc's poll every 256ms.
+//!         iaenable handles what the ports raised before interrupts were
+//!         enabled: a controller that sends a message only when its
+//!         interrupt status goes from zero to non-zero would otherwise
+//!         never send one.  "no interrupts; polling" is printed for a
+//!         controller whose polls find work before any interrupt came.
+//!       * ahciidle waits for the fis engine (FR) to stop after clearing
+//!         FRE; the C reads back the bit it has just cleared.
+//!       * With staggered spin-up (CAP.SSS) ahciconfigdrive gives a port
+//!         that detects nothing 200ms, not 1.4s.
+//!       * A port multiplier or enclosure (by signature) is reported and
+//!         left alone; the C sends it IDENTIFY.
+//!       * iaonline waits at most Onlineto ms for a drive that has a link
+//!         but does not come ready; the C waits for ever.
+//!       * A controller without 64-bit addressing (CAP.S64A) is not
+//!         given memory above 4GiB: such a port is left alone and such a
+//!         transfer fails.
+//!       * The unit count is the number of ports that fit in the
+//!         registers' BAR, not the number implemented.
+//!       * A failed packet command prints "i/o error" only with aprint
+//!         on: for an ATAPI drive it is the normal answer to TEST UNIT
+//!         READY with no medium.  "slow reset" is printed always.
 
 const std = @import("std");
 const arch = @import("../arch.zig");
@@ -406,6 +432,10 @@ const Aportm = struct {
     fis: Afis = .{},
     list: ?*volatile Alist = null,
     ctab: ?*Actab = null,
+    /// DIFF: the controller takes 64-bit addresses (CAP.S64A).
+    dma64: bool = false,
+    /// DIFF: mkalist was given memory the controller cannot address.
+    baddma: bool = false,
 };
 
 /// DIFF: made by Drive.portc(), not stored.
@@ -559,6 +589,9 @@ const Ctlr = struct {
     ndrive: usize = 0,
 
     missirq: u32 = 0,
+    /// DIFF: interrupts taken, and whether their absence was reported.
+    nintr: u32 = 0,
+    nointr: bool = false,
 };
 
 var iactlr: [NCtlr]Ctlr = @splat(.{});
@@ -638,12 +671,26 @@ fn ahciclear(v: ?*anyopaque) bool {
     return (s.p.ci & s.i) == 0;
 }
 
+/// DIFF: the C is one tsleep of ms, which without the interrupt lasts
+/// the whole of it.
 fn aesleep(m: *Aportm, a: *Asleep, ms: u32) void {
-    proc.tsleep(&m.rendez, ahciclear, a, ms) catch {};
+    var t: u32 = 0;
+    while (t < ms and !ahciclear(a)) : (t += 10)
+        proc.tsleep(&m.rendez, ahciclear, a, @min(10, ms - t)) catch {};
+}
+
+/// DIFF: whether the controller can address pa.
+fn dmaok(m: *const Aportm, pa: u64, len: usize) bool {
+    return m.dma64 or (pa + len) >> 32 == 0;
 }
 
 fn ahciwait(c: Aportc, ms: u32) i32 {
     const p = c.p;
+    // DIFF: see dmaok
+    if (c.m.baddma) {
+        c.m.baddma = false;
+        return -1;
+    }
     p.ci = 1;
     var as: Asleep = .{ .p = p, .i = 1 };
     aesleep(c.m, &as, ms);
@@ -659,6 +706,8 @@ fn mkalist(m: *Aportm, flags_: u32, data: ?[*]u8, len: usize) *volatile Alist {
     const t = m.ctab.?;
     if (data != null and len > 0) {
         const pa = arch.paddr(@intFromPtr(data.?));
+        if (!dmaok(m, pa, len))
+            m.baddma = true; // DIFF
         const p = &t.prdt;
         p.dba = @truncate(pa);
         p.dbahi = @truncate(pa >> 32);
@@ -854,7 +903,8 @@ fn ahciidle(port: *volatile Aport) i32 {
     port.cmd &= ~Afre;
     i = 0;
     while (i < 500) : (i += 25) {
-        if ((port.cmd & Afre) == 0)
+        // DIFF: Afr; the C tests Afre, which it has just cleared.
+        if ((port.cmd & (Afre | Afr)) == 0)
             return 0;
         asleep(25);
     }
@@ -923,6 +973,12 @@ fn ahciconfigdrive(h: *volatile Ahba, c: Aportc, mode: u32) i32 {
         m.list = @ptrCast(@alignCast(malign(@sizeOf(Alist), 1024)));
         m.ctab = @ptrCast(@alignCast(malign(@sizeOf(Actab), 128)));
     }
+    // DIFF: see dmaok
+    m.dma64 = (h.cap & H64a) != 0;
+    if (!dmaok(m, arch.paddr(@intFromPtr(m.list.?)), @sizeOf(Alist)) or
+        !dmaok(m, arch.paddr(@intFromPtr(m.fis.base.?)), 0x100) or
+        !dmaok(m, arch.paddr(@intFromPtr(m.ctab.?)), @sizeOf(Actab)))
+        return -2;
 
     if (ahciidle(p) == -1) {
         if (debug) print("ahci: port not idle\n", .{});
@@ -948,6 +1004,9 @@ fn ahciconfigdrive(h: *volatile Ahba, c: Aportc, mode: u32) i32 {
             if ((p.sstatus & Sbist) != 0)
                 break;
             if ((p.sstatus & Smask) == Sphylink)
+                break;
+            // DIFF: nothing answered the spin-up's reset: an empty port.
+            if (i >= 200 and (p.sstatus & Smask) == Smissing)
                 break;
             asleep(50);
         }
@@ -1171,9 +1230,18 @@ fn dstatus(d: *Drive, s: u8) void {
 }
 
 fn configdrive(d: *Drive) void {
-    if (ahciconfigdrive(d.ctlr.?.hba.?, d.portc(), d.mode) == -1) {
-        dstatus(d, Dportreset);
-        return;
+    switch (ahciconfigdrive(d.ctlr.?.hba.?, d.portc(), d.mode)) {
+        -1 => {
+            dstatus(d, Dportreset);
+            return;
+        },
+        // DIFF: see dmaok
+        -2 => {
+            print("%s: no 64-bit dma; ignored\n", .{dnam(d)});
+            dstatus(d, Dnull);
+            return;
+        },
+        else => {},
     }
 
     ilock(&d.lock);
@@ -1347,14 +1415,23 @@ fn checkdrive(d: *Drive, i: usize) void {
                     break :active;
                 d.wait += 1;
                 if ((d.wait & Midwait) == 0) {
-                    if (debug) print("%s: slow reset [task %lux; ss %.3ux; wait %d]\n", .{ dnam(d), port.task, s, d.wait });
+                    // DIFF: not only with debug on
+                    print("%s: slow reset [task %lux; ss %.3ux; wait %d]\n", .{ dnam(d), port.task, s, d.wait });
                     step = .reset;
                     break :active;
                 }
                 s = @as(u8, @truncate(port.task));
                 const sig = port.sig >> 16;
-                if (s == 0x7f or s & ASbsy != 0 or
-                    (sig != 0xeb14 and (s & ASdrdy) == 0))
+                // DIFF: the C's one test, with the signatures that are
+                // not drives taken out in the middle.
+                if (s == 0x7f or s & ASbsy != 0)
+                    break :active;
+                if (sig == 0x9669 or sig == 0xc33c) {
+                    print("%s: %s; ignored\n", .{ dnam(d), if (sig == 0x9669) "port multiplier" else "enclosure" });
+                    d.state = Dnull;
+                    break :active;
+                }
+                if (sig != 0xeb14 and (s & ASdrdy) == 0)
                     break :active;
                 iunlock(&d.lock);
                 _ = newdrive(d);
@@ -1438,7 +1515,9 @@ fn satakproc(_: ?*anyopaque) void {
 }
 
 fn iainterrupt(_: *arch.Ureg, a: ?*anyopaque) void {
-    iaintr(@ptrCast(@alignCast(a.?)), false);
+    const c: *Ctlr = @ptrCast(@alignCast(a.?));
+    c.nintr +%= 1; // DIFF
+    iaintr(c, false);
 }
 
 /// DIFF: the C's iainterrupt; poll is its `u == 0`, a call from
@@ -1464,7 +1543,13 @@ fn iaintr(c: *Ctlr, poll: bool) void {
     }
     if (poll and i > 0)
         c.missirq +%= 1;
+    // DIFF: say so once if no interrupt has ever come.
+    const pr = c.missirq >= 3 and c.nintr == 0 and !c.nointr;
+    if (pr)
+        c.nointr = true;
     iunlock(&c.lock);
+    if (pr)
+        print("%s: ahci: no interrupts; polling\n", .{c.sdev.?.namestr()});
 }
 
 // DIFF: no LEDs.  Here the C has ahciencreset, the led tables,
@@ -1518,8 +1603,15 @@ fn iaonline(u: *SDunit) i32 {
     const c: *Ctlr = @ptrCast(@alignCast(u.dev.ctlr.?));
     const d = c.drive[u.subno].?;
 
-    while (d.state != Dmissing and waitready(d) == 1)
+    // DIFF: the C waits for ever.
+    const t0 = Ticks();
+    while (d.state != Dmissing and waitready(d) == 1) {
+        if (Ticks() -% t0 > MS2TK(Onlineto)) {
+            print("%s: not ready [%s; task %lux; ss %.3lux]\n", .{ dnam(d), diskstates[d.state], d.port.?.task, d.port.?.sstatus });
+            break;
+        }
         esleep(1);
+    }
 
     if (debug) print("%s: iaonline: %s\n", .{ dnam(d), diskstates[d.state] });
 
@@ -1547,6 +1639,9 @@ fn iaonline(u: *SDunit) i32 {
     return r;
 }
 
+/// DIFF: how long iaonline waits for a drive to come ready, in ms.
+const Onlineto = 30 * 1000;
+
 /// The C's `static int once` in iaenable.
 var iaenable_once: usize = 0;
 
@@ -1567,6 +1662,8 @@ fn iaenable(s: *SDev) i32 {
     _ = ahcienable(c.hba.?);
     c.enabled = true;
     iunlock(&c.lock);
+    // DIFF: what the ports raised since iapnp; see the top of the file.
+    iaintr(c, false);
 
     if (iaenable_once == 0)
         proc.kproc("iasata", satakproc, null);
@@ -1656,6 +1753,13 @@ fn io(d: *Drive, proto: u32, to: i32, interrupt: bool) i32 {
         else => {},
     }
 
+    // DIFF: see dmaok
+    if (d.portm.baddma) {
+        d.portm.baddma = false;
+        print("%s: no 64-bit dma\n", .{dnam(d)});
+        return SDeio;
+    }
+
     ilock(&d.lock);
     d.portm.flag = 0;
     iunlock(&d.lock);
@@ -1670,8 +1774,10 @@ fn io(d: *Drive, proto: u32, to: i32, interrupt: bool) i32 {
 
     // DIFF: `while(waserror()) if(interrupt){...}` then sleep: an
     // interrupted sleep is taken up again unless the caller wants out.
+    // DIFF: the sleep is 10ms at a time, with a look at the controller
+    // when the interrupt has not said how the command went.
     while (true) {
-        proc.sleep(&d.portm.rendez, ahciclear, &as) catch {
+        proc.tsleep(&d.portm.rendez, ahciclear, &as, 10) catch {
             if (interrupt) {
                 d.active -%= 1;
                 p.ci = 0;
@@ -1681,7 +1787,10 @@ fn io(d: *Drive, proto: u32, to: i32, interrupt: bool) i32 {
             }
             continue;
         };
-        break;
+        if (@as(*volatile u8, &d.portm.flag).* == 0 or !ahciclear(&as))
+            iaintr(d.ctlr.?, true);
+        if (ahciclear(&as))
+            break;
     }
 
     d.active -%= 1;
@@ -1707,7 +1816,8 @@ fn io(d: *Drive, proto: u32, to: i32, interrupt: bool) i32 {
         return SDretry;
     }
     if (flag & (Fahdrs | Ferror) != 0) {
-        if ((task & Eidnf) == 0)
+        // DIFF: not for a packet command unless aprint is on
+        if ((task & Eidnf) == 0 and (proto & Ppkt == 0 or datapi))
             print("%s: i/o error %ux\n", .{ dnam(d), task });
         return SDcheck;
     }
@@ -2005,7 +2115,7 @@ fn iapnp() ?*SDev {
         pci.pcienable(p);
         _ = ahcihandoff(@ptrFromInt(c.mmio));
         // DIFF: no iasetupahci for intel
-        const nunit = ahciconf(c);
+        var nunit = ahciconf(c);
         if (nunit < 1) {
             arch.vunmap(c.mmio, size);
             pci.pcidisable(p);
@@ -2039,6 +2149,16 @@ fn iapnp() ?*SDev {
             c.drive[d.driveno] = d;
             iadrive[niadrive + d.driveno] = d;
         }
+        // DIFF: the ports that fit, which is what c.drive holds.
+        if (n == 0) {
+            arch.vunmap(c.mmio, size);
+            pci.pcidisable(p);
+            alloc.free(s);
+            continue;
+        }
+        nunit = n;
+        c.ndrive = nunit;
+        s.nunit = nunit;
         pci.pcisetbme(p);
         i = 0;
         while (i < n) : (i += 1) {

@@ -39,6 +39,8 @@ const Uart16550 = @import("../../drv/uart16550.zig").Uart16550;
 
 const print = p9.print;
 const panic = p9.panic;
+const progress = p9.progress;
+const chandevreset = chan.chandevreset;
 const getconf = bootargs.getconf;
 const BootInfo = bootinfo.BootInfo;
 const m = dat.m;
@@ -64,8 +66,11 @@ fn uartputs(s: []const u8) void {
 }
 
 /// DIFF: the serial console is always on, at 115200 baud; the C waits
-/// for console= in plan9.ini.
+/// for console= in plan9.ini.  Always, that is, if the machine has a
+/// COM1: see Uart16550.probe.
 fn i8250console() void {
+    if (!uart0.probe())
+        return;
     uart0.init(115200);
     p9.addconsole(uartputs);
 }
@@ -116,10 +121,12 @@ pub fn machinit() void {
     const machno = mach.machno;
     const pml4 = mach.pml4;
     const gdt = mach.gdt;
+    const apstate = mach.apstate;
     mach.* = .{};
     mach.machno = machno;
     mach.pml4 = pml4;
     mach.gdt = gdt;
+    mach.apstate = apstate;
     mach.perf.period = 1;
 }
 
@@ -141,6 +148,31 @@ fn mach0init() void {
     dat.active.exiting = false;
 }
 
+/// A white block on the top line of the screen, the nth from the left.
+/// DIFF: not in 9front, whose first prints are on the VGA text screen.
+/// Here the console needs the allocators before it can draw, and the
+/// machine may have no serial port: without these marks a kernel that
+/// dies before screeninit looks the same as one that never started.
+/// The loader maps the framebuffer for this (see boot/bootinfo.zig).
+/// main sets them: 0 on entry, 1 once the processor is identified, 2
+/// when the memory map is recorded, 3 with the allocator ready; then
+/// the console paints over them.
+fn bootmark(n: usize) void {
+    const fb = bootargs.bootinfop.framebuffer;
+    if (fb.base == 0 or fb.format == .none or fb.base + fb.size > bootinfo.dmap_span)
+        return;
+    const side = 32;
+    const x0 = 8 + n * (side + 8);
+    if (fb.stride < fb.width or x0 + side > fb.width or 8 + side > fb.height or
+        @as(u64, fb.stride) * (8 + side) * 4 > fb.size)
+        return;
+    const p: [*]volatile u32 = @ptrFromInt(mem.DMAP + fb.base);
+    for (8..8 + side) |y| {
+        for (x0..x0 + side) |x|
+            p[y * fb.stride + x] = 0x00FFFFFF;
+    }
+}
+
 /// Put the console on the framebuffer the firmware left us, if any.
 /// DIFF: later than in the C, which draws on the VGA text screen from
 /// the start; mapping the framebuffer needs the allocators.  What was
@@ -150,7 +182,10 @@ fn screeninit() void {
     screen.archmousectl = &@import("mouse.zig").mousectl;
 
     const fb = bootargs.bootinfop.framebuffer;
-    if (fb.base == 0) return;
+    if (fb.base == 0) {
+        print("screen: no framebuffer from the loader\n", .{});
+        return;
+    }
     // The pixel's bytes in memory, low address first, are named last
     // to first in a channel descriptor.
     const fbchan = switch (fb.format) {
@@ -160,15 +195,46 @@ fn screeninit() void {
     };
     const size = @as(usize, fb.stride) * fb.height * 4;
     const va = mmu.vmap(fb.base, size) orelse return;
-    mmu.patwc(va, size);
+    const wc = mmu.patwc(va, size);
     screen.screeninit(va, fb.width, fb.height, fb.stride, fbchan);
+    print("screen: %udx%ud stride %ud %s at %#llux %s\n", .{
+        fb.width,                                            fb.height, fb.stride,
+        if (fb.format == .bgrx8) "x8r8g8b8" else "x8b8g8r8", fb.base,   if (wc) "write-combining" else "uncached (slow: no PAT)",
+    });
+}
+
+/// The signatures of the ACPI tables, for the boot log.
+var acpisigs: struct {
+    buf: [256]u8 = undefined,
+    n: usize = 0,
+} = .{};
+
+fn acpisig(sig: []const u8, _: usize) void {
+    const a = &acpisigs;
+    if (a.n + sig.len + 1 > a.buf.len) return;
+    a.buf[a.n] = ' ';
+    @memcpy(a.buf[a.n + 1 ..][0..sig.len], sig);
+    a.n += sig.len + 1;
 }
 
 /// Find the machine's description of itself.
 fn archinit() void {
     acpi.kaddr = mmu.kaddr;
     if (!acpi.init(bootargs.bootinfop.acpi_rsdp))
-        panic("no ACPI tables", .{});
+        panic("no ACPI tables (rsdp %#llux)", .{bootargs.bootinfop.acpi_rsdp});
+    acpi.each(acpisig);
+    print("acpi: rsdp %#llux %s:%s\n", .{ bootargs.bootinfop.acpi_rsdp, acpi.rootname(), acpisigs.buf[0..acpisigs.n] });
+}
+
+/// *bootpause=seconds in plan9.ini: stop for that long at the points
+/// of start-up where the screen is worth a photograph.
+/// DIFF: not in 9front.
+fn bootpause(what: []const u8) void {
+    const s = getconf("*bootpause") orelse return;
+    const secs = std.fmt.parseInt(u32, s, 0) catch return;
+    if (secs == 0) return;
+    print("bootpause: %ud seconds %s\n", .{ secs, what });
+    clock.delay(@as(u64, secs) * 1000);
 }
 
 /// Fill /boot.  The loader may have brought files (a 9front boot, paqfs,
@@ -210,8 +276,11 @@ fn init0() noreturn {
     bootargs.setconfenv();
     proc.kproc("alarm", alarm.alarmkproc, null);
 
-    // DIFF: not in 9front; see port/selftest.zig.
-    proc.kproc("selftest", selftest.selftest, null);
+    // DIFF: not in 9front; see port/selftest.zig.  *selftest=off in
+    // plan9.ini leaves it out: its checks of timing panic when they
+    // fail, which a new machine may not deserve.
+    if (!std.mem.eql(u8, getconf("*selftest") orelse "", "off"))
+        proc.kproc("selftest", selftest.selftest, null);
 
     // The stack initcode starts with: no return address, argv[0] "boot".
     const sp: [*]usize = @ptrFromInt(mem.USTKTOP - @sizeOf(portdat.Tos) - 8 - @sizeOf(usize) * 4);
@@ -230,38 +299,60 @@ pub fn main(bipa: u64) callconv(.c) noreturn {
     bootargs.bootargsinit(bi);
     mach0init();
     trap.trapinit0();
+    bootmark(0);
     i8250console();
     print("\nPlan 9\n", .{});
     if (bi.magic != bootinfo.magic or bi.version != bootinfo.version)
         panic("boot information is not what this kernel expects", .{});
     cpu.cpuidentify();
+    bootmark(1);
+    // DIFF: memory, the allocator and then the screen come before
+    // everything that can find the machine wanting (cpucheck, the ACPI
+    // tables, the timers), so that the complaint can be read.
     memory.meminit0(bi);
-    archinit();
-    clock.clockinit();
     memory.meminit();
+    bootmark(2);
     confinit();
     xalloc.xinit();
+    bootmark(3);
     screeninit();
+    cpu.cpucheck();
+    archinit();
+    clock.clockinit();
     trap.trapinit();
     cpu.cpuidprint();
+    progress("mmu");
     mmu.mmuinit();
+    progress("apic");
     apic.intrinit();
+    progress("fpu");
     fpu.mathinit();
+    progress("timers");
     portclock.timersinit();
     apic.clockenable();
 
+    progress("proc");
     proc.procinit0();
     devmod.devtab = &conf_pc64.devtab;
+    progress("uart");
     uartpc.uartinit();
     bootfiles();
+    progress("pci");
     pcipc.pcicfginit();
+    bootpause("after the machine's description");
+    progress("links");
     conf_pc64.links();
-    chan.chandevreset();
+    chandevreset();
     syscallmod.systabinit();
+    progress("page");
     page.pageinit();
     page.pagerinit();
+    progress("user");
     userinit.init0 = init0;
     userinit.userinit();
+    progress("mp");
     mp.mpinit();
+    bootpause("before the first process");
+    progress("sched");
     proc.schedinit();
 }

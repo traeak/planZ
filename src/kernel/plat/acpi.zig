@@ -37,34 +37,54 @@ fn checksum(b: []const u8) bool {
     return sum == 0;
 }
 
-/// A whole table at `pa`, or null if it does not check out.
-fn table(pa: u64) ?[]const u8 {
+/// A whole table at `pa`, or null if it is not one.  With `strict`
+/// its bytes must also sum to zero.
+fn table(pa: u64, strict: bool) ?[]const u8 {
     if (pa == 0) return null;
     const len = le32(mem(pa, hdrlen), 4);
-    if (len < hdrlen) return null;
+    if (len < hdrlen or len > 16 << 20) return null;
     const t = mem(pa, len);
-    return if (checksum(t)) t else null;
+    return if (!strict or checksum(t)) t else null;
 }
 
 /// Locate the root table from the RSDP the firmware handed over.
+/// A table whose checksum is wrong is still used, as other systems
+/// do: firmware that patches a table and forgets the sum exists, and
+/// the alternative is a machine that cannot be started.  The root
+/// table with a good sum is preferred, though.
 pub fn init(rsdp_pa: u64) bool {
     if (rsdp_pa == 0) return false;
     const rsdp = mem(rsdp_pa, 36);
-    if (!std.mem.eql(u8, rsdp[0..8], "RSD PTR ") or !checksum(rsdp[0..20]))
+    if (!std.mem.eql(u8, rsdp[0..8], "RSD PTR "))
         return false;
-    if (rsdp[15] >= 2) {
-        if (table(le64(rsdp, 24))) |t| {
-            rsdt = t;
-            entsize = 8;
-            return true;
+    for ([_]bool{ true, false }) |strict| {
+        if (rsdp[15] >= 2) {
+            if (table(le64(rsdp, 24), strict)) |t| {
+                if (std.mem.eql(u8, t[0..4], "XSDT")) {
+                    rsdt = t;
+                    entsize = 8;
+                    return true;
+                }
+            }
+        }
+        if (table(le32(rsdp, 16), strict)) |t| {
+            if (std.mem.eql(u8, t[0..4], "RSDT")) {
+                rsdt = t;
+                entsize = 4;
+                return true;
+            }
         }
     }
-    if (table(le32(rsdp, 16))) |t| {
-        rsdt = t;
-        entsize = 4;
-        return true;
-    }
     return false;
+}
+
+/// Which root table is in use, for the boot log.
+pub fn rootname() []const u8 {
+    return switch (entsize) {
+        8 => "xsdt",
+        4 => "rsdt",
+        else => "none",
+    };
 }
 
 /// The first table with the given signature.
@@ -73,7 +93,7 @@ pub fn find(sig: *const [4]u8) ?[]const u8 {
     var off: usize = hdrlen;
     while (off + entsize <= rsdt.len) : (off += entsize) {
         const pa = if (entsize == 8) le64(rsdt, off) else le32(rsdt, off);
-        const t = table(pa) orelse continue;
+        const t = table(pa, false) orelse continue;
         if (std.mem.eql(u8, t[0..4], sig)) return t;
     }
     return null;
@@ -85,7 +105,7 @@ pub fn each(f: *const fn (sig: []const u8, len: usize) void) void {
     var off: usize = hdrlen;
     while (off + entsize <= rsdt.len) : (off += entsize) {
         const pa = if (entsize == 8) le64(rsdt, off) else le32(rsdt, off);
-        const t = table(pa) orelse continue;
+        const t = table(pa, false) orelse continue;
         f(t[0..4], t.len);
     }
 }
@@ -125,6 +145,17 @@ pub const Madt = struct {
     noverride: usize = 0,
 };
 
+/// Flags of a processor's entry: bit 0 enabled, bit 1 online capable.
+/// An entry with neither is an empty socket or thread.
+fn addcpu(out: *Madt, apicid: u32, fl: u32) void {
+    if (fl & 3 == 0 or out.ncpu >= out.cpu.len) return;
+    for (out.cpu[0..out.ncpu]) |c| {
+        if (c.apicid == apicid) return;
+    }
+    out.cpu[out.ncpu] = .{ .apicid = apicid, .enabled = fl & 1 != 0 };
+    out.ncpu += 1;
+}
+
 pub fn madt(out: *Madt) bool {
     const t = find("APIC") orelse return false;
     if (t.len < 44) return false;
@@ -141,11 +172,10 @@ pub fn madt(out: *Madt) bool {
         off += len;
         switch (typ) {
             0 => if (len >= 8) { // processor local APIC
-                const fl = le32(e, 4);
-                if (fl & 3 != 0 and out.ncpu < out.cpu.len) {
-                    out.cpu[out.ncpu] = .{ .apicid = e[3], .enabled = fl & 1 != 0 };
-                    out.ncpu += 1;
-                }
+                // 255 is no APIC id; some firmware fills unused
+                // entries with it.
+                if (e[3] != 0xFF)
+                    addcpu(out, e[3], le32(e, 4));
             },
             1 => if (len >= 12 and out.nioapic < out.ioapic.len) { // I/O APIC
                 out.ioapic[out.nioapic] = .{ .id = e[2], .pa = le32(e, 4), .gsibase = le32(e, 8) };
@@ -159,11 +189,7 @@ pub fn madt(out: *Madt) bool {
                 out.lapic_pa = le64(e, 4);
             },
             9 => if (len >= 16) { // processor local x2APIC
-                const fl = le32(e, 8);
-                if (fl & 3 != 0 and out.ncpu < out.cpu.len) {
-                    out.cpu[out.ncpu] = .{ .apicid = le32(e, 4), .enabled = fl & 1 != 0 };
-                    out.ncpu += 1;
-                }
+                addcpu(out, le32(e, 4), le32(e, 8));
             },
             else => {},
         }
@@ -179,6 +205,28 @@ pub fn hpet() ?u64 {
     if (t[40] != 0) return null;
     const pa = le64(t, 44);
     return if (pa != 0) pa else null;
+}
+
+/// The power management timer of the Fixed ACPI Description Table: a
+/// counter at 3.579545MHz read from an I/O port.
+pub const Pmtimer = struct {
+    port: u32,
+    /// 32 bits wide; otherwise 24.
+    wide: bool,
+};
+
+pub fn pmtimer() ?Pmtimer {
+    const t = find("FACP") orelse return null;
+    if (t.len < 116) return null;
+    // PM_TMR_LEN: 4 if the timer is there.
+    if (t[91] < 4) return null;
+    var port: u64 = le32(t, 76);
+    // X_PM_TMR_BLK replaces PM_TMR_BLK when it is filled in; it is a
+    // Generic Address Structure, where space id 1 is I/O ports.
+    if (t.len >= 220 and t[208] == 1 and le64(t, 212) != 0)
+        port = le64(t, 212);
+    if (port == 0 or port > 0xFFFF) return null;
+    return .{ .port = @intCast(port), .wide = le32(t, 112) & (1 << 8) != 0 };
 }
 
 /// One range of buses whose PCI configuration space is memory mapped

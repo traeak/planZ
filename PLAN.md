@@ -158,7 +158,7 @@ Framebuffer `screen`, `libmemdraw`, `libmemlayer`, `devdraw`, `devmouse`, `devkb
 ### M9 — Real hardware
 Boot on one physical 2011-or-later machine; add the NIC and quirks it needs; audio (HDA) if wanted.
 
-The user's test machine: AMD Ryzen 5 3600 (Zen 2) on a Jingyue B550i mini-ITX board, 32GB RAM, Radeon RX 6500 XT. It has no integrated graphics, so the display is the card's UEFI framebuffer. Assume no serial console. The board's network chip and PS/2 availability are not yet confirmed. Booting it early is cheap: copy `zig-out/esp` onto a FAT32 USB stick.
+The user's test machine: AMD Ryzen 5 3600 (Zen 2) on a Jingyue B550i mini-ITX board, 32GB RAM, Radeon RX 6500 XT. It has no integrated graphics, so the display is the card's UEFI framebuffer. Assume no serial console. The board's network chip and PS/2 availability are not yet confirmed. `zig build usb-image` makes a stick that boots it to rio with no other disk; `docs/real-hardware.md` has the steps and what to look for.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
@@ -194,6 +194,7 @@ The user's test machine: AMD Ryzen 5 3600 (Zen 2) on a Jingyue B550i mini-ITX bo
 
 | Milestone | State |
 |---|---|
+| M9 | in progress: prepared in QEMU and KVM, not yet tried on the machine. `usb-image` builds a stick that boots to rio from USB alone (`test-usb`); the boot path was audited for what only works in QEMU; `#$` gives `pci -v`. Open: the first real boot, and a driver for the board's network chip, which is not yet identified |
 | M8 | done: stock `rio` runs on the UEFI framebuffer with keyboard and mouse, through the PS/2 controller or through xHCI with no PS/2 at all; `test-rio` checks a screenshot, a typed command and a moved mouse; all test steps pass on the three CPU models, the three disk buses, with 1, 4 and 8 processors, and in a debug build. All of it on QEMU only |
 | M7 | done: stock 9front boots from its disk image (hjfs root) on virtio-blk, NVMe and AHCI; `ip/ipconfig` gets a DHCP lease; `hget` works over HTTP and over TLS; `test-boot`, `test-9front`, `test-disk` and `test-net` pass on all three CPU models, with 1, 4 and 8 processors, and in a debug build. All of it on QEMU only |
 | M6 | done: all processors start and schedule; `test-boot` and `test-9front` pass with 1, 4 and 8 processors on all three CPU models; the one-hour parallel run on four processors passed (98M processes created, 164M pipe round trips, 472M lock acquisitions, no panic) |
@@ -203,6 +204,18 @@ The user's test machine: AMD Ryzen 5 3600 (Zen 2) on a Jingyue B550i mini-ITX bo
 | M2 | done: kernel processes sleep, wake, queue on locks, get preempted, take notes and alarms, exit and are reused; the scheduling self-test ran for 60s. Not done: rendezvous, which is a system call and moves to M4 |
 | M1 | done: `zig build test` (host) and `zig build test-boot` (two boots: clean self-test, deliberate fault) pass on `SandyBridge`, `Opteron_G4` and `max`, in safe and debug builds |
 | M0 | done: `zig build test-boot` passes on QEMU q35 with `-Dcpu=SandyBridge` (default), `Opteron_G4` and `max` |
+
+Notes from M9 so far:
+
+- **USB stick.** `zig build usb-image -Dref=ref -Ddisk=…` writes `zig-out/planz-usb.img` with `tools/mkusb.py` (python3 and `qemu-img` only; it writes the MBR and the FAT volume itself): partition 1 is the boot volume, partition 2 a copy of the 9front image's Plan 9 partition. `tools/usb.ini` is its `plan9.ini`: no `console=`, `user=glenda`, and `nobootprompt=local!usbroot` with an rc function that waits for `/dev/sdU*/fs`, because the device name is a hash that cannot be known in advance. `test-usb` (`tools/usbtest.sh`) boots that image from `usb-storage` with no PS/2 and no other disk.
+- **KVM finds what TCG hides.** `-enable-kvm -cpu host` on the development machine (an AMD Zen 3) showed a self-test panic that never appeared under TCG: the first process ran on the other processors while the first one was still starting more with interrupts off. They now wait for `mpinit` to finish. Run new platform code under KVM as well.
+- **Boot order**: memory, allocator and screen come before the CPU baseline check, ACPI and the timers, so that every panic is visible. Four white blocks at the top left mark the stages before the console exists. An `init:` line names each stage as it starts. A panic repeats its message after the stack, stops the other processors and never resets.
+- **`plan9.ini` variables added**: `*gopmode=WxH`, `*bootpause=seconds`, `*memmap=`, `*xsummary=`, `*nopcilist=`, `*nohpet=`, `*selftest=off`.
+- **No HPET is not fatal**: the ACPI PM timer calibrates instead. **A serial port exists only if a UART answers a probe**; the wait for its transmitter is bounded.
+- **The loader** decodes `PixelBitMask` modes, tries every GOP handle, can set a mode, and maps the framebuffer into the direct map so the kernel can draw before its allocator works (`dmap_span` in BootInfo).
+- **Drivers**: xHCI, NVMe and AHCI poll when their interrupt does not arrive and say so; NVMe honours MDTS and asks for its queue count; AHCI refuses controllers without 64-bit DMA. Read but never run, because QEMU cannot produce them: xHCI 64-byte contexts, scratchpad buffers and the firmware hand-off, low-speed devices, transaction translators, a second IOAPIC, DMA above 4GiB.
+- **`devpnp`** (`#$`, `port/devpnp.zig`): the PCI files only; ISA PnP is left out. Stock `pci -v` works.
+- **Unexplained**: one AHCI run with `*nomsi=1` stalled at the first `term%`; five repeats passed.
 
 Notes from M8 for later milestones:
 

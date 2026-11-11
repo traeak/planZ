@@ -39,6 +39,28 @@
 //!   - The namespace's LBA size shift is cut to 5 bits in nvmeonline
 //!     (a shift by more is undefined in C and a trap here).
 //!   - readsmart's two waserror blocks are defers.
+//!   - Real hardware.  None of this is in the C:
+//!       * nvmeenable waits for CSTS.RDY to clear (the controller was
+//!         disabled in nvmepnp, perhaps while the firmware had it
+//!         running) before it sets the admin queues and CC.EN; the wait
+//!         is bounded by CAP.TO.
+//!       * setupqueues asks for its queues with Set Features (Number of
+//!         Queues) before creating them, as the specification wants, and
+//!         creates no more submission queues than were granted.
+//!       * A transfer is no longer than the controller's MDTS allows.
+//!         With 64K pages the C sends up to 128K whatever MDTS says.
+//!       * qcmd clears command words 10 to 15; the C leaves in them
+//!         whatever the entry's last command had there.
+//!       * wcmd gives up on an admin command after Admto ms (status
+//!         Timeout, never a real one: a status has 15 bits), so a
+//!         controller that does not answer fails nvmeenable instead of
+//!         stopping the boot.  The data buffer of such a command is not
+//!         freed.  An i/o command is waited for for ever, as in C, with
+//!         a message every Admto ms.
+//!       * Messages: the model and serial number at nvmeenable, each
+//!         name space's size the first time it comes on line, and "no
+//!         interrupts; polling" when a command had to be found by wcmd's
+//!         poll before any interrupt was ever seen.
 
 const std = @import("std");
 const arch = @import("../arch.zig");
@@ -114,6 +136,15 @@ const Ctlr = struct {
 
     /// DIFF: MSI-X is on, so INTMS and INTMC must be left alone.
     msix: bool = false,
+    /// DIFF: interrupts taken, and whether their absence was reported.
+    nintr: u32 = 0,
+    nointr: bool = false,
+    /// DIFF: the most bytes in one transfer (MDTS); 0 is no limit.
+    maxxfer: u64 = 0,
+    /// DIFF: for messages.
+    sdev: ?*SDev = null,
+    /// DIFF: name spaces whose size has been printed, by unit number.
+    shown: [1024 / 32]u32 = @splat(0),
 
     pci: *Pcidev,
     reg: [*]volatile u32,
@@ -152,6 +183,23 @@ const ACQBase0 = CSts + 5;
 const ACQBase1 = CSts + 6;
 
 const DBell = 0x1000 / 4;
+
+/// DIFF: wcmd's status for a command it gave up on.
+const Timeout = 0xFFFF;
+/// DIFF: how long wcmd waits for an admin command, in ms.
+const Admto = 10 * 1000;
+
+/// DIFF: the controller's name for messages.
+fn cname(ctlr: *Ctlr) []const u8 {
+    if (ctlr.sdev) |sd|
+        return sd.namestr();
+    return "nvme";
+}
+
+/// DIFF: an identify string without the blanks it is padded with.
+fn idstr(s: []const u8) []const u8 {
+    return std.mem.trim(u8, std.mem.sliceTo(s, 0), " ");
+}
 
 /// DIFF: whether the device's MSI-X capability is enabled.
 fn msixon(p: *Pcidev) bool {
@@ -204,6 +252,8 @@ fn qcmd(ws: *WS, ctlr: *Ctlr, adm: bool, opc: u32, nsid: u32, data: ?[*]u8, len:
     e[3] = 0;
     e[4] = 0;
     e[5] = 0;
+    // DIFF: the C leaves these as the entry's last command had them.
+    for (10..16) |i| e[i] = 0;
     var pa: u64 = 0;
     if (len > 0) {
         pa = arch.paddr(@intFromPtr(data.?));
@@ -224,7 +274,9 @@ fn qcmd(ws: *WS, ctlr: *Ctlr, adm: bool, opc: u32, nsid: u32, data: ?[*]u8, len:
 }
 
 fn nvmeintr(_: *arch.Ureg, arg: ?*anyopaque) void {
-    nvmepoll(@ptrCast(@alignCast(arg.?)));
+    const ctlr: *Ctlr = @ptrCast(@alignCast(arg.?));
+    ctlr.nintr +%= 1; // DIFF
+    nvmepoll(ctlr);
 }
 
 /// DIFF: the body of nvmeintr.
@@ -299,8 +351,31 @@ fn wcmd(ws: *WS, e: ?[*]volatile u32) u32 {
     }
     // not interruptible: the controller still has the buffers
     proc.tsleep(ws.sleep, wdone, ws, 5) catch {};
+    // DIFF: the C's loop is the poll and the tsleep alone.
+    var t0 = arch.MACHP(0).ticks;
     while (!wdone(ws)) {
         nvmepoll(ctlr);
+        if (wdone(ws)) {
+            if (ctlr.nintr == 0 and !ctlr.nointr) {
+                ctlr.nointr = true;
+                print("%s: nvme: no interrupts; polling\n", .{cname(ctlr)});
+            }
+            break;
+        }
+        if (arch.MACHP(0).ticks -% t0 >= Admto * arch.mem.HZ / 1000) {
+            t0 = arch.MACHP(0).ticks;
+            print("%s: nvme: command timeout; sq %lud csts %ux\n", .{ cname(ctlr), sqno(ctlr, sq), ctlr.reg[CSts] });
+            if (sq == &ctlr.sq[0]) {
+                ilock(&ctlr.intr);
+                const lost = ws.link.* == ws;
+                if (lost)
+                    ws.link.* = null;
+                iunlock(&ctlr.intr);
+                if (lost)
+                    return Timeout;
+                break;
+            }
+        }
         proc.tsleep(ws.sleep, wdone, ws, 10) catch {};
     }
     return @as(*volatile u16, &ws.status).*;
@@ -325,6 +400,11 @@ fn nvmebio(u: *SDunit, _: u32, write: bool, a: []u8, nb: usize, bno: u64) Error!
         var n = count;
         if (n > m)
             n = m;
+        // DIFF: MDTS
+        if (ctlr.maxxfer != 0 and n > ctlr.maxxfer / s)
+            n = @intCast(ctlr.maxxfer / s);
+        if (n == 0)
+            return error.Eio;
         const e = qcmd(&ws, ctlr, false, if (write) 0x01 else 0x02, nsid, p, n * s);
         e[10] = @truncate(lba);
         e[11] = @truncate(lba >> 32);
@@ -380,7 +460,9 @@ fn readsmart(u: *SDunit, _: *Chan, a: []u8, off: i64) Error!usize {
     var p: usize = 0;
 
     const info = alloc.mallocalign(0x1000, ctlr.mps, 0, 0) orelse return error.Enomem;
-    defer alloc.free(info);
+    // DIFF: a controller that did not answer still has the buffer.
+    var st: u32 = 0;
+    defer if (st != Timeout) alloc.free(info);
 
     // Log Page Attributes (LPA) Bit0: If set to '1' then te controller
     // supports SMART / Health information log page on a per namespace basis.
@@ -392,7 +474,8 @@ fn readsmart(u: *SDunit, _: *Chan, a: []u8, off: i64) Error!usize {
     q[12] = 0;
     q[13] = 0;
     q[14] = 0;
-    try checkstatus(wcmd(&ws, q), "read SMART/health info");
+    st = wcmd(&ws, q);
+    try checkstatus(st, "read SMART/health info");
 
     p += fmt.snprint(buf[p..], "Critical Warning:\t", .{}).len;
     if (info[0] & (1 << 0) != 0)
@@ -448,8 +531,11 @@ fn nvmeonline(u: *SDunit) i32 {
 
     const e = qcmd(&ws, ctlr, true, 0x06, ctlr.nsid.?[u.subno], info, 0x1000);
     e[10] = 0; // identify namespace
-    if (wcmd(&ws, e) != 0) {
-        alloc.free(info);
+    const st = wcmd(&ws, e);
+    if (st != 0) {
+        // DIFF: a controller that did not answer still has the buffer.
+        if (st != Timeout)
+            alloc.free(info);
         return 0;
     }
     u.sectors = get64(info);
@@ -464,6 +550,12 @@ fn nvmeonline(u: *SDunit) i32 {
     u.inquiry[3] = 2;
     u.inquiry[4] = u.inquiry.len - 4;
     @memcpy(u.inquiry[8..][0..20], ctlr.ident.?[24..][0..20]);
+
+    // DIFF: say what was found, once.
+    if (u.subno < 1024 and ctlr.shown[u.subno / 32] & @as(u32, 1) << @truncate(u.subno) == 0) {
+        ctlr.shown[u.subno / 32] |= @as(u32, 1) << @truncate(u.subno);
+        print("%s: nvme ns %ud: %,llud sectors of %lud\n", .{ u.perm.name, ctlr.nsid.?[u.subno], u.sectors, u.secsize });
+    }
 
     return 2;
 }
@@ -518,6 +610,23 @@ fn setupqueues(ctlr: *Ctlr) Error!void {
     if (lgsqsize > 12 - 6)
         lgsqsize = 12 - 6;
     var nsq: u32 = arch.conf.nmach;
+
+    // DIFF: Set Features, Number of Queues: nsq submission queues and
+    // one completion queue (both counts are zero based).  The answer is
+    // what the controller allocated, which can be fewer or more.  A
+    // controller that refuses is left to refuse the queues themselves.
+    var e = qcmd(&ws, ctlr, true, 0x09, 0, null, 0);
+    e[10] = 0x07;
+    e[11] = nsq - 1;
+    const nqst = wcmd(&ws, e);
+    if (nqst == Timeout)
+        try checkstatus(nqst, "set number of queues");
+    if (nqst == 0) {
+        const nsqa = (ws.cdw0 & 0xFFFF) + 1;
+        if (nsq > nsqa)
+            nsq = nsqa;
+    }
+
     var lgcqsize: u32 = undefined;
     while (true) {
         lgcqsize = lgsqsize;
@@ -538,7 +647,7 @@ fn setupqueues(ctlr: *Ctlr) Error!void {
     const cqid = 1;
     const cq = &ctlr.cq[cqid];
     _ = try cqalloc(ctlr, cq, lgcqsize);
-    var e = qcmd(&ws, ctlr, true, 0x05, 0, @ptrCast(@volatileCast(cq.base.?)), @as(usize, 1) << @intCast(lgcqsize));
+    e = qcmd(&ws, ctlr, true, 0x05, 0, @ptrCast(@volatileCast(cq.base.?)), @as(usize, 1) << @intCast(lgcqsize));
     e[10] = cqid | cq.mask << 16;
     e[11] = 3; // IEN | PC
     try checkstatus(wcmd(&ws, e), "create completion queue");
@@ -593,6 +702,12 @@ fn identify(ctlr: *Ctlr) Error!void {
     ctlr.nnsid = 0;
     while (ctlr.nnsid < 1024 and ctlr.nsid.?[ctlr.nnsid] != 0)
         ctlr.nnsid += 1;
+
+    // DIFF: MDTS, a power of two of the smallest page (CAP.MPSMIN).
+    const mdts = ctlr.ident.?[77];
+    ctlr.maxxfer = 0;
+    if (mdts != 0 and mdts < 32)
+        ctlr.maxxfer = @as(u64, 1) << @intCast(12 + ((ctlr.cap >> 48) & 15) + mdts);
 }
 
 fn nvmedisable(sd: *SDev) i32 {
@@ -673,6 +788,15 @@ fn nvmeenable(sd: *SDev) i32 {
 
 /// DIFF: what the waserror in nvmeenable protects.
 fn nvmeenable1(ctlr: *Ctlr, name: []const u8) Error!void {
+    // DIFF: nvmepnp cleared CC.EN; the queues may not be set and the
+    // controller may not be enabled again before it says it has stopped.
+    var to: i32 = (@as(i32, @intCast((ctlr.cap >> 24) & 255)) + 1) * 500;
+    while (ctlr.reg[CSts] & 1 != 0) : (to -= 10) {
+        if (to <= 0)
+            return proc.errorf("controller disable timeout: csts %ux", .{ctlr.reg[CSts]});
+        try proc.tsleep(&arch.up().?.sleep, proc.return0, null, 10);
+    }
+
     var pa = arch.paddr(@intFromPtr(try cqalloc(ctlr, &ctlr.cq[0], ctlr.mpsshift)));
     ctlr.reg[ACQBase0] = @truncate(pa);
     ctlr.reg[ACQBase1] = @truncate(pa >> 32);
@@ -696,7 +820,7 @@ fn nvmeenable1(ctlr: *Ctlr, name: []const u8) Error!void {
     // enable controller
     ctlr.reg[CCfg] = 1 | (ctlr.mpsshift - 12) << 7 | 6 << 16 | 4 << 20;
 
-    var to: i32 = @intCast((ctlr.cap >> 24) & 255);
+    to = @intCast((ctlr.cap >> 24) & 255);
     while (true) : (to -= 1) {
         if (to < 0) {
             if (ctlr.reg[CSts] & 2 != 0)
@@ -710,7 +834,11 @@ fn nvmeenable1(ctlr: *Ctlr, name: []const u8) Error!void {
     // Ready:
     try identify(ctlr);
     try setupqueues(ctlr);
-    print("%s: using %d submit queues\n", .{ name, ctlr.nsq });
+    // DIFF: the C prints the queues only.
+    print("%s: %s %s: %d submit queues, %d namespaces\n", .{
+        name,     idstr(ctlr.ident.?[24..][0..40]), idstr(ctlr.ident.?[4..][0..20]),
+        ctlr.nsq, ctlr.nnsid,
+    });
 }
 
 /// DIFF: the C's Bad label.
@@ -790,6 +918,7 @@ fn nvmepnp() ?*SDev {
     while (cp) |ctlr| : (cp = ctlr.next) {
         const s = alloc.new(SDev) orelse break;
         s.* = .{ .ifc = &sdnvmeifc, .ctlr = ctlr, .idno = id, .nunit = 1024 };
+        ctlr.sdev = s; // DIFF
         id += 1;
         if (h != null)
             t.?.next = s

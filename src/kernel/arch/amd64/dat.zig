@@ -153,6 +153,12 @@ pub const Mach = extern struct {
     havepge: bool = false,
     havewatchpt8: bool = false,
     havenx: bool = false,
+    havesyscall: bool = false, // DIFF: for cpucheck
+    haveinvtsc: bool = false,
+
+    /// DIFF: who has this Mach, while its processor is being started:
+    /// see mpstartap in mp.zig.  machinit keeps it.
+    apstate: u32 = 0,
 
     pml4: [*]u64 = undefined, // pml4 base for this processor (va)
     tss: ?*Tss = null, // tss for this processor

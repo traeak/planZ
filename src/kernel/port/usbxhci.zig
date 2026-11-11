@@ -39,6 +39,14 @@
 //!   - Interrupts: intrenable gets the PCI tbdf and programs MSI or
 //!     MSI-X (every table entry with the one message), so interrupter 0
 //!     is the only one enabled, as in the C, and there is no INTx.
+//!   - Not in the C, each for a first boot on a machine whose only
+//!     console is the screen and whose only keyboard is on this
+//!     controller: xhcihandoff halts the controller it has taken from
+//!     the firmware; xhciinit prints what the controller is and refuses
+//!     one that cannot address the memory it was given; recover notices
+//!     when events are left in the event ring with no interrupt and
+//!     then polls (lostintr); and a hub's Configure Endpoint that is
+//!     refused is tried again in the C's form (initep).
 
 const std = @import("std");
 const arch = @import("../arch.zig");
@@ -347,6 +355,9 @@ const Ctlr = struct {
     nslots: u32 = 0,
 
     recover: Rendez = .{},
+
+    // DIFF: not in the C, see lostintr
+    polling: bool = false,
 };
 
 const Epio = struct {
@@ -509,23 +520,39 @@ fn xecp(ctlr: *Xhci, id: u8, p_: ?usize) ?usize {
 }
 
 pub fn xhcihandoff(ctlr: *Xhci) void {
-    const p = xecp(ctlr, 1, null) orelse
-        return;
-    const r = ctlr.mmio + p;
-    const rb: [*]volatile u8 = @ptrCast(r);
-    if ((r[0] & (1 << 16)) != 0 and arch.getconf("*noxhcihandoff") == null) {
-        rb[3] |= 1;
-        var i: i32 = 5000;
-        while ((r[0] & (1 << 16)) != 0 and i >= 0) : (i -= 1)
-            delay(1);
-        // clear BIOS ownership in case of timeout
-        if (i < 0) {
-            rb[2] &= ~@as(u8, 1);
-            print("usbxhci %llux: timeout: in handoff\n", .{ctlr.base});
+    // DIFF: the C returns here when there is no legacy capability; the
+    // halt below is wanted either way.
+    if (xecp(ctlr, 1, null)) |p| {
+        const r = ctlr.mmio + p;
+        const rb: [*]volatile u8 = @ptrCast(r);
+        if ((r[0] & (1 << 16)) != 0 and arch.getconf("*noxhcihandoff") == null) {
+            rb[3] |= 1;
+            var i: i32 = 5000;
+            while ((r[0] & (1 << 16)) != 0 and i >= 0) : (i -= 1)
+                delay(1);
+            // clear BIOS ownership in case of timeout
+            if (i < 0) {
+                rb[2] &= ~@as(u8, 1);
+                print("usbxhci %llux: timeout: in handoff\n", .{ctlr.base});
+            }
         }
+        // disable SMI interrupts
+        r[1] &= 7 << 1 | 255 << 5 | 7 << 17 | 7 << 29;
     }
-    // disable SMI interrupts
-    r[1] &= 7 << 1 | 255 << 5 | 7 << 17 | 7 << 29;
+
+    // DIFF: not in the C, which leaves the controller as the firmware
+    // had it until xhciinit, and that is after every other driver's
+    // reset.  A controller the firmware left running goes on writing
+    // key reports and events into memory that was the firmware's and
+    // is the kernel's now, so stop it here.  It should halt within
+    // 16ms (xHCI 5.4.1.1); xhciinit complains if it has not.
+    const opr = ctlr.mmio + (ctlr.mmio[CAPLENGTH] & 0xFF) / 4;
+    if ((opr[USBSTS] & (CNR | HCH)) == 0) {
+        opr[USBCMD] &= USBCMD_PRES;
+        var i: i32 = 32;
+        while ((opr[USBSTS] & HCH) == 0 and i >= 0) : (i -= 1)
+            delay(1);
+    }
 }
 
 pub fn xhcishutdown(hp: *Hci) void {
@@ -622,16 +649,6 @@ pub fn xhciinit(hp: *Hci) Error!void {
     ctlr.nslots = (mmio[HCSPARAMS1] >> 0) & 0xFF;
     hp.nports = (mmio[HCSPARAMS1] >> 24) & 0xFF;
 
-    if (false) print("usbxhci %llux: csz=%d pagesize=%d nscratch=%d nintrs=%d nslots=%d nports=%d\n", .{
-        ctlr.xhci.base,
-        ctlr.csz,
-        ctlr.pagesize,
-        ctlr.nscratch,
-        ctlr.nintrs,
-        ctlr.nslots,
-        hp.nports,
-    });
-
     hp.highspeed = true;
     hp.superspeed = 0;
     const port = alloc.newslice(Port, hp.nports) orelse
@@ -659,6 +676,22 @@ pub fn xhciinit(hp: *Hci) Error!void {
         }
     }
 
+    // DIFF: the C has this print under if(0), without the version, the
+    // superspeed ports and AC64.  It is the one line a controller
+    // prints when all goes well.
+    print("usbxhci %llux: v%x ports %d usb3 %d slots %d intrs %d ctx %d scratch %d page %d ac64 %d\n", .{
+        ctlr.xhci.base,
+        mmio[CAPLENGTH] >> 16,
+        hp.nports,
+        @popCount(hp.superspeed),
+        ctlr.nslots,
+        ctlr.nintrs,
+        @as(u32, 32) << ctlr.csz,
+        ctlr.nscratch,
+        ctlr.pagesize,
+        @intFromBool((mmio[HCCPARAMS] & AC64) != 0),
+    });
+
     const slots = alloc.newslice(?*Slot, 1 + ctlr.nslots);
     ctlr.slot = slots;
     ctlr.dcba = @ptrCast(@alignCast(dmaalloc((1 + ctlr.nslots) * @sizeOf(u64), 64, ctlr.pagesize)));
@@ -666,6 +699,10 @@ pub fn xhciinit(hp: *Hci) Error!void {
         return error.Enomem;
     @memset(slots.?, null);
     const dcba = ctlr.dcba.?;
+    // DIFF: not in the C.  Memory comes from anywhere, and a controller
+    // without AC64 keeps the low half of an address only.
+    if ((mmio[HCCPARAMS] & AC64) == 0 and (dma(ctlr, dcba) >> 32) != 0)
+        return proc.errorf("no 64-bit addressing, memory above 4G", .{});
     if (ctlr.nscratch != 0) {
         ctlr.sba = @ptrCast(@alignCast(dmaalloc(ctlr.nscratch * 8, 64, ctlr.pagesize)));
         ctlr.sbp = dmaalloc(ctlr.nscratch * ctlr.pagesize, ctlr.pagesize, 0);
@@ -775,14 +812,66 @@ fn needrecover(arg: ?*anyopaque) bool {
         (ctlr.opr[USBSTS] & (HCH | HCE | HSE)) != 0;
 }
 
+/// DIFF: not in the C.  Is there an event the interrupt handler has not
+/// taken?  The count of events taken so far goes to rp.
+fn eventpending(ctlr: *Ctlr, rp: *u32) bool {
+    const ring = &ctlr.er[0];
+    const base = ring.base orelse return false;
+    if (ring.ctlr != ctlr)
+        return false;
+    ilock(&ring.lock);
+    const x = ring.rp;
+    const td = base + 4 * (x & ring.mask);
+    const pending = (((x >> @intCast(ring.shift)) ^ td[3]) & 1) != 0;
+    iunlock(&ring.lock);
+    rp.* = x;
+    return pending;
+}
+
+/// DIFF: not in the C, where a controller whose interrupt never comes
+/// (no MSI capability that works, a message that goes nowhere) fails
+/// each command after 5 seconds and resets itself for ever, with
+/// nothing said about why.  An event that is still the next one to
+/// take after 20ms, three times over, was not announced: the handler
+/// would have taken it within microseconds.  recover then runs the
+/// handler itself, a hundred times a second, which is slow but leaves
+/// the keyboard working.
+fn lostintr(ctlr: *Ctlr) bool {
+    const up = arch.up().?;
+    var rp0: u32 = undefined;
+    var rp: u32 = undefined;
+
+    if (!eventpending(ctlr, &rp0))
+        return false;
+    var i: u32 = 0;
+    while (i < 3) : (i += 1) {
+        tsleep(&up.sleep, return0, null, 20) catch {};
+        if (!eventpending(ctlr, &rp) or rp != rp0)
+            return false;
+    }
+    return true;
+}
+
 fn recover(arg: ?*anyopaque) void {
     const hp: *Hci = @ptrCast(@alignCast(arg.?));
     const ctlr = ctlrof(hp);
     const up = arch.up().?;
 
     // DIFF: while(waserror()) ; see the top of the file
-    while (!needrecover(ctlr))
+    // DIFF: the C sleeps a second at a time and does nothing else here;
+    // see lostintr.
+    while (!needrecover(ctlr)) {
+        if (ctlr.polling) {
+            tsleep(&ctlr.recover, needrecover, ctlr, 10) catch {};
+            poll(hp);
+            continue;
+        }
         tsleep(&ctlr.recover, needrecover, ctlr, 1000) catch {};
+        if (!needrecover(ctlr) and lostintr(ctlr)) {
+            print("usbxhci %llux: no interrupts, polling\n", .{ctlr.xhci.base});
+            ctlr.polling = true;
+        }
+    }
 
     print("usbxhci %llux: need recover: USBSTS=%ux, er stopped=%d\n", .{
         ctlr.xhci.base, ctlr.opr[USBSTS], @intFromBool(ctlr.er[0].stopped),
@@ -1031,7 +1120,13 @@ fn completering(ctlr: *Ctlr, r: *Ring, er: [*]volatile u32) void {
 }
 
 fn interrupt(_: *arch.Ureg, arg: ?*anyopaque) void {
-    const hp: *Hci = @ptrCast(@alignCast(arg.?));
+    poll(@ptrCast(@alignCast(arg.?)));
+}
+
+/// DIFF: the body of the C's interrupt, so that recover can run it too
+/// when no interrupt comes (see lostintr).  For that the event ring's
+/// lock, which the C never takes, is held while events are taken.
+fn poll(hp: *Hci) void {
     const ctlr = ctlrof(hp);
     const ring = &ctlr.er[0];
     var td: [*]volatile u32 = undefined;
@@ -1039,6 +1134,9 @@ fn interrupt(_: *arch.Ureg, arg: ?*anyopaque) void {
     const base = ring.base orelse return;
     if (ring.ctlr != ctlr)
         return;
+
+    ilock(&ring.lock);
+    defer iunlock(&ring.lock);
 
     const irs = ctlr.rts + IR0;
     var x = irs[IMAN];
@@ -1352,10 +1450,18 @@ fn initep(ep: *Ep) Error!void {
         // its controller ever attaches.  Here ep0 is evaluated as for
         // any device, and a hub's slot is then configured with the
         // slot flag alone.
+        //
+        // Only the C's form is known to work on real controllers, so
+        // one that refuses the proper command is given that.
         if (ep.dev.nports > 0) {
             slot.ibase.?[1] = 1;
-            if (ctlrcmd(ctlr, CR_CONFIGEP | (slot.id << 24), 0, dma(ctlr, slot.ibase.?), null)) |err|
-                return errstr(err);
+            if (ctlrcmd(ctlr, CR_CONFIGEP | (slot.id << 24), 0, dma(ctlr, slot.ibase.?), null)) |err1| {
+                slot.ibase.?[1] = 3;
+                if (ctlrcmd(ctlr, CR_CONFIGEP | (slot.id << 24), 0, dma(ctlr, slot.ibase.?), null)) |_| {
+                    print("usbxhci %llux: hub slot %d: %s\n", .{ ctlr.xhci.base, slot.id, err1 });
+                    return errstr(err1);
+                }
+            }
         }
         return;
     }

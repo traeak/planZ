@@ -8,7 +8,12 @@
 //!   - the kernel image mapped at its link address, contiguous in
 //!     physical memory starting at `kernel_phys`;
 //!   - physical memory [0, dmap_size) mapped at `dmap_base` (the direct
-//!     map) and also at address 0 (identity, to be dropped by the kernel).
+//!     map) and also at address 0 (identity, to be dropped by the kernel);
+//!   - the framebuffer, if there is one and it ends below `dmap_span`,
+//!     mapped at `dmap_base` plus its address as well, even when it is
+//!     outside [0, dmap_size).  The mapping is an ordinary cached one,
+//!     for marks on the screen before the kernel can map anything; the
+//!     kernel makes its own for real use.
 //!
 //! Every address inside BootInfo is physical.  Nothing here is specific
 //! to UEFI or to one architecture.
@@ -18,6 +23,10 @@ pub const version: u32 = 1;
 
 /// Base of the direct map of physical memory.
 pub const dmap_base: u64 = 0xffff_8000_0000_0000;
+
+/// The loader's direct map is made under one top-level page table
+/// entry, so it can reach this far and no further.
+pub const dmap_span: u64 = 512 << 30;
 
 pub const BootInfo = extern struct {
     magic: u64 = magic,

@@ -57,7 +57,11 @@ pub fn xinit() void {
         // anything left over: cm.npage - nkpages(cm)
         // will be given to user by pageinit()
     }
-    xsummary();
+    // DIFF: the list of holes only if plan9.ini asks with *xsummary=.
+    // Real firmware leaves memory in dozens of pieces, and the list
+    // pushes what matters off a screen that is the only console.
+    if (arch.getconf("*xsummary") != null)
+        xsummary();
 }
 
 pub fn xspanalloc(size: usize, alignment: usize, span: usize) usize {

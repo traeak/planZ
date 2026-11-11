@@ -156,6 +156,12 @@ fn hzclock(ur: *Ureg) void {
     if (!arch.active.machs[@intCast(mach.machno)])
         return;
 
+    // DIFF: the C calls exit(0) here, which is not ported.  The only
+    // exit so far is a panic on another processor: stop, so that
+    // nothing more is drawn over its message.
+    if (arch.active.exiting)
+        arch.stop();
+
     if (mach.machno == 0)
         alarm.checkalarms();
 

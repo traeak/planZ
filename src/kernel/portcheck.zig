@@ -20,6 +20,7 @@ const files = .{
     @import("port/devmnt.zig"),
     @import("port/devmouse.zig"),
     @import("port/devpipe.zig"),
+    @import("port/devpnp.zig"),
     @import("port/devproc.zig"),
     @import("port/devroot.zig"),
     @import("port/devsrv.zig"),

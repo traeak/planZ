@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) void {
     disk_image = b.option([]const u8, "disk", "Disk image to attach as a virtio disk, e.g. ref/disk/9front-11952.amd64.qcow2 (never written: changes are discarded)");
     disk_bus = b.option([]const u8, "diskbus", "How the disk image is attached: virtio (default), nvme or ahci") orelse "virtio";
     const ref = b.option([]const u8, "ref", "Directory of 9front reference files, e.g. ref");
+    const usb_esp_mb = b.option(u32, "usbesp", "Size in MiB of the boot volume of the USB image (default 40)") orelse 40;
 
     const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
     const fcall = b.createModule(.{ .root_source_file = b.path("src/lib/fcall.zig") });
@@ -216,6 +217,41 @@ pub fn build(b: *std.Build) void {
                 addEsp(b, rchat, loader, kernel, ini9 ++ "mouseport=ps2\n", dir);
                 rio.dependOn(&rchat.step);
             }
+
+            // A disk image for a USB stick, to boot a real machine with
+            // no other disk: the boot volume with tools/usb.ini as its
+            // plan9.ini, then the Plan 9 partition of the 9front image
+            // for the root.  It is written straight into zig-out (it is
+            // 3.8GB, though sparse) and read back as a check.
+            const usb_image = "zig-out/planz-usb.img";
+            const usb = b.step("usb-image", "Write " ++ usb_image ++ ", a disk image to copy onto a USB stick with dd");
+            var usb_write: ?*std.Build.Step.Run = null;
+            var usb_check: *std.Build.Step.Run = undefined;
+            for ([_][]const u8{ "-o", "--check" }) |how| {
+                const mk = b.addSystemCommand(&.{ "python3", "-I", "tools/mkusb.py", how, usb_image });
+                mk.addArgs(&.{ "--esp-mb", b.fmt("{d}", .{usb_esp_mb}) });
+                mk.addPrefixedFileArg("--disk=", b.path(disk_image.?));
+                mk.addPrefixedFileArg("EFI/BOOT/BOOTX64.EFI=", loader.getEmittedBin());
+                mk.addPrefixedFileArg("planz=", kernel.getEmittedBin());
+                mk.addPrefixedFileArg("plan9.ini=", b.path("tools/usb.ini"));
+                mk.addPrefixedFileArg("boot/boot=", b.path(b.pathJoin(&.{ dir, "boot/boot" })));
+                mk.addPrefixedFileArg("boot/bootfs.paq=", b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })));
+                mk.addPrefixedFileArg("boot/paqfs=", b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })));
+                mk.addPrefixedFileArg("boot/factotum=", b.path(b.pathJoin(&.{ dir, "root/amd64/bin/auth/factotum" })));
+                mk.has_side_effects = true;
+                if (usb_write) |w| mk.step.dependOn(&w.step);
+                usb_write = usb_write orelse mk;
+                usb_check = mk;
+            }
+            usb.dependOn(&usb_check.step);
+
+            // Boot that image in QEMU as the only disk, on USB, with a
+            // USB keyboard and pointer and no PS/2 controller.
+            const utest = b.addSystemCommand(&.{ "sh", "tools/usbtest.sh", "240", usb_image });
+            utest.addArgs(qemu_args);
+            utest.addArgs(&.{ "-display", "none" });
+            utest.step.dependOn(&usb_check.step);
+            b.step("test-usb", "Boot the USB image in QEMU from a USB disk into rio and use it").dependOn(&utest.step);
         }
     }
 

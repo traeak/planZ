@@ -6,6 +6,7 @@
 //!
 //! plan9.ini settings:
 //!   *selftest=fault   end with a deliberate kernel fault instead
+//!   *selftest=off     do not run it (see init0 in arch/amd64/main.zig)
 //!   *schedtest=N      run the scheduling test for N seconds (default 3)
 
 const std = @import("std");

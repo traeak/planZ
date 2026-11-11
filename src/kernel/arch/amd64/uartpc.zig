@@ -26,6 +26,8 @@
 //!   - i8250console only records which UART is the console and sets
 //!     its line parameters.  Kernel print stays on main.zig's polled
 //!     console; nothing is rerouted through consuart.
+//!   - i8250pnp and i8250console leave out a port that has no UART
+//!     behind it.
 //!   - uartisa.c's uartisapnp (uart2 to uart5 from plan9.ini's
 //!     uartN=type=isa lines) is not ported: there is no isaconfig.
 //!     i8250alloc, which it would use, is in the driver.
@@ -111,8 +113,27 @@ fn i8250intrenable(uart: *Uart) void {
     irq.intrenable(ctlr.irq, i8250interrupt, uart, ctlr.tbdf, uart.name);
 }
 
+/// DIFF: only the ports that have a UART behind them; the C lists
+/// both always.  A machine with no serial port at all gets no eia
+/// files, and nothing waits on registers that are not there.
 fn i8250pnp() ?*Uart {
-    return &i8250uart[0];
+    var head: ?*Uart = null;
+    var i = i8250uart.len;
+    while (i > 0) {
+        i -= 1;
+        const probe: Drv = .{ .io = i8250ctlr[i].io };
+        if (!probe.probe())
+            continue;
+        i8250uart[i].next = head;
+        head = &i8250uart[i];
+    }
+    return head;
+}
+
+fn present(uart: *const Uart) bool {
+    const ctlr: *const Ctlr = @ptrCast(@alignCast(uart.regs.?));
+    const probe: Drv = .{ .io = ctlr.io };
+    return probe.probe();
 }
 
 pub const i8250physuart: PhysUart = blk: {
@@ -128,6 +149,8 @@ pub fn i8250console() void {
     if (r.end == 0 or r.n < 0 or r.n >= i8250uart.len)
         return;
     const uart = &i8250uart[@intCast(r.n)];
+    if (!present(uart)) // DIFF: see i8250pnp
+        return;
 
     uart.phys.enable(uart, false);
     uartctls(uart, "b9600 l8 pn s1");

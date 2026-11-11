@@ -29,7 +29,9 @@ pub fn addconsole(f: Consputs) void {
 /// The kernel message buffer behind /dev/kmesg: the last output, kept so
 /// it can be read after the screen has scrolled.
 pub var kmesg: struct {
-    buf: [16384]u8 = undefined,
+    // DIFF: 64K where the C has 16K: the first boots on a new machine
+    // say a lot, and with no serial port this is the only record.
+    buf: [65536]u8 = undefined,
     n: usize = 0,
 } = .{};
 
@@ -47,6 +49,13 @@ fn kmesgputs(s: []const u8) void {
     kmesg.n += str.len;
 }
 
+fn putstrn0(s: []const u8) void {
+    kmesgputs(s);
+    for (consoles) |c| {
+        if (c) |f| f(s);
+    }
+}
+
 /// Print a string on the console.
 pub fn putstrn(s: []const u8) void {
     if (s.len == 0) return;
@@ -55,10 +64,28 @@ pub fn putstrn(s: []const u8) void {
     // processor that is panicking, or one that will never run again.
     const locked = !panicking;
     if (locked) taslock.ilock(&conslock);
-    kmesgputs(s);
-    for (consoles) |c| {
-        if (c) |f| f(s);
+    if (midprogress) {
+        midprogress = false;
+        putstrn0("\n");
     }
+    putstrn0(s);
+    if (locked) taslock.iunlock(&conslock);
+}
+
+/// A line of progress() names is unfinished.
+var midprogress: bool = false;
+
+/// Name the step of start-up that is about to begin.  The names
+/// collect on a line ("init: mmu apic fpu ...") which ends when
+/// anything else is printed, so the last name on the screen of a
+/// machine that has hung is the step it hung in.
+/// DIFF: not in 9front.  For a machine whose screen is its only output.
+pub fn progress(name: []const u8) void {
+    const locked = !panicking;
+    if (locked) taslock.ilock(&conslock);
+    putstrn0(if (midprogress) " " else "init: ");
+    putstrn0(name);
+    midprogress = true;
     if (locked) taslock.iunlock(&conslock);
 }
 
@@ -92,6 +119,15 @@ pub fn panic(comptime format: []const u8, args: anytype) noreturn {
         panicking = true;
         print("panic: " ++ format ++ "\n", args);
         arch.dumpstack();
+        // DIFF: the C prints the message twice before the stack; here
+        // the second time is after it, so that the reason is the last
+        // thing on a screen that may be all there is to go by.  The
+        // other processors stop at their next clock tick (hzclock)
+        // and leave it there.
+        print("panic: " ++ format ++ "\n", args);
+        arch.active.exiting = true;
     }
+    // DIFF: always hangs, as the C does on a terminal with a screen;
+    // it never resets the machine.
     arch.stop();
 }

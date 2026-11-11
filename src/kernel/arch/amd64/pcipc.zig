@@ -124,6 +124,7 @@ pub fn pcicfginit() void {
             print("pci: cannot map configuration space at %#llux\n", .{x.base});
             continue;
         };
+        print("pci: ecam %#llux bus %d-%d\n", .{ x.base, x.startbus, x.endbus });
         segs[nseg] = .{ .va = va, .startbus = x.startbus, .endbus = x.endbus };
         nseg += 1;
         maxbno = @max(maxbno, x.endbus);
@@ -141,6 +142,43 @@ pub fn pcicfginit() void {
 
     apic.msiassign = msiintrenable;
     pci.pciscaninit();
+    pcilist();
+}
+
+/// Every device found, four to a line: bus.device.function,
+/// vendor/device, class.subclass.interface, and for a bridge the bus
+/// behind it.  *pcihinv= in plan9.ini gives 9front's fuller listing
+/// with the memory of each.
+/// DIFF: not in 9front, where this is what pci(8) is for; on a
+/// machine that does not get as far as a shell the list of what is
+/// there is the first thing wanted.
+fn pcilist() void {
+    if (bootargs.getconf("*nopcilist") != null)
+        return;
+    var n: usize = 0;
+    var pp: ?*pci.Pcidev = null;
+    while (pci.pcimatch(pp, 0, 0)) |p| : (pp = p) {
+        print("%s%d.%d.%d %.4ux/%.4ux %.2ux.%.2ux.%.2ux", .{
+            if (n % 4 == 0) "pci: " else "  ",
+            pci.BUSBNO(p.tbdf),
+            pci.BUSDNO(p.tbdf),
+            pci.BUSFNO(p.tbdf),
+            p.vid,
+            p.did,
+            p.ccrb,
+            p.ccru,
+            p.ccrp,
+        });
+        if (p.bridge) |b|
+            print(">%d", .{pci.BUSBNO(b.tbdf)});
+        n += 1;
+        if (n % 4 == 0)
+            print("\n", .{});
+    }
+    if (n % 4 != 0)
+        print("\n", .{});
+    if (n == 0)
+        print("pci: no devices\n", .{});
 }
 
 fn msiirqenable(v: *Vctl, _: bool) i32 {

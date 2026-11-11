@@ -520,10 +520,11 @@ pub fn vunmap(va: usize, _: usize) void {
 }
 
 /// mark pages as write combining (used for framebuffer)
-pub fn patwc(a: usize, n_: usize) void {
+/// DIFF: says whether it could, for the boot log.
+pub fn patwc(a: usize, n_: usize) bool {
     // check if pat is usable
     if (dat.MACHP(0).cpuiddx & dat.Pat == 0 or (l.rdmsr(0x277) >> (mem.PATWC * 8)) & 7 != 1)
-        return;
+        return false;
 
     // set the bits for all pages in range
     const pml4 = m().pml4;
@@ -547,4 +548,5 @@ pub fn patwc(a: usize, n_: usize) void {
         n -= @intCast(z);
         va += z;
     }
+    return true;
 }

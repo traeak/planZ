@@ -316,6 +316,26 @@ pub fn intrspurious(vno: usize) bool {
     return vno == dat.VectorPIC + 7 or vno == dat.VectorPIC + 15;
 }
 
+/// What the firmware says of processors and interrupt wiring, for the
+/// boot log: the local APIC ids (a * marks one that is not enabled),
+/// and the ISA interrupts that are not wired one to one.
+fn madtprint() void {
+    print("apic: lapic %#llux%s, %d processors, ids", .{ madt.lapic_pa, if (madt.pcat) " 8259" else "", madt.ncpu });
+    for (madt.cpu[0..madt.ncpu]) |c|
+        print(" %ud%s", .{ c.apicid, if (c.enabled) "" else "*" });
+    print("\n", .{});
+    if (madt.noverride != 0) {
+        print("apic:", .{});
+        for (madt.override[0..madt.noverride]) |o| {
+            print(" irq%d=gsi%ud%s%s", .{
+                o.irq,                                o.gsi,
+                if (o.flags & 3 == 3) " low" else "", if ((o.flags >> 2) & 3 == 3) " level" else "",
+            });
+        }
+        print("\n", .{});
+    }
+}
+
 /// Find the interrupt controllers and start the bootstrap processor's.
 pub fn intrinit() void {
     if (!acpi.madt(&madt))
@@ -323,6 +343,7 @@ pub fn intrinit() void {
     if (madt.nioapic == 0)
         panic("no I/O APIC", .{});
     // conf.nmach counts processors as they come on line; see mp.zig.
+    madtprint();
 
     i8259off();
 
@@ -336,7 +357,7 @@ pub fn intrinit() void {
         var pin: u32 = 0;
         while (pin < a.nrdt) : (pin += 1)
             rdtwrite(a, pin, 0, ApicIMASK);
-        print("IOAPIC: %llux %#p gsi %ud-%ud\n", .{ ia.pa, va, a.gsibase, a.gsibase + a.nrdt - 1 });
+        print("IOAPIC: %llux %#p id %d gsi %ud-%ud\n", .{ ia.pa, va, ia.id, a.gsibase, a.gsibase + a.nrdt - 1 });
     }
 
     lapicinit();

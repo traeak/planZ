@@ -30,6 +30,7 @@ pub const devtab = [_]*const devmod.Dev{
     &@import("../port/devdraw.zig").drawdevtab,
     &@import("../port/devmouse.zig").mousedevtab,
     &@import("../arch/amd64/devkbd.zig").kbddevtab,
+    &@import("../port/devpnp.zig").pnpdevtab,
 };
 
 /// Let each driver announce itself to the device that will use it;
