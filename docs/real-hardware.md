@@ -161,6 +161,102 @@ fshalt
 
 On Linux the files are then in partition 1 of the stick (`fsck.fat` will remark that the free-cluster count is off after dossrv has written; that is harmless).
 
+## Network through a USB adapter
+
+9front drives USB Ethernet adapters from user space: `nusbrc` starts `nusb/ether` for the adapter, and it appears as `/net/etherUxxxxx` (`xxxxx` is the five-digit name of the device, as for the stick). The kernel only carries the USB transfers. In QEMU this works with its `usb-net` adapter, at full speed, on a root port and behind a USB 1.1 hub (`zig build test-usbnet`). No real adapter has been tried.
+
+The adapter at hand is the Realtek RTL8153 (`0bda:8153`) built into the USB hub on the development machine. `nusbrc` on the stick knows that number and starts `nusb/ether` in its plain CDC mode; `nusb/ether` itself switches the chip from its first, vendor-specific configuration to its CDC one. **It sits behind the hub's USB 3 half (`0bda:0411`, SuperSpeed), and planZ has never run a USB 3 hub or a SuperSpeed network device.** Expect this to be the part that fails, and treat a failure as a useful report.
+
+If you attach that hub to the test machine:
+
+1. Plug it into a blue (USB 3) port on the back of the board before power-on. Plugging it in once rio is up is the second thing to try, not the first: in QEMU the kernel then finds the adapter, loses it when it is unplugged and finds it again, but with two `nusbrc` listeners running by then, QEMU's adapter (a communications-class device) is taken by `nusb/serial` before `nusb/ether` gets it. The RTL8153 should not be offered to `nusb/serial`; that has not been tried.
+2. Boot to rio, click in the shell window and look:
+
+   ```
+   cat /dev/usb/ctl
+   ls -d /net/ether*
+   ```
+
+   `/dev/usb/ctl` has two lines per endpoint; the second line of each device's `epN.0` names it. There should be
+   - two `hub` lines for the dock: one on an `epN.0` line with `speed super` (`vid 0x0bda did 0x0411`) and one with `speed high` (`did 0x5411`);
+   - one line for the adapter, `… vid 0x0bda did 0x8153 …`, on an `epN.0` line with `speed super` and a `hub` number that is the `N` of the SuperSpeed hub;
+   - once `nusb/ether` has it, two more endpoints of the same `N`, `bulk r` and `bulk w` (QEMU's adapter shows one `bulk rw` instead);
+   - and `ls` shows `/net/etherUxxxxx`.
+
+   `nusb/serial: getdev: device or object already in use` on the console at start-up is harmless: the root's own `nusbrc` offers the adapter to `nusb/serial` after `nusb/ether` has taken it.
+3. Get an address, naming the interface (a plain `ip/ipconfig` takes `ether0` if a driver for the board's own chip exists by then):
+
+   ```
+   cat /net/etherU*/addr
+   ip/ipconfig ether /net/etherU*
+   cat /net/ndb
+   ```
+
+   `addr` is the adapter's MAC address. `ipconfig` returns after a few seconds with a lease, and `/net/ndb` then shows `ip=`, `ipgw=` and `dns=`. `ndb/cs` and `ndb/dns` are already running (the profile starts them); nothing more is needed for names.
+4. Use it, with the gateway address from `/net/ndb`:
+
+   ```
+   ip/ping -n 3 192.168.1.1
+   hget http://9front.org/ | sed 5q
+   hget https://9front.org/ | sed 5q
+   cat /net/etherU*/stats
+   ```
+
+   `stats` counts packets `in:` and `out:`.
+
+If it fails, the place it stops says where to look:
+
+| What you see | Meaning |
+|---|---|
+| No `hub` line with `speed super`; `nusb/usbd: … sethubdepth`, `devctl hub` or `hub descriptor too small` on the console | The USB 3 hub did not attach |
+| The hub is there, no `0x8153` line | The device behind the hub did not attach: the route through the hub, or its port status |
+| `usbxhci …: hub slot N: …` in `/dev/kmesg` | The controller refused the command that marks the device as a hub |
+| The `0x8153` line is there with `speed high` | It came up on the hub's USB 2 half; it should still work, at USB 2 speed |
+| The `0x8153` line is there, no `/net/etherU…` | `nusb/ether` failed; run it by hand as below |
+| `/net/etherU…` is there, `ipconfig` fails (`no success with DHCP`) | Packets do not get through; `stats` shows whether `out:` and `in:` move |
+| Lease and ping work, `hget` stalls or the checksum of a download is wrong | Bulk transfers under load |
+
+To see why `nusb/ether` fails, start it by hand with the adapter's `N` from `/dev/usb/ctl` (if `/net/etherU…` already exists the device is in use, and this only says so):
+
+```
+nusb/ether -d N
+```
+
+To see `nusb/usbd` attach the hub and the adapter step by step, add `usbdebug=-d` to `plan9.ini` on the stick; it prints a line per port event on the console at boot, so they are in the photograph or, if rio comes up, in what scrolls past before it.
+
+Send back, saved as under "Collecting information from rio": `cat /dev/usb/ctl`, `cat /dev/kmesg`, `ls -l /net`, `cat /net/ndb`, `cat /net/etherU*/stats`, what `ip/ipconfig` and `nusb/ether -d N` printed, and from Linux on the development machine `lsusb -t` and `lsusb -v -d 0bda:8153` with the hub attached there (the configurations and endpoint sizes the chip really offers).
+
+Things to know:
+
+- **Without the USB 3 hub in the way.** A USB 2 port or cable makes the whole dock a high-speed device: hub `0x5411` only, the adapter behind it at `speed high`. A high-speed hub with a high-speed device behind it is close to what QEMU has run (its hub is full speed), so try a black port if the blue one fails.
+- **QEMU's adapter is not this one.** It runs at full speed with 64-byte packets, announces itself as a communications device, and uses one endpoint number for both directions. The RTL8153 at SuperSpeed has 1024-byte packets, two endpoints, a configuration switch, and needs an empty packet after each frame that is a multiple of 1024 bytes long. None of that has run.
+- **QEMU's own 8-port hub does not attach** (`nusb/usbd: … descr. too small`): its hub descriptor is one byte shorter than stock `nusb/usbd` requires for eight ports. QEMU adds such a hub by itself when the controller's ports run out, so give the controller more ports (`-device qemu-xhci,p2=8`) or a hub with `ports=7` or fewer. This is between QEMU and `nusb/usbd`, not the kernel; a real hub is not affected.
+
+## The on-board Ethernet (RTL8125B)
+
+`port/ether8125.zig` drives the board's Realtek RTL8125B. It has never run on the chip, so expect to send information back. With no other network card it is `ether0`.
+
+At boot, look for `#l0: rtl8125: 1000Mbps port 0xFCC10000 irq 255 ea …` (the speed reads 100 if the link is down at that moment; `irq 255` is normal). Then, in the shell window:
+
+```
+ip/ipconfig
+ip/ping -n 3 <your gateway>
+cat /net/ether0/ifstat >/tmp/ifstat
+cat /dev/kmesg >/tmp/kmesg
+```
+
+Copy both files to the stick's FAT partition as shown above and send them, whether or not it worked. In `kmesg` there should be `#l0: rtl8125: RTL8125B macv 0x64100000 pci rev 0x05 phy ramcode 0x…` and, a second or two later, `#l0: rtl8125: link up: 2500Mbps, phystatus 0x…`.
+
+| What you see | Meaning | What to try or send |
+|---|---|---|
+| No `rtl8125` line at all | The PCI scan did not find `10ec:8125` | `pci -v` |
+| `unknown mac 8125 xxxxxxxx` | A chip revision the driver does not know | The number |
+| `reset failed: cr … mcucmd …` | The chip did not finish its reset | The line |
+| `no interrupts; polling` | The interrupt does not arrive; the network works, slowly | `ifstat` |
+| Never `link up` | Negotiation failed | Set `*rtl8125nophy=1` in `plan9.ini` and try again; send `ifstat` from both |
+| Link up, no lease | Transmit or receive ring problem | `ifstat` taken twice, a few seconds apart |
+| Works, then stops | | `ifstat`; `resets` above 1 means the driver restarted the chip |
+
 ## plan9.ini on the stick
 
 `tools/usb.ini`, with comments. What is in it and why:
@@ -187,3 +283,4 @@ Everything here has run only in QEMU. Likely to differ on the real machine:
 - **The firmware.** OVMF accepts the image with partition type `0xEF` and with `0x0C`, FAT32 and FAT16. Other firmware may be pickier; `tools/mkusb.py --esp-type 0c` makes a plain FAT32 partition instead.
 - **The screen.** The mode is whatever the firmware left, probably the monitor's native one. rio's windows are placed for a small screen and text is small on a large one.
 - **No network.** There is no driver for the board's network chip yet, so `stats` shows no Ethernet and nothing is configured.
+- **USB Ethernet.** Only QEMU's full-speed adapter has run. See "Network through a USB adapter" for what a real one, behind a USB 3 hub, adds.

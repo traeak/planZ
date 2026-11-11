@@ -203,6 +203,16 @@ pub fn build(b: *std.Build) void {
             addEsp(b, nchat, loader, kernel, ini9, dir);
             b.step("test-net", "Boot stock 9front from the disk image and use the network").dependOn(&nchat.step);
 
+            // The same through a USB Ethernet adapter, which stock
+            // nusb/ether drives from user space over the kernel's USB
+            // stack.  The virtio card is still there; the test names
+            // the USB interface.
+            const unchat = b.addSystemCommand(&.{ "sh", "tools/usbnettest.sh", "240" });
+            unchat.addArgs(qemu_args);
+            unchat.addArgs(&.{ "-display", "none" });
+            addEsp(b, unchat, loader, kernel, ini9, dir);
+            b.step("test-usbnet", "Boot stock 9front from the disk image and use the network through a USB adapter").dependOn(&unchat.step);
+
             // And the screen: rio, a typed key and a moved mouse, once
             // with the PS/2 devices and once with USB ones only.
             const rio = b.step("test-rio", "Boot stock 9front from the disk image into rio and use keyboard and mouse");
