@@ -10,9 +10,8 @@
 //!       * serialoq is declared so that consactive, prflush and
 //!         cpushutdown read as in C, but nothing writes to it.
 //!       * kprintoq is fed by a console function that consinit
-//!         registers.  Output therefore reaches /dev/kprint in addition
-//!         to the screen and the serial port, where the C sends it to
-//!         kprint instead of the screen.
+//!         registers.  As in the C, output goes to kprint instead of the
+//!         screen while it is open; screen.zig's screenputs checks.
 //!       * a write to /dev/cons calls p9.putstrn, which does not wait
 //!         for flow control as putstrn0(.., usewrite=1) does.
 //!   - sysfatal and _assert are not ported: nothing in Zig calls them.
@@ -28,7 +27,7 @@
 //!     "rdb" calls consdebug only if one is set, there is no rdb.
 //!   - iseve, hostdomain, userwrite, hostownerwrite and hostdomainwrite
 //!     are in auth.c in 9front; they are here until auth.c is ported
-//!     (M7).  hostownerwrite has no shrrenameuser: devshr is not ported.
+//!     (M7).
 //!
 //! As in 9front there is no console input in the kernel: a read of
 //! /dev/cons and a write of /dev/consctl fail with Egreg.  Keyboard and
@@ -776,7 +775,7 @@ fn hostownerwrite(a: []const u8) Error!usize {
 
     proc.renameuser(proc.eve, new[0..name.len]);
     devsrv.srvrenameuser(proc.eve, new[0..name.len]);
-    // DIFF: no shrrenameuser, devshr is not ported
+    @import("devshr.zig").shrrenameuser(proc.eve, new[0..name.len]);
     const old = evebuf;
     proc.eve = new[0..name.len];
     evebuf = new;

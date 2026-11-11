@@ -101,7 +101,7 @@ fn mpstartap(apicid: u32, machno: usize) void {
     mach.gdt = gdt;
     @memcpy(gdt[0..mmu.gdt.len], &mmu.gdt);
 
-    dat.machp[machno] = mach;
+    dat.percpu.machp[machno] = mach;
 
     // The kernel half is the same on every processor: the tables
     // below the top level are shared.
@@ -180,7 +180,7 @@ pub fn mpinit() void {
         mpstartap(c.apicid, machno);
         if (!@atomicLoad(bool, &online[machno], .seq_cst)) {
             print("mp: cpu with apic id %ud did not start\n", .{c.apicid});
-            dat.machp[machno] = null;
+            dat.percpu.machp[machno] = null;
             continue;
         }
         conf.nmach += 1;

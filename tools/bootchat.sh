@@ -10,6 +10,10 @@
 # timeout, if QEMU exits, or on a kernel panic.  The QEMU command must
 # connect the serial port to stdio.  With CHATLOG=file in the
 # environment, the serial output of a completed conversation is kept there.
+#
+# A `send` that starts with "@host " is not typed: the rest is run here
+# as a shell command (to press keys or take a picture through QEMU's
+# monitor, say), and the conversation fails if the command does.
 
 if [ $# -lt 4 ]; then
 	echo "usage: $0 seconds expect [send expect]... -- qemu-command..." >&2
@@ -48,6 +52,7 @@ i=0
 while [ $i -lt $steps ]; do
 	want=$(cat "$dir/step$i")
 	while :; do
+		[ -z "$want" ] && break		# nothing to wait for
 		if tail -c +$pos "$log" | grep -a -q -F -- "$want"; then
 			break
 		fi
@@ -68,7 +73,23 @@ while [ $i -lt $steps ]; do
 	pos=$(($(wc -c <"$log") + 1))
 	i=$((i + 1))
 	if [ $i -lt $steps ]; then
-		printf '%s\n' "$(cat "$dir/step$i")" >&3
+		case $(cat "$dir/step$i") in
+		"@host "*)
+			if ! sh -c "$(cut -c7- "$dir/step$i")"; then
+				echo "boot chat: host command failed: $(cat "$dir/step$i")" >&2
+				exit 1
+			fi
+			i=$((i + 1))
+			continue
+			;;
+		esac
+		# A little at a time: with rio running, 9front's kbdfs drops
+		# typed characters once 128 of them are waiting.
+		fold -b -w 24 "$dir/step$i" | while IFS= read -r part || [ -n "$part" ]; do
+			printf '%s' "$part" >&3
+			sleep 0.05
+		done
+		printf '\n' >&3
 		i=$((i + 1))
 	fi
 done

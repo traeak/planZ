@@ -1,3 +1,6 @@
 zig-out/
 .zig-cache/
 ref/
+tools/drawref/obj/
+tools/drawref/cref
+core.[0-9]*

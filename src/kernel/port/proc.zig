@@ -115,7 +115,7 @@ pub fn schedinit() noreturn {
         const mach = arch.m();
         if (mach.proc) |p| {
             // DIFF: edf — edfrecord(up) for an admitted process.
-            mach.proc = null;
+            arch.setup(null);
             switch (p.state) {
                 .Running => {
                     p.state = .Scheding;
@@ -146,7 +146,7 @@ pub fn schedinit() noreturn {
         if (p != mach.readied)
             mach.schedticks = mach.ticks +% HZ / 10;
         mach.readied = null;
-        mach.proc = p;
+        arch.setup(p);
         p.mach = mach;
         p.affinity = mach.machno;
         p.state = .Running;

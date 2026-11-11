@@ -1,0 +1,15 @@
+libdraw/arith.c libdraw/rectclip.c libdraw/icossin.c libdraw/icossin2.c libdraw/drawrepl.c libdraw/bytesperline.c libdraw/chan.c libdraw/badrect.c libdraw/rgb.c
+libmemdraw/alloc.c libmemdraw/draw.c libmemdraw/line.c libmemdraw/ellipse.c libmemdraw/arc.c libmemdraw/fillpoly.c libmemdraw/poly.c libmemdraw/cmap.c libmemdraw/hwdraw.c libmemdraw/load.c libmemdraw/unload.c libmemdraw/warp.c
+libmemlayer/draw.c
+libmemlayer/lalloc.c
+libmemlayer/layerop.c
+libmemlayer/ldelete.c
+libmemlayer/lhide.c
+libmemlayer/line.c
+libmemlayer/load.c
+libmemlayer/lorigin.c
+libmemlayer/lsetrefresh.c
+libmemlayer/ltofront.c
+libmemlayer/ltorear.c
+libmemlayer/unload.c
+libmemlayer/warp.c

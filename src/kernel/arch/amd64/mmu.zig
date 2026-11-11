@@ -64,7 +64,7 @@ pub fn gdtinit(machno: usize, g: [*]Segdesc) void {
     l.lgdt(@sizeOf(@TypeOf(gdt)) - 1, @intFromPtr(g));
     l.setsegs(mem.KESEL);
     l.wrmsr(dat.FSbase, 0);
-    l.wrmsr(dat.GSbase, @intFromPtr(&dat.machp[machno]));
+    l.wrmsr(dat.GSbase, @intFromPtr(&dat.percpu.machp[machno]));
     l.wrmsr(dat.KernelGSbase, 0);
 }
 
@@ -297,7 +297,7 @@ pub fn mmuinit() void {
     l.ltr(mem.TSSSEL);
 
     l.wrmsr(dat.FSbase, 0);
-    l.wrmsr(dat.GSbase, @intFromPtr(&dat.machp[@intCast(mach.machno)]));
+    l.wrmsr(dat.GSbase, @intFromPtr(&dat.percpu.machp[@intCast(mach.machno)]));
     l.wrmsr(dat.KernelGSbase, 0);
 
     // enable syscall extension

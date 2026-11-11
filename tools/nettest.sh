@@ -55,7 +55,7 @@ sh "$here/bootchat.sh" "$timeout" \
 	"bootargs is" "" \
 	"user[" "" \
 	"starting /bin/rc" "" \
-	"starting /bin/rc" "ip/ipconfig && ndb/cs && echo lease^ok" \
+	"term%" "ip/ipconfig && ndb/cs && echo lease^ok" \
 	"leaseok" "grep -c 'ip=10.0.2.15' /net/ndb && echo addr^ok" \
 	"addrok" "ip/ping -n 2 10.0.2.2 && echo ping^ok" \
 	"pingok" "webfs && $(get http http)" \

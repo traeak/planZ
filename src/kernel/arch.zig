@@ -20,6 +20,8 @@ pub const Ureg = impl.Ureg;
 
 pub const m = impl.m;
 pub const up = impl.up;
+/// Make a process, or none, the one running on this processor.
+pub const setup = impl.setup;
 pub const MACHP = impl.MACHP;
 
 /// Global configuration, filled in by confinit.

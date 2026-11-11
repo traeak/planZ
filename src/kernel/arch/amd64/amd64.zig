@@ -23,6 +23,7 @@ pub const Ureg = dat.Ureg;
 
 pub const m = dat.m;
 pub const up = dat.up;
+pub const setup = dat.setup;
 pub const MACHP = dat.MACHP;
 
 pub const splhi = l.splhi;

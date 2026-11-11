@@ -2,7 +2,10 @@
 # Boot zig-out/esp in headless QEMU for a while and print the kernel's
 # serial output.  For looking at a boot by hand.
 #
-# usage: [SMP=n] [DISK=image [DISKBUS=virtio|nvme|ahci]] qrun.sh [seconds [cpu [plan9.ini text]]]
+# usage: [SMP=n] [DISK=image [DISKBUS=virtio|nvme|ahci]] [QEMUARGS="..."] qrun.sh [seconds [cpu [plan9.ini text]]]
+#
+# QEMUARGS is split on white space and added to the QEMU command, for
+# extra devices or a monitor socket.
 case ${DISKBUS:-virtio} in
 nvme) diskdev=nvme,drive=d0,serial=planz0 ;;
 ahci) diskdev=ide-hd,drive=d0,bus=ide.2 ;;
@@ -19,5 +22,5 @@ timeout "$secs" qemu-system-x86_64 -machine q35 -cpu "$cpu" -m 512M -smp "${SMP:
 	-drive format=raw,file=fat:rw:"$d/esp" -net none -serial file:"$d/log" \
 	-netdev user,id=n0 -device virtio-net-pci,netdev=n0,disable-legacy=on \
 	${DISK:+-drive if=none,id=d0,snapshot=on,file="$DISK" -device "$diskdev"} \
-	-no-reboot -display none >/dev/null 2>&1
+	$QEMUARGS -no-reboot -display none >/dev/null 2>&1
 sed 's/\x1b\[[0-9;=?]*[a-zA-Z]//g' "$d/log" | tr -d '\r' | sed -n '/^Plan 9/,$p'

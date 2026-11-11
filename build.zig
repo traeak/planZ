@@ -163,8 +163,8 @@ pub fn build(b: *std.Build) void {
         chat.addArgs(&.{
             "bootargs is", "!rc",
             "% ",          "echo planz^9front",
-            "planz9front", "ls /dev/cons /dev/time",
-            "/dev/time",   "cat /dev/pid && echo pid^ok",
+            "planz9front", "ls /dev/cons /dev/time && echo ls^ok",
+            "lsok",        "cat /dev/pid && echo pid^ok",
             "pidok",       "cat /proc/1/status | sed 1q && echo st^ok",
             "stok",        "ls /proc | sed 3q && cat /dev/time && echo time^ok",
             "timeok",      "ls /bin | grep -c . && echo union^ok",
@@ -184,7 +184,7 @@ pub fn build(b: *std.Build) void {
                 "bootargs is",      "",
                 "user[",            "",
                 "starting /bin/rc", "",
-                "starting /bin/rc", "ls /amd64/bin | wc -l && echo root^ok",
+                "term%",            "ls /amd64/bin | wc -l && echo root^ok",
                 "rootok",           "sum /amd64/bin/acme && echo sum^ok",
                 "sumok",            "echo planZ > /usr/glenda/zt && cat /usr/glenda/zt && rm /usr/glenda/zt && echo write^ok",
                 "writeok",          "cat '#l0/ether0/addr' && echo && echo ether^ok",
@@ -201,6 +201,21 @@ pub fn build(b: *std.Build) void {
             nchat.addArgs(&.{ "-display", "none" });
             addEsp(b, nchat, loader, kernel, ini9, dir);
             b.step("test-net", "Boot stock 9front from the disk image and use the network").dependOn(&nchat.step);
+
+            // And the screen: rio, a typed key and a moved mouse, once
+            // with the PS/2 devices and once with USB ones only.
+            const rio = b.step("test-rio", "Boot stock 9front from the disk image into rio and use keyboard and mouse");
+            for ([_][]const []const u8{
+                &.{},
+                &.{ "-machine", "q35,i8042=off", "-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-mouse" },
+            }) |extra| {
+                const rchat = b.addSystemCommand(&.{ "sh", "tools/riotest.sh", "240" });
+                rchat.addArgs(qemu_args);
+                rchat.addArgs(&.{ "-display", "none" });
+                rchat.addArgs(extra);
+                addEsp(b, rchat, loader, kernel, ini9 ++ "mouseport=ps2\n", dir);
+                rio.dependOn(&rchat.step);
+            }
         }
     }
 
@@ -232,6 +247,18 @@ pub fn build(b: *std.Build) void {
         const unit = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path(file),
             .target = b.graph.host,
+        }) });
+        test_step.dependOn(&b.addRunArtifact(unit).step);
+    }
+    {
+        const unit = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path("src/kernel/drawtest.zig"),
+            .target = b.graph.host,
+            .optimize = .safe,
+            .imports = &.{
+                .{ .name = "fmt", .module = fmt },
+                .{ .name = "fcall", .module = fcall },
+            },
         }) });
         test_step.dependOn(&b.addRunArtifact(unit).step);
     }

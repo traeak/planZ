@@ -16,6 +16,7 @@ const clock = @import("clock.zig");
 const xalloc = @import("../../port/xalloc.zig");
 const p9 = @import("../../port/print.zig");
 const screen = @import("../../port/screen.zig");
+const draw = @import("../../libdraw/draw.zig");
 const proc = @import("../../port/proc.zig");
 const portclock = @import("../../port/portclock.zig");
 const alarm = @import("../../port/alarm.zig");
@@ -126,7 +127,7 @@ fn mach0init() void {
     conf.nmach = 1;
 
     const mach: *dat.Mach = @ptrCast(&l.mach0);
-    dat.machp[0] = mach;
+    dat.percpu.machp[0] = mach;
     // From here m() works.
     mmu.gdtinit(0, &mmu.gdt0);
 
@@ -145,12 +146,22 @@ fn mach0init() void {
 /// the start; mapping the framebuffer needs the allocators.  What was
 /// printed before this is replayed from the kernel message buffer.
 fn screeninit() void {
+    // /dev/mousectl's machine-dependent commands (the PS/2 mouse).
+    screen.archmousectl = &@import("mouse.zig").mousectl;
+
     const fb = bootargs.bootinfop.framebuffer;
-    if (fb.format == .none or fb.base == 0) return;
+    if (fb.base == 0) return;
+    // The pixel's bytes in memory, low address first, are named last
+    // to first in a channel descriptor.
+    const fbchan = switch (fb.format) {
+        .bgrx8 => draw.XRGB32,
+        .rgbx8 => draw.XBGR32,
+        else => return,
+    };
     const size = @as(usize, fb.stride) * fb.height * 4;
     const va = mmu.vmap(fb.base, size) orelse return;
     mmu.patwc(va, size);
-    screen.screeninit(va, fb.width, fb.height, fb.stride);
+    screen.screeninit(va, fb.width, fb.height, fb.stride, fbchan);
 }
 
 /// Find the machine's description of itself.

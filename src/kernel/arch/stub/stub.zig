@@ -166,6 +166,9 @@ pub fn m() *Mach {
 pub fn up() ?*Proc {
     return m().proc;
 }
+pub fn setup(p: ?*Proc) void {
+    m().proc = p;
+}
 pub fn MACHP(_: usize) *Mach {
     return &dat.mach0;
 }

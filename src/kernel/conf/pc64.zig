@@ -25,6 +25,11 @@ pub const devtab = [_]*const devmod.Dev{
     &@import("../ip/devip.zig").ipdevtab,
     &@import("../port/devcap.zig").capdevtab,
     &@import("../port/devtls.zig").tlsdevtab,
+    &@import("../port/devusb.zig").usbdevtab,
+    &@import("../port/devshr.zig").shrdevtab,
+    &@import("../port/devdraw.zig").drawdevtab,
+    &@import("../port/devmouse.zig").mousedevtab,
+    &@import("../arch/amd64/devkbd.zig").kbddevtab,
 };
 
 /// Let each driver announce itself to the device that will use it;
@@ -33,6 +38,7 @@ pub const devtab = [_]*const devmod.Dev{
 pub fn links() void {
     devsd.sdifc = &sdifc_list;
     @import("../port/ethervirtio10.zig").ethervirtio10link();
+    @import("../port/usbxhcipci.zig").usbxhcipcilink();
     devip.ipprotoinit = &ipprotoinit;
     @import("../ip/ethermedium.zig").ethermediumlink();
     @import("../ip/loopbackmedium.zig").loopbackmediumlink();

@@ -5,6 +5,7 @@
 //! DIFF: `m` and `up` are not pinned in R15/R14; m() reads the Mach
 //! pointer through GS, exactly where the C kernel's trap entry finds it.
 
+const std = @import("std");
 const mem = @import("mem.zig");
 const portdat = @import("../../port/portdat.zig");
 
@@ -174,10 +175,19 @@ comptime {
 }
 
 /// GS base points at this processor's slot here, so GS:0 is its Mach.
-pub export var machp: [mem.MAXMACH]?*Mach = @splat(null);
+/// What GS points into: a processor's GS base is the address of its
+/// entry of `machp`, so `%gs:0` is its Mach and `%gs:@offsetOf(Percpu,
+/// "up")` is the same entry of `up`.
+pub const Percpu = extern struct {
+    machp: [mem.MAXMACH]?*Mach = @splat(null),
+    /// Mach.proc of each processor again, where one instruction can
+    /// read it; see up().
+    up: [mem.MAXMACH]?*Proc = @splat(null),
+};
+pub export var percpu: Percpu = .{};
 
 pub fn MACHP(n: usize) *Mach {
-    return machp[n].?;
+    return percpu.machp[n].?;
 }
 
 /// This processor.  Not to be held across anything that can switch
@@ -190,8 +200,22 @@ pub inline fn m() *Mach {
 
 /// The process running on this processor, or null in the scheduler and
 /// during boot.
+///
+/// Read in one instruction.  Going through m() takes two, and a process
+/// preempted between them and resumed on another processor would get
+/// the process now running on the processor it left; lock() would then
+/// count its lock against that process.
 pub inline fn up() ?*Proc {
-    return m().proc;
+    return asm volatile (std.fmt.comptimePrint("movq %%gs:{d}, %[ret]", .{@offsetOf(Percpu, "up")})
+        : [ret] "=r" (-> ?*Proc),
+    );
+}
+
+/// Make `p` the process running on this processor.  Called splhi.
+pub fn setup(p: ?*Proc) void {
+    const mach = m();
+    mach.proc = p;
+    percpu.up[@intCast(mach.machno)] = p;
 }
 
 // FPU states, Proc.fpu.fpstate
