@@ -33,6 +33,7 @@ const fmt = @import("fmt");
 const fpu = @import("fpu.zig");
 const uartpc = @import("uartpc.zig");
 const mp = @import("mp.zig");
+const pcipc = @import("pcipc.zig");
 const Uart16550 = @import("../../drv/uart16550.zig").Uart16550;
 
 const print = p9.print;
@@ -242,6 +243,8 @@ pub fn main(bipa: u64) callconv(.c) noreturn {
     devmod.devtab = &conf_pc64.devtab;
     uartpc.uartinit();
     bootfiles();
+    pcipc.pcicfginit();
+    conf_pc64.links();
     chan.chandevreset();
     syscallmod.systabinit();
     page.pageinit();

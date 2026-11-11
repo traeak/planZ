@@ -8,7 +8,8 @@
 # on.  Each text is looked for only in what was printed after the
 # previous one matched.  Exits 0 when the last text has appeared, 1 on
 # timeout, if QEMU exits, or on a kernel panic.  The QEMU command must
-# connect the serial port to stdio.
+# connect the serial port to stdio.  With CHATLOG=file in the
+# environment, the serial output of a completed conversation is kept there.
 
 if [ $# -lt 4 ]; then
 	echo "usage: $0 seconds expect [send expect]... -- qemu-command..." >&2
@@ -71,5 +72,6 @@ while [ $i -lt $steps ]; do
 		i=$((i + 1))
 	fi
 done
+[ -n "$CHATLOG" ] && cp "$log" "$CHATLOG"
 echo "boot chat: conversation completed"
 exit 0

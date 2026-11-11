@@ -61,7 +61,6 @@ pub fn selftest(_: ?*anyopaque) void {
 var slots: [128]?[]u8 = @splat(null);
 
 fn malloctest() void {
-    const before = alloc.mallocstats().curalloc;
     var seed: u32 = 1;
     var rounds: usize = 0;
     while (rounds < 20000) : (rounds += 1) {
@@ -103,11 +102,9 @@ fn malloctest() void {
 
     stdalloctest();
 
-    // Other processes allocate while this runs, so the total in use is
-    // not ours to compare; only on one processor, where they have not
-    // started yet, can a leak be told.
-    if (arch.conf.nmach == 1 and alloc.mallocstats().curalloc != before)
-        panic("selftest: malloc leaked %lud bytes", .{alloc.mallocstats().curalloc - before});
+    // DIFF from earlier milestones: no check that the total in use is
+    // back where it was.  Drivers and the network stack have processes
+    // of their own now, allocating while this runs.
     print("selftest: malloc ok, %lludK in the arena\n", .{alloc.mallocstats().cursize / mem.KiB});
 }
 
@@ -763,11 +760,12 @@ fn schedtest() void {
     if (!nt.slept or !nt.locked or !nt.alarmed) panic("selftest: notes: sleep %d eqlock %d alarm %d", .{ nt.slept, nt.locked, nt.alarmed });
 
     // The processes made here are gone and their slots are being used
-    // again: there were 17 and one per processor at once, and the
-    // kernel and the user test have a few more.
+    // again: there were 17 and one per processor at once.  The kernel,
+    // the drivers and whatever user programs are starting meanwhile
+    // have more, but nowhere near the thousands made here.
     var slots_used: u32 = 0;
     while (proc.proctab(slots_used) != null) slots_used += 1;
-    if (slots_used > 48 + arch.conf.nmach)
+    if (slots_used > 400)
         panic("selftest: %ud process slots used; exited processes are not being reused", .{slots_used});
     if (arch.up().?.pid != pid0) panic("selftest: pid changed", .{});
 }

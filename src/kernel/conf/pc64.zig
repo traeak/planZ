@@ -20,4 +20,41 @@ pub const devtab = [_]*const devmod.Dev{
     &@import("../port/devuart.zig").uartdevtab,
     &@import("../arch/amd64/devrtc.zig").rtcdevtab,
     &@import("../port/devswap.zig").swapdevtab,
+    &@import("../port/devsd.zig").sddevtab,
+    &@import("../port/devether.zig").etherdevtab,
+    &@import("../ip/devip.zig").ipdevtab,
+    &@import("../port/devcap.zig").capdevtab,
+    &@import("../port/devtls.zig").tlsdevtab,
+};
+
+/// Let each driver announce itself to the device that will use it;
+/// called once, before the devices are reset.  What mkdevc generates
+/// as links() from the "link" section of the configuration.
+pub fn links() void {
+    devsd.sdifc = &sdifc_list;
+    @import("../port/ethervirtio10.zig").ethervirtio10link();
+    devip.ipprotoinit = &ipprotoinit;
+    @import("../ip/ethermedium.zig").ethermediumlink();
+    @import("../ip/loopbackmedium.zig").loopbackmediumlink();
+    @import("../ip/netdevmedium.zig").netdevmediumlink();
+}
+
+const devip = @import("../ip/devip.zig");
+const Fs = @import("../ip/ipdat.zig").Fs;
+
+/// The protocols of the IP stack, in the order of 9/pc64/pc64.
+const ipprotoinit = [_]*const fn (*Fs) void{
+    @import("../ip/tcp.zig").tcpinit,
+    @import("../ip/udp.zig").udpinit,
+    @import("../ip/ipifc.zig").ipifcinit,
+    @import("../ip/icmp.zig").icmpinit,
+    @import("../ip/icmp6.zig").icmp6init,
+};
+
+const devsd = @import("../port/devsd.zig");
+
+const sdifc_list = [_]*const devsd.SDifc{
+    &@import("../port/sdvirtio10.zig").sdvirtio10ifc,
+    &@import("../port/sdnvme.zig").sdnvmeifc,
+    &@import("../port/sdiahci.zig").sdiahciifc,
 };

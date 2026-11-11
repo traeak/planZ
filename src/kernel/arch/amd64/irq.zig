@@ -66,6 +66,33 @@ pub fn irqhandled(ureg: *Ureg, vno: usize) i32 {
     return -1;
 }
 
+/// Remove a handler installed with intrenable; the arguments must be
+/// the same.
+pub fn intrdisable(irq: i32, f: Handler, a: ?*anyopaque, tbdf: i32, name: []const u8) void {
+    taslock.ilock(&vctllock);
+    for (vctl[dat.VectorPIC..], dat.VectorPIC..) |_, vno| {
+        var pv: *?*Vctl = &vctl[vno];
+        while (pv.*) |v| : (pv = &v.next) {
+            if ((v.irq == irq or irq == -1) and v.tbdf == tbdf and v.f == f and v.a == a and
+                std.mem.eql(u8, nameof(v), name))
+            {
+                if (v.disable) |disable| {
+                    if (disable(v, pv != &vctl[vno] or v.next != null) < 0)
+                        print("intrdisable: couldn't disable irq %d, tbdf %#ux for %s\n", .{ irq, tbdf, name });
+                    l.coherence();
+                }
+                pv.* = v.next;
+                if (v == vclock) vclock = null;
+                taslock.iunlock(&vctllock);
+                // DIFF: never freed.  Another processor may be walking the
+                // handler list; the C delays the free for the same reason.
+                return;
+            }
+        }
+    }
+    taslock.iunlock(&vctllock);
+}
+
 fn newvctl(f: Handler, a: ?*anyopaque, name: []const u8) *Vctl {
     const p = xalloc.xalloc(@sizeOf(Vctl)) orelse panic("intrenable: out of memory", .{});
     const v: *Vctl = @ptrFromInt(p);

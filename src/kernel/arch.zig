@@ -79,6 +79,22 @@ pub const microdelay = impl.microdelay;
 /// A setting from plan9.ini, or null.
 pub const getconf = impl.getconf;
 
+// Devices.
+
+/// Map device memory at physical address pa; returns its kernel
+/// address, or null.  Uncached, not executable.
+pub const vmap = impl.vmap;
+pub const vunmap = impl.vunmap;
+/// Reserve a range of physical address space for a device, at pa or
+/// anywhere if pa is all ones; returns the address or all ones.
+pub const upaalloc = impl.upaalloc;
+pub const upafree = impl.upafree;
+/// Install handler f(ureg, arg) for interrupt irq of the device with
+/// bus address tbdf (BUSUNKNOWN if it has none), and remove it.
+pub const intrenable = impl.intrenable;
+pub const intrdisable = impl.intrdisable;
+pub const BUSUNKNOWN = impl.BUSUNKNOWN;
+
 // User address spaces.
 
 /// Enter the mapping va -> pa for the current process; the low bits of

@@ -101,6 +101,17 @@ pub fn kmap(page: *portdat.Page) usize {
     return page.pa;
 }
 pub fn kunmap(_: usize) void {}
+pub fn vmap(_: u64, _: usize) ?usize {
+    return null;
+}
+pub fn vunmap(_: usize, _: usize) void {}
+pub fn upaalloc(_: u64, _: u64, _: u64) u64 {
+    return ~@as(u64, 0);
+}
+pub fn upafree(_: u64, _: u64) void {}
+pub const BUSUNKNOWN: i32 = -1;
+pub fn intrenable(_: i32, _: *const fn (*Ureg, ?*anyopaque) void, _: ?*anyopaque, _: i32, _: []const u8) void {}
+pub fn intrdisable(_: i32, _: *const fn (*Ureg, ?*anyopaque) void, _: ?*anyopaque, _: i32, _: []const u8) void {}
 pub fn probe(_: usize, _: bool) callconv(.c) bool {
     return true;
 }

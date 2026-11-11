@@ -81,16 +81,23 @@ fn push(bin: u32, f: *Free) void {
     arena.bins[bin] = f;
 }
 
+/// Blocks start on a multiple of the header size, so that what follows
+/// the header is aligned to it too: new() and friends promise that.
+/// xalloc aligns only to 8, so a header's worth more is asked of it.
+fn aligned(p: usize) usize {
+    return (p + hdrsize - 1) & ~@as(usize, hdrsize - 1);
+}
+
 /// Put more blocks on an empty bin.  Called with the lock held.
 fn refill(bin: u32) bool {
     const bs = binsize(bin);
     if (bs > chunk / 4) {
-        const p = xalloc.xallocz(bs, false) orelse return false;
+        const p = aligned(xalloc.xallocz(bs + hdrsize, false) orelse return false);
         arena.cursize += bs;
         push(bin, @ptrFromInt(p));
         return true;
     }
-    const p = xalloc.xallocz(chunk, false) orelse return false;
+    const p = aligned(xalloc.xallocz(chunk + hdrsize, false) orelse return false);
     arena.cursize += chunk;
     var off: usize = 0;
     while (off + bs <= chunk) : (off += bs)

@@ -22,6 +22,8 @@ pub fn build(b: *std.Build) void {
     // Unmodified 9front binaries, to check binary compatibility.  They
     // are not in the repository; see "Reference binaries" in PLAN.md for
     // what the directory must hold.
+    disk_image = b.option([]const u8, "disk", "Disk image to attach as a virtio disk, e.g. ref/disk/9front-11952.amd64.qcow2 (never written: changes are discarded)");
+    disk_bus = b.option([]const u8, "diskbus", "How the disk image is attached: virtio (default), nvme or ahci") orelse "virtio";
     const ref = b.option([]const u8, "ref", "Directory of 9front reference files, e.g. ref");
 
     const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
@@ -173,6 +175,33 @@ pub fn build(b: *std.Build) void {
         addEsp(b, chat, loader, kernel, ini9, dir);
         const test9 = b.step("test-9front", "Boot stock 9front user programs to a shell and use it");
         test9.dependOn(&chat.step);
+
+        // With a disk image as well: take the root file system from the
+        // disk, as bootrc offers, and use the system that comes up.
+        if (disk_image != null) {
+            const dchat = b.addSystemCommand(&.{ "sh", "tools/bootchat.sh", "180" });
+            dchat.addArgs(&.{
+                "bootargs is",      "",
+                "user[",            "",
+                "starting /bin/rc", "",
+                "starting /bin/rc", "ls /amd64/bin | wc -l && echo root^ok",
+                "rootok",           "sum /amd64/bin/acme && echo sum^ok",
+                "sumok",            "echo planZ > /usr/glenda/zt && cat /usr/glenda/zt && rm /usr/glenda/zt && echo write^ok",
+                "writeok",          "cat '#l0/ether0/addr' && echo && echo ether^ok",
+                "etherok",          "--",
+            });
+            dchat.addArgs(qemu_args);
+            dchat.addArgs(&.{ "-display", "none" });
+            addEsp(b, dchat, loader, kernel, ini9, dir);
+            b.step("test-disk", "Boot stock 9front from the disk image and use it").dependOn(&dchat.step);
+
+            // And the network: DHCP, ping, and a file over TCP.
+            const nchat = b.addSystemCommand(&.{ "sh", "tools/nettest.sh", "240" });
+            nchat.addArgs(qemu_args);
+            nchat.addArgs(&.{ "-display", "none" });
+            addEsp(b, nchat, loader, kernel, ini9, dir);
+            b.step("test-net", "Boot stock 9front from the disk image and use the network").dependOn(&nchat.step);
+        }
     }
 
     // The portable kernel must compile for the architectures planZ means
@@ -255,4 +284,29 @@ fn addEsp(
     }
     run.addArg("-drive");
     run.addPrefixedDirectoryArg("format=raw,file=fat:rw:", esp.getDirectory());
+
+    // Devices for the drivers: a network card on QEMU's user-mode
+    // network and, when an image is given, a disk.  Both are virtio 1.0
+    // only.  The image is opened as a snapshot, so it is never changed.
+    run.addArgs(&.{
+        "-netdev", "user,id=n0",
+        "-device", "virtio-net-pci,netdev=n0,disable-legacy=on",
+    });
+    if (disk_image) |img| {
+        run.addArg("-drive");
+        run.addPrefixedFileArg("if=none,id=d0,snapshot=on,file=", b.path(img));
+        run.addArgs(&.{ "-device", diskDevice(disk_bus) });
+    }
+}
+
+var disk_image: ?[]const u8 = null;
+var disk_bus: []const u8 = "virtio";
+
+/// The QEMU device that presents drive d0 on the given bus.
+fn diskDevice(bus: []const u8) []const u8 {
+    if (std.mem.eql(u8, bus, "nvme")) return "nvme,drive=d0,serial=planz0";
+    // q35 has an AHCI controller built in; the EFI partition is on its port 0.
+    if (std.mem.eql(u8, bus, "ahci")) return "ide-hd,drive=d0,bus=ide.2";
+    if (std.mem.eql(u8, bus, "virtio")) return "virtio-blk-pci,drive=d0,disable-legacy=on";
+    @panic("-Ddiskbus must be virtio, nvme or ahci");
 }

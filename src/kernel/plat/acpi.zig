@@ -180,3 +180,31 @@ pub fn hpet() ?u64 {
     const pa = le64(t, 44);
     return if (pa != 0) pa else null;
 }
+
+/// One range of buses whose PCI configuration space is memory mapped
+/// (ECAM), from the MCFG table.
+pub const Ecam = struct {
+    /// Physical address of the configuration space of bus 0 of the
+    /// segment (not of `startbus`).
+    base: u64,
+    segment: u16,
+    startbus: u8,
+    endbus: u8,
+};
+
+/// The MCFG table's entries; returns how many were stored in `out`.
+pub fn mcfg(out: []Ecam) usize {
+    const t = find("MCFG") orelse return 0;
+    var n: usize = 0;
+    var off: usize = hdrlen + 8;
+    while (off + 16 <= t.len and n < out.len) : (off += 16) {
+        out[n] = .{
+            .base = le64(t, off),
+            .segment = le16(t, off + 8),
+            .startbus = t[off + 10],
+            .endbus = t[off + 11],
+        };
+        n += 1;
+    }
+    return n;
+}

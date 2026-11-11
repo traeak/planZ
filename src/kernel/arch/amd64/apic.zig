@@ -222,7 +222,7 @@ fn lapicspurious(_: *Ureg, _: ?*anyopaque) void {
     print("cpu%d: lapicspurious\n", .{m().machno});
 }
 
-fn lapiceoi(_: i32) i32 {
+pub fn lapiceoi(_: i32) i32 {
     l.coherence();
     lapicw(LapicEOI, 0);
     return 0;
@@ -407,7 +407,10 @@ pub fn clockenable() void {
 /// device from holding off the rest.
 var nextvec: u32 = dat.VectorAPIC;
 
-fn allocvec() i32 {
+/// Set by the PCI code: assigns a vector to a bus device's interrupt.
+pub var msiassign: ?*const fn (*Vctl) i32 = null;
+
+pub fn allocvec() i32 {
     const v = nextvec;
     nextvec += 8;
     if (nextvec > dat.MaxVectorAPIC)
@@ -442,6 +445,13 @@ pub fn intrassign(v: *Vctl) i32 {
         if (irqno != dat.IrqSPURIOUS)
             v.eoi = lapiceoi;
         return dat.VectorPIC + irqno;
+    }
+
+    // A device on a bus: a message signalled interrupt, or nothing.
+    // (Interrupt pins would need routing information from ACPI's AML.)
+    if (v.tbdf != dat.BUSUNKNOWN) {
+        if (msiassign) |f| return f(v);
+        return -1;
     }
 
     // ISA interrupts: identity mapped to global system interrupts, edge
