@@ -158,7 +158,7 @@ Framebuffer `screen`, `libmemdraw`, `libmemlayer`, `devdraw`, `devmouse`, `devkb
 ### M9 — Real hardware
 Boot on one physical 2011-or-later machine; add the NIC and quirks it needs; audio (HDA) if wanted.
 
-The user's test machine: AMD Ryzen 5 3600 (Zen 2) on a Jingyue B550i mini-ITX board, 32GB RAM, Radeon RX 6500 XT. It has no integrated graphics, so the display is the card's UEFI framebuffer. Assume no serial console. The board's network chip and PS/2 availability are not yet confirmed. `zig build usb-image` makes a stick that boots it to rio with no other disk; `docs/real-hardware.md` has the steps and what to look for.
+The user's test machine: AMD Ryzen 5 3600 (Zen 2) on a Jingyue B550i mini-ITX board, 32GB RAM, Radeon RX 6500 XT. It has no integrated graphics, so the display is the card's UEFI framebuffer. Assume no serial console. The development machine has the same board (DMI: JGINYUE B550i-GAMING), so its hardware can be read from Linux there: Ethernet is a Realtek RTL8125B (`10ec:8125` rev 05), for which 9front has no driver at this commit; two xHCI controllers (AMD 500-series chipset `1022:43ee`, Matisse `1022:149c`); AMD AHCI `1022:43eb`; no PS/2 controller and no UART; HPET and ACPI PM timer; an IOMMU; the video card's framebuffer BAR near 480GiB. Keyboards and mice there are full-speed devices, some behind high-speed hubs, which needs the transaction-translator path of xHCI that QEMU cannot exercise. `zig build usb-image` makes a stick that boots it to rio with no other disk; `docs/real-hardware.md` has the steps and what to look for.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
@@ -215,6 +215,7 @@ Notes from M9 so far:
 - **The loader** decodes `PixelBitMask` modes, tries every GOP handle, can set a mode, and maps the framebuffer into the direct map so the kernel can draw before its allocator works (`dmap_span` in BootInfo).
 - **Drivers**: xHCI, NVMe and AHCI poll when their interrupt does not arrive and say so; NVMe honours MDTS and asks for its queue count; AHCI refuses controllers without 64-bit DMA. Read but never run, because QEMU cannot produce them: xHCI 64-byte contexts, scratchpad buffers and the firmware hand-off, low-speed devices, transaction translators, a second IOAPIC, DMA above 4GiB.
 - **`devpnp`** (`#$`, `port/devpnp.zig`): the PCI files only; ISA PnP is left out. Stock `pci -v` works.
+- **`ether8125`** (`port/ether8125.zig`, card type `rtl8125`): the board's Realtek RTL8125B. Not from 9front, which has no driver for it: the structure is `ether8169.c`'s, the registers and the bring-up sequence are OpenBSD `rge`'s (ISC). **Never run on the chip**; QEMU has no model. Its bring-up register sequence was compared, access by access, with `rge_init` run against a simulated chip. No PHY or MAC microcode is loaded, no checksum offload, TSO, VLAN or jumbo frames. `*rtl8125nophy=1` skips the PHY parameter writes. It polls if no interrupt arrives, and `cat /net/ether0/ifstat` dumps registers, rings and counters for debugging from a text file. Linux and Realtek sources (GPL) were not used; planZ stays MIT.
 - **Unexplained**: one AHCI run with `*nomsi=1` stalled at the first `term%`; five repeats passed.
 
 Notes from M8 for later milestones:

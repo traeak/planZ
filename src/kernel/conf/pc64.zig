@@ -39,6 +39,7 @@ pub const devtab = [_]*const devmod.Dev{
 pub fn links() void {
     devsd.sdifc = &sdifc_list;
     @import("../port/ethervirtio10.zig").ethervirtio10link();
+    @import("../port/ether8125.zig").ether8125link();
     @import("../port/usbxhcipci.zig").usbxhcipcilink();
     devip.ipprotoinit = &ipprotoinit;
     @import("../ip/ethermedium.zig").ethermediumlink();

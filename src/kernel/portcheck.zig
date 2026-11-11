@@ -28,6 +28,7 @@ const files = .{
     @import("port/devtls.zig"),
     @import("port/devswap.zig"),
     @import("port/error.zig"),
+    @import("port/ether8125.zig"),
     @import("port/ethervirtio10.zig"),
     @import("port/fault.zig"),
     @import("port/fis.zig"),
