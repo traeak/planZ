@@ -51,11 +51,18 @@ fi
 # not taken for the next.
 get() { echo "echo $1 \`{hget $2://10.0.2.2:$(port $1)/big.bin | sha1sum}"; }
 
+# A USB tablet and a monitor socket for riofocus.sh.
+case " $* " in
+*qemu-xhci*) tablet="-device usb-tablet" ;;
+*) tablet="-device qemu-xhci -device usb-tablet" ;;
+esac
+
 sh "$here/bootchat.sh" "$timeout" \
 	"bootargs is" "" \
 	"user[" "" \
 	"starting /bin/rc" "" \
-	"term%" "ip/ipconfig && ndb/cs && echo lease^ok" \
+	"term%" "@host sh $here/riofocus.sh $tmp/qmp" \
+	"" "ip/ipconfig && ndb/cs && echo lease^ok" \
 	"leaseok" "grep -c 'ip=10.0.2.15' /net/ndb && echo addr^ok" \
 	"addrok" "ip/ping -n 2 10.0.2.2 && echo ping^ok" \
 	"pingok" "webfs && $(get http http)" \
@@ -63,4 +70,4 @@ sh "$here/bootchat.sh" "$timeout" \
 	"chacha $sum" "$(get gcm https)" \
 	"gcm $sum" "$(get cbc https)" \
 	"cbc $sum" \
-	-- "$@"
+	-- "$@" $tablet -qmp "unix:$tmp/qmp,server=on,wait=off"

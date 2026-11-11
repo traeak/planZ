@@ -180,17 +180,7 @@ pub fn build(b: *std.Build) void {
         // With a disk image as well: take the root file system from the
         // disk, as bootrc offers, and use the system that comes up.
         if (disk_image != null) {
-            const dchat = b.addSystemCommand(&.{ "sh", "tools/bootchat.sh", "180" });
-            dchat.addArgs(&.{
-                "bootargs is",      "",
-                "user[",            "",
-                "starting /bin/rc", "",
-                "term%",            "ls /amd64/bin | wc -l && echo root^ok",
-                "rootok",           "sum /amd64/bin/acme && echo sum^ok",
-                "sumok",            "echo planZ > /usr/glenda/zt && cat /usr/glenda/zt && rm /usr/glenda/zt && echo write^ok",
-                "writeok",          "cat '#l0/ether0/addr' && echo && echo ether^ok",
-                "etherok",          "--",
-            });
+            const dchat = b.addSystemCommand(&.{ "sh", "tools/disktest.sh", "180" });
             dchat.addArgs(qemu_args);
             dchat.addArgs(&.{ "-display", "none" });
             addEsp(b, dchat, loader, kernel, ini9, dir);

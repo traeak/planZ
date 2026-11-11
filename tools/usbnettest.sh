@@ -64,7 +64,8 @@ sh "$here/bootchat.sh" "$timeout" \
 	"bootargs is" "" \
 	"user[" "" \
 	"starting /bin/rc" "" \
-	"term%" "grep -c '^comms.* xhci' /dev/usb/ctl && test -r /net/etherU*/addr && echo ether^ok" \
+	"term%" "@host sh $here/riofocus.sh $tmp/qmp" \
+	"" "grep -c '^comms.* xhci' /dev/usb/ctl && test -r /net/etherU*/addr && echo ether^ok" \
 	"etherok" "ip/ipconfig ether /net/etherU* && ndb/cs && echo lease^ok" \
 	"leaseok" "grep -c 'ip=10.0.2.15' /net/ndb && grep -c 'device /net/etherU' /net/ipifc/0/status && echo addr^ok" \
 	"addrok" "ip/ping -n 2 10.0.2.2 && echo ping^ok" \
@@ -72,5 +73,6 @@ sh "$here/bootchat.sh" "$timeout" \
 	"http $sum" "$(get chacha https)" \
 	"chacha $sum" "cat /net/etherU*/stats && echo stats^ok" \
 	"statsok" \
-	-- "$@" -device qemu-xhci -netdev user,id=un0 \
-	${USBNETDEV:--device usb-net,netdev=un0}
+	-- "$@" -device qemu-xhci -device usb-tablet -netdev user,id=un0 \
+	${USBNETDEV:--device usb-net,netdev=un0} \
+	-qmp "unix:$tmp/qmp,server=on,wait=off"

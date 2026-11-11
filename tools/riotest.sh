@@ -21,6 +21,11 @@ here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 qmp="python3 -I $here/qmp.py $tmp/qmp"
+# A USB tablet for riofocus.sh's click.
+case " $* " in
+*qemu-xhci*) tablet="-device usb-tablet" ;;
+*) tablet="-device qemu-xhci -device usb-tablet" ;;
+esac
 
 # rio's background is the grey 0x777777.
 cat >"$tmp/grey.py" <<'PY'
@@ -44,7 +49,8 @@ pos="dd -if '#m/mousein' -bs 60 -count 1 -quiet 1 | awk '{print \$2+\$3}'"
 sh "$here/bootchat.sh" "$timeout" \
 	"bootargs is" "" \
 	"user[" "" \
-	"term%" "echo serial^ok" \
+	"term%" "@host sh $here/riofocus.sh $tmp/qmp" \
+	"" "echo serial^ok" \
 	"serialok" "@host sleep 4; $qmp shot $tmp/s.ppm && python3 -I $tmp/grey.py $tmp/s.ppm" \
 	"" "@host $qmp type 'echo key^ok >/dev/eia0\\n'" \
 	"keyok" "a=\`{$pos}; echo a^is \$a" \
@@ -52,4 +58,4 @@ sh "$here/bootchat.sh" "$timeout" \
 	"" "b=\`{$pos}; echo b^is \$b; ~ \$a \$b || echo mouse^ok" \
 	"mouseok" "@host ${RIOSHOT:+$qmp shot $RIOSHOT} :" \
 	"" \
-	-- "$@" -qmp "unix:$tmp/qmp,server=on,wait=off"
+	-- "$@" $tablet -qmp "unix:$tmp/qmp,server=on,wait=off"
