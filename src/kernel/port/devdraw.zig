@@ -56,6 +56,8 @@
 //!     not here: 9front's devdraw.c does not have them (they belong to
 //!     the Plan 9 4th edition file).  9front's equivalents are the
 //!     exported `drawlock`, deletescreenimage and resetscreenimage.
+//!   - `A` refuses a screen whose windows would be nested more than
+//!     Maxnest deep (see there); the C sets no limit.
 
 const std = @import("std");
 const fcall = @import("fcall");
@@ -1214,6 +1216,24 @@ fn drawwakeall() void {
     }
 }
 
+/// DIFF: the deepest a window may be: a window on a screen on a window
+/// on a screen... has this many layers between it and an image that is
+/// not one.  The C sets no limit.  Drawing into a window recurses once
+/// per level (memdraw, _memlayerop, ldrawop), about 1.2K of kernel
+/// stack each when every level is partly hidden, on top of about 4.1K
+/// for the rest of a draw write, measured.  Every libdraw client's
+/// screen is already 2 deep under rio and 4 deep under rio inside rio.
+/// 8 needs about 13.8K of the 16K stack.
+const Maxnest = 8;
+
+fn nestdepth(i_: *Memimage) usize {
+    var n: usize = 0;
+    var i = i_;
+    while (i.layer) |l| : (i = l.screen.image)
+        n += 1;
+    return n;
+}
+
 fn drawwrite(c: *Chan, a_: []const u8, _: i64) Error!usize {
     var a = a_;
     var n = a.len;
@@ -1570,6 +1590,9 @@ fn drawmesg(client: *Client, av: []const u8) Error!void {
                 const dsrc = try drawlookup(client, ni, true);
                 if (ddst == null or dsrc == null)
                     return err(Enodrawimage);
+                // DIFF: see Maxnest.
+                if (nestdepth(ddst.?.image) >= Maxnest)
+                    return err("screens nested too deep");
                 if (drawinstallscreen(client, null, dstid, ddst, dsrc, @bitCast(value)) == null)
                     return err(Edrawmem);
                 continue;
