@@ -6,7 +6,7 @@
 //! enters it at UTZERO+0x28, so it must fit in a page and have no data
 //! segment: everything it writes is on the stack.
 
-const sys = @import("sys.zig");
+const sys = @import("libc").sys;
 
 comptime {
     asm (

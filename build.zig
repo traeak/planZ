@@ -30,6 +30,20 @@ pub fn build(b: *std.Build) void {
     const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
     const fcall = b.createModule(.{ .root_source_file = b.path("src/lib/fcall.zig") });
     const bootinfo = b.createModule(.{ .root_source_file = b.path("src/boot/bootinfo.zig") });
+    // The library of planZ's own user programs, and the pool allocator
+    // it shares with the kernel.
+    const pool = b.createModule(.{
+        .root_source_file = b.path("src/kernel/port/pool.zig"),
+        .imports = &.{.{ .name = "fmt", .module = fmt }},
+    });
+    const libc = b.createModule(.{
+        .root_source_file = b.path("src/user/lib/libc.zig"),
+        .imports = &.{
+            .{ .name = "fmt", .module = fmt },
+            .{ .name = "fcall", .module = fcall },
+            .{ .name = "pool", .module = pool },
+        },
+    });
 
     // The kernel: freestanding, no floating point or vector registers
     // (they belong to user processes), no red zone (interrupts run on
@@ -45,11 +59,20 @@ pub fn build(b: *std.Build) void {
     // planZ's own user programs, linked as Plan 9 a.out files, which the
     // kernel carries in its data: initcode, the first process, and the
     // /boot/boot it execs.
-    const initcode = addUserProgram(b, "initcode", "src/user/initcode.zig", optimize);
-    const bootprog = addUserProgram(b, "boot", "src/user/boot.zig", optimize);
+    const initcode = addUserProgram(b, "initcode", "src/user/initcode.zig", optimize, libc);
+    const bootprog = addUserProgram(b, "boot", "src/user/boot.zig", optimize, libc);
 
     b.getInstallStep().dependOn(&b.addInstallFile(initcode, "user/initcode").step);
     b.getInstallStep().dependOn(&b.addInstallFile(bootprog, "user/boot").step);
+
+    // Commands written in Zig on the library, installed in
+    // zig-out/user/bin by `zig build user`.
+    const user_step = b.step("user", "Build the user programs written in Zig into zig-out/user/bin");
+    const zcmds = [_][]const u8{ "echo", "cat", "ls", "wc", "libctest" };
+    for (zcmds) |name| {
+        const bin = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc);
+        user_step.dependOn(&b.addInstallFile(bin, b.fmt("user/bin/{s}", .{name})).step);
+    }
 
     const kernel = b.addExecutable(.{
         .name = "planz",
@@ -201,6 +224,14 @@ pub fn build(b: *std.Build) void {
             addEsp(b, achat, loader, kernel, ini9, dir);
             b.step("test-audio", "Boot stock 9front from the disk image and play a tone through the HDA driver").dependOn(&achat.step);
 
+            // planZ's Zig programs beside the stock ones they copy.
+            const zchat = b.addSystemCommand(&.{ "sh", "tools/zusertest.sh", "300", "zig-out/user/bin" });
+            zchat.addArgs(qemu_args);
+            zchat.addArgs(&.{ "-display", "none" });
+            addEsp(b, zchat, loader, kernel, ini9, dir);
+            zchat.step.dependOn(user_step);
+            b.step("test-zuser", "Boot stock 9front and compare planZ's Zig programs with the stock ones").dependOn(&zchat.step);
+
             // The same through a USB Ethernet adapter, which stock
             // nusb/ether drives from user space over the kernel's USB
             // stack.  The virtio card is still there; the test names
@@ -320,10 +351,28 @@ pub fn build(b: *std.Build) void {
     }
 }
 
+/// Build a user program on the library (src/user/lib): the library's
+/// root.zig is the root file and the program's file is the module
+/// "program".
+fn addLibcProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize, libc: *std.Build.Module) std.Build.LazyPath {
+    const program = b.createModule(.{
+        .root_source_file = b.path(root),
+        .imports = &.{.{ .name = "libc", .module = libc }},
+    });
+    return addUserProgramRoot(b, name, "src/user/lib/root.zig", optimize, &.{
+        .{ .name = "libc", .module = libc },
+        .{ .name = "program", .module = program },
+    });
+}
+
+fn addUserProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize, libc: *std.Build.Module) std.Build.LazyPath {
+    return addUserProgramRoot(b, name, root, optimize, &.{.{ .name = "libc", .module = libc }});
+}
+
 /// Build a user program for the Plan 9 amd64 ABI and return its a.out.
 /// The linker script writes the a.out header, so the flat binary of the
 /// link is the executable.
-fn addUserProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize) std.Build.LazyPath {
+fn addUserProgramRoot(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize, imports: []const std.Build.Module.Import) std.Build.LazyPath {
     const exe = b.addExecutable(.{
         .name = name,
         .root_module = b.createModule(.{
@@ -334,6 +383,7 @@ fn addUserProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: s
             .pic = false,
             .single_threaded = true,
             .strip = true,
+            .imports = imports,
         }),
         .use_llvm = true,
         .use_lld = true,

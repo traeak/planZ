@@ -23,7 +23,7 @@ cache.
   working typing, on one machine (Ryzen 5 3600, B550 board). Checking
   the rest of that machine is in progress; see
   [docs/hardware-checklist.md](docs/hardware-checklist.md).
-- **Not yet:** userland programs written in Zig beyond a seed, sound
+- **Not yet:** a Zig userland beyond a small libc and four commands, sound
   on real hardware, GPU acceleration, aarch64 and riscv64. The portable kernel already
   compiles for the last two.
 
@@ -64,6 +64,7 @@ With the reference files (`D="-Dref=ref -Ddisk=ref/disk/9front-11952.amd64.qcow2
 | `zig build test-rio $D` | `rio` with keyboard and mouse, checked by screenshot |
 | `zig build test-usb $D` | The USB stick image booted from a USB disk |
 | `zig build test-usbnet $D` | The network through a USB Ethernet adapter |
+| `zig build test-zuser $D` | planZ's Zig programs beside the stock ones, compared byte for byte |
 | `zig build test-audio $D` | A tone played through the HD Audio driver, recorded by QEMU and checked |
 
 Useful options include `-Dcpu=` (`SandyBridge` by default, also `max`
@@ -89,7 +90,8 @@ src/kernel/plat/   ACPI
 src/kernel/lib*/   libmemdraw, libmemlayer and libdraw for devdraw
 src/kernel/conf/   the kernel configuration, as comptime tables
 src/lib/           9P marshalling and print formatting
-src/user/          user programs in Zig: initcode and a test boot program
+src/user/          user programs in Zig: initcode, a test boot program,
+                   lib/ (the library, slices throughout) and cmd/
 tools/             QEMU test drivers, the USB image builder, kbench
 docs/              guides for real hardware
 ```

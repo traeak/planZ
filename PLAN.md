@@ -212,7 +212,7 @@ Not tested:
 
 Step 4's commands are in `docs/hardware-checklist.md` (section 3).
 
-#### Minimal Zig libc: plan, not started
+#### Minimal Zig libc: steps 1–6 done
 The goal is a Zig library for planZ's own user programs that covers what 9front's `libc` gives a simple program, so Zig can replace C for new user programs. It is a Zig API (errors as error unions, slices instead of NUL-terminated strings where the kernel allows it), not a C ABI libc. Stock C programs keep using 9front's own libc.
 
 **Why not Zig's `plan9` target.** In Zig 0.17, `-target x86_64-plan9` cannot write an executable ("UnsupportedObjectFormat"), and with `-ofmt=elf` `std/start.zig` fails to compile (it asks for `elf.AT.HWCAP`). `std.os.plan9` has only a handful of calls. The library therefore keeps today's method: freestanding x86_64, linked with `src/user/user.ld` into an a.out. If upstream fixes the target later, the library can become the `std.os.plan9` back end.
@@ -243,6 +243,20 @@ Steps, each with a program that uses it:
 **Proof programs.** `echo`, `cat`, `ls` and `wc` in Zig, plus `boot.zig` moved onto the library. A new step `zig build test-zuser $D` boots stock 9front, runs each Zig program and its stock counterpart on the same input, and compares the outputs.
 
 **Not in this plan.** Locks for shared-memory processes (`Lock`, `QLock`, `rendezvous`), threads (`libthread`), a full `std.Io` implementation (`std.Io.File`, `std.process.Init`), dial and networking, and aarch64/riscv64 start-up code. Each is a later step once a program needs it.
+
+Progress: the library is in `src/user/lib/` (module `libc`).
+- **Files:** `sys.zig` (every call the kernel serves, with argument layouts taken from the kernel's handlers), `start.zig`, `malloc.zig` (the kernel's `pool.zig` over `brk`, plus a `std.mem.Allocator`), `dir.zig`, `proc.zig`, `string.zig` (`tokenize`, `cleanname`, rc quoting, `Args` for ARGBEGIN), `qsort.zig` (9front's algorithm step for step) and `libc.zig` (the checked calls, `print`/`fprint`/`sprint`/`sysfatal` on `src/lib/fmt.zig` with `%r`, and `FdWriter`/`FdReader` for `std.Io`).
+- **Slices, not NUL-terminated strings (the user's rule).** Every string a program sees is a slice: paths, `main(args: []const []const u8)`, `exits`, error strings, the environment. NUL termination exists only in `sys.zig`. `libc.Cstr` copies a slice into a terminated buffer at the call (stack up to 511 bytes, the allocator beyond), and refuses one with a NUL inside ("bad character in file name").
+- **Build.** A program is built with `src/user/lib/root.zig` as its root file and its own file as the module `program`. Zig analyses an imported file only as far as it is used, so this is where `_start` is exported and the panic handler is set. The panic handler prints `argv0: panic: msg` and exits with the message. `boot.zig` and `initcode.zig` stay their own roots and use `libc.sys` only; `initcode` is still one page with no data.
+
+Proof programs in `src/user/cmd/`: `echo`, `cat`, `wc` and `ls`, each from its 9front C file, plus `libctest`.
+- `ls` has no `-l` or `-m` yet: they need `ctime`, the time zone and the `%M`/`%C` formats.
+- `zig build user` installs them in `zig-out/user/bin`.
+- `zig build test-zuser $D` (`tools/zusertest.sh`) fetches them into a booted stock 9front over HTTP and runs each beside the stock program with the same arguments. All 16 cases match byte for byte: standard output, and standard error for the failures.
+- `ls -tr` matches only because the library's `qsort` is 9front's algorithm, since `ls` breaks ties by the entries' addresses while `qsort` moves them.
+- `libctest` checks the rest of the library: containers on the allocator, a 4096-aligned allocation, the `Io.Writer`, `dirstat`/`dirfstat`, `%r` and `rerrstr`, `getenv`/`putenv`, `fork` and `wait` (with the kernel's "name pid: " in front of the exit message), an alarm note through `atnotify`, and `seek`.
+
+Open: once during these runs (about 1 boot in 8), the kernel panicked with `sched: no process` right after the selftest, before `/bin/rc` started. It is not yet investigated.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).

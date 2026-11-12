@@ -5,7 +5,7 @@
 //! Not part of 9front.  When stock 9front binaries are available this
 //! is replaced by the real boot program.
 
-const sys = @import("sys.zig");
+const sys = @import("libc").sys;
 
 comptime {
     asm (
@@ -15,7 +15,7 @@ comptime {
         \\ movq %rsp, %rdi             /* argc, argv */
         \\ movq %rax, %rsi             /* Tos, as exec returns it */
         \\ andq $-16, %rsp
-        \\ call main
+        \\ call bootmain
     );
 }
 
@@ -118,7 +118,7 @@ fn waitmsg(buf: []u8) []const u8 {
     return s;
 }
 
-export fn main(sp: [*]usize, tos: usize) callconv(.c) noreturn {
+export fn bootmain(sp: [*]usize, tos: usize) callconv(.c) noreturn {
     const argc = sp[0];
     const argv: [*]const ?[*:0]const u8 = @ptrCast(sp + 1);
 
