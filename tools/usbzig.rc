@@ -90,6 +90,12 @@ fn ops {
 	$p^split -i -e '^(BIND|MOUNT) -(.)' -s .i /lib/namespace; s
 	$p^split -e '(' /lib/namespace; s
 	$p^split -e '[a-' /lib/namespace; s
+	$p^sed -n 'w sw1' /lib/namespace; s
+	$p^sed -n '/bind/w sw2' /lib/namespace; s
+	$p^sed 's/mount/M/w sw3' /lib/namespace >/dev/null; s
+	$p^sed -n '/^#/w sw2' /lib/namespace; s
+	$p^sed -n '1,3w sw4
+5w sw4' /lib/namespace; s
 }
 
 # Each of these runs a command's cases with the programs $1 names
@@ -266,6 +272,64 @@ fn dus {
 	$p^du -p q /lib; s
 }
 
+fn seds {
+	p=$1
+	n=/lib/namespace
+	u=/tmp/zig.utf
+	$p^sed 5q $n; $p^sed -n '3,7p' $n; $p^sed '/^#/d' $n
+	$p^sed -n '/bind/,/mount/p' $n; $p^sed -n '/^mount/,$p' $n; $p^sed -n '4,/bind/p' $n
+	$p^sed 's/bind/BIND/' $n; $p^sed 's/a/A/g' $n; $p^sed 's/(b)(i)nd/\2\1/g' $n
+	$p^sed 's/x*/-/g' $u; $p^sed 's/$/ END/' $u; $p^sed 's/^/> /' $u
+	$p^sed -n '$p' $n; $p^sed -n '$=' $n /tmp/zig.x; $p^sed = $u; $p^sed '2,4!d' $n
+	$p^sed 'y/abcé/xyzE/' $u; $p^sed -n l $u; $p^sed -n l /tmp/zig.x
+	$p^sed 'n;d' $n; $p^sed 'N;P;D' $n | sed 8q; $p^sed '$!N;s/\n/ | /' $n
+	$p^sed G $u; $p^sed '1!G;h;$!d' $n; $p^sed ':a;N;$!ba;s/\n/,/g' $u
+	$p^sed '/bind/{s/b/B/;p;}' $n; $p^sed -n '/mount/!{/bind/p;}' $n
+	$p^sed '2i\
+inserted line\
+and another' $u
+	$p^sed '1a\
+appended' $u; $p^sed '1c\
+changed' $u; $p^sed '/bind/,/mount/c\
+range' $n; $p^sed 'c\
+all' $u; $p^sed '$a\
+	END' $u
+	$p^sed -g 's/a/b/' $u; $p^sed 's/(.)(.)/\2\1/' $u; $p^sed 's/bind/&&/' $n
+	$p^sed 's/\//|/g' $n; $p^sed 's,/,|,g' $n; $p^sed 's/é/e/g;s/ö/o/' $u
+	$p^sed 's/b/X/;ta;s/$/ no/;b;:a;s/$/ yes/' $n
+	$p^sed -n 's/bind/B/p' $n; $p^sed -n 's/bind/B/P' $n; $p^sed 's/[aeiou]//gp' $u
+	$p^sed 'h;s/./x/g;G;x' $u; $p^sed -n 'H;${x;p;}' $u
+	$p^sed '3r /tmp/zig.x' $u; $p^sed 'r /nope' $u; $p^sed '1w ' $u
+	$p^sed -e 's/a/1/' -e 's/b/2/' $u; $p^sed -n -e '/bind/=' $n
+	cat $n | $p^sed 3q; cat $u | $p^sed -n '$='
+	echo 's/m/M/g
+/^#/d
+3q' >/tmp/zig.sed; $p^sed -f /tmp/zig.sed $n
+	echo 'a\
+x' >/tmp/zig.sed; $p^sed -f /tmp/zig.sed $u; rm -f /tmp/zig.sed
+	$p^sed; s
+	$p^sed -q; s
+	$p^sed k $u; s
+	$p^sed 's/a/b' $u; s
+	$p^sed '/a' $u; s
+	$p^sed 's/(/x/' $u; s
+	$p^sed 0p $u; s
+	$p^sed 'b nolabel' $u; s
+	$p^sed ':a;:a' $u; s
+	$p^sed '{p' $u; s
+	$p^sed 'p}' $u; s
+	$p^sed 'y/abc/xy/' $u; s
+	$p^sed -e; s
+	$p^sed -f /nope $u; s
+	$p^sed p /nope; s
+	$p^sed ':toolongname' $u; s
+	$p^sed 's/a/\1/' $u; s
+	$p^sed '1,2=' $u; s
+	$p^sed 'q;p' $u; s
+	$p^sed '//p' $u; s
+	$p^sed 's/a/b/x' $u; s
+}
+
 fn tests {
 	p=$1
 	$p^test -f /lib/namespace; s; $p^test -d /lib; s; $p^test -d /lib/namespace; s
@@ -314,7 +378,7 @@ fn checks {
 	# sysfatal and some usage messages print argv0, which is /tmp/zig/x
 	# for planZ's programs: it is cut on both sides
 	inputs
-	for(c in mtime strings freq comm read unicode tr xd du test){
+	for(c in mtime strings freq comm read unicode tr xd du test sed){
 		$c^s $Z >[2=1] | sed 's;/tmp/zig/;;g' >/tmp/zig.a
 		$c^s '' >[2=1] | sed 's;/tmp/zig/;;g' >/tmp/zig.b
 		t $c
