@@ -324,7 +324,7 @@ pub fn halt() void {
 /// meantime.  The test and the halt cannot be separated by an
 /// interrupt: STI takes effect after the instruction that follows it.
 /// from halt in l.s
-pub fn idlehands(nrdy: *const i32) void {
+fn haltrdy(nrdy: *const i32) void {
     asm volatile (
         \\ cli
         \\ cmpl $0, (%[nrdy])
@@ -336,6 +336,45 @@ pub fn idlehands(nrdy: *const i32) void {
         :
         : [nrdy] "r" (nrdy),
     );
+}
+
+/// Wait until something writes `*nrdy` or an interrupt arrives, unless
+/// it is already nonzero.  The second test closes the race with a
+/// write that lands before MONITOR has armed.
+/// from mwait in l.s
+fn mwait(nrdy: *const i32) void {
+    _ = asm volatile (
+        \\ movl (%%rax), %%ecx
+        \\ orl %%ecx, %%ecx
+        \\ jnz 1f
+        \\ xorl %%edx, %%edx
+        \\ monitor
+        \\ movl (%%rax), %%ecx
+        \\ orl %%ecx, %%ecx
+        \\ jnz 1f
+        \\ xorl %%eax, %%eax
+        \\ mwait
+        \\1:
+        : [_] "={rax}" (-> usize),
+        : [nrdy] "{rax}" (nrdy),
+        : .{ .rcx = true, .rdx = true, .memory = true });
+}
+
+/// What a processor does when it has nothing to run.  With more than
+/// one processor and MONITOR/MWAIT, it waits on `nrdy`, so that a
+/// process made ready on another processor wakes it at once; a halted
+/// processor sleeps until its next interrupt, up to a clock tick, and
+/// runproc halts once before it takes a process that last ran on
+/// another processor.
+/// from idlehands in pc/devarch.c
+/// DIFF: idle_spin is not ported; 9front never sets it on pc64.
+pub fn idlehands(nrdy: *const i32) void {
+    if (dat.conf.nmach == 1)
+        haltrdy(nrdy)
+    else if (dat.m().cpuidcx & dat.Monitor != 0)
+        mwait(nrdy)
+    else
+        haltrdy(nrdy);
 }
 
 /// Low bits of the cycle counter, for the idle and interrupt time
