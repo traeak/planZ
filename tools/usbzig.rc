@@ -84,6 +84,12 @@ fn ops {
 	# from standard input: the first output file closes it (as the C does)
 	cat /lib/namespace | $p^split -f in -n 30; s
 	$p^split /nope; s
+	$p^split -f re -e '^#' /lib/namespace; s
+	$p^split -f rx -x -e 'bind' /lib/namespace; s
+	$p^split -e '^(mount|bind) ' -s .sfx /lib/namespace; s
+	$p^split -i -e '^(BIND|MOUNT) -(.)' -s .i /lib/namespace; s
+	$p^split -e '(' /lib/namespace; s
+	$p^split -e '[a-' /lib/namespace; s
 }
 
 # Each of these runs a command's cases with the programs $1 names
@@ -324,6 +330,20 @@ fn checks {
 	cat /tmp/zig.sd/log /tmp/zig.sd/x/log /tmp/zig.sd/tee.out >/tmp/zig.b
 	t tee
 	rm -rf /tmp/zig.a /tmp/zig.b /tmp/zig.u /tmp/zig.zd /tmp/zig.sd
+
+	# libregexp: the Zig port against the stock library, which
+	# retest.c is built with here (see tools/retest.c)
+	if(@{cd $z && 6c -FTVw retest.c && 6l -o retest.stock retest.6} >/tmp/zig.cc >[2=1]){
+		$Z^retest $z/retest.txt >/tmp/zig.a >[2=1]
+		$z/retest.stock $z/retest.txt >/tmp/zig.b >[2=1]
+		t regexp
+	}
+	if not {
+		echo DIFF regexp: retest.c did not build
+		cat /tmp/zig.cc
+		nbad=($nbad regexp)
+	}
+	rm -f /tmp/zig.cc
 
 	if(! $Z^libctest)
 		nbad=($nbad libctest)

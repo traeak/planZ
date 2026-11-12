@@ -153,6 +153,19 @@ pub const fullrune = rune_.fullrune;
 pub const utflen = rune_.utflen;
 pub const utfrune = rune_.utfrune;
 
+// Regular expressions
+
+pub const regexp = @import("regexp.zig");
+
+/// libregexp's default regerror: the message on standard error after
+/// "regerror: ", and exit "regerr".  Programs with their own handling
+/// (sed, ed) use regexp.Diag instead.
+/// from libregexp/regerror.c
+pub fn regerror(s: []const u8) noreturn {
+    fprint(2, "regerror: %s\n", .{s});
+    exits("regerr");
+}
+
 // Buffered I/O
 
 pub const Biobuf = @import("bio.zig").Biobuf;

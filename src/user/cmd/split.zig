@@ -1,9 +1,10 @@
 //! split - split a file into pieces
 //! from cmd/split.c
 //!
-//! DIFF: -e (split at lines matching a regular expression), and with it
-//! -i and -x, wait for a port of libregexp: -e prints that and exits.
-//! The options are still parsed as in the C.
+//! DIFF: a name made from a match is cut to fit the C's 200-byte name
+//! buffer, which the C overruns.  fold works on a copy from the
+//! allocator; badexp is never reached, as in the C, since the default
+//! regerror exits first.
 //!
 //! Kept from the C: openf's descriptor starts at 0, so the first output
 //! file it opens closes standard input first; the error message for a
@@ -54,9 +55,28 @@ pub fn main(argv: []const []const u8) void {
         };
     } else b.init(0, libc.OREAD);
 
-    if (pattern != null) {
-        libc.fprint(2, "split: -e is not ported yet: it needs regular expressions\n", .{});
-        libc.exits("-e not ported");
+    if (pattern) |pat| {
+        var diag: libc.regexp.Diag = .{};
+        const exp = libc.regexp.regcomp(libc.allocator, if (iflag) fold(pat) else pat, &diag) catch |e| {
+            if (e == error.Regexp)
+                libc.regerror(diag.msg);
+            badexp();
+        };
+        var match: [2]libc.regexp.Resub = @splat(.{});
+        _ = matchfile(&match, "");
+        while (b.rdline('\n')) |full| {
+            match = @splat(.{});
+            const line = full[0 .. full.len - 1];
+            const subject = if (iflag) fold(line) else line;
+            if (exp.exec(subject, &match)) {
+                if (matchfile(&match, subject) and xflag)
+                    continue;
+            }
+            // the C's `else if(output == 0) nextfile();` cannot happen:
+            // output is never nil
+            _ = bout.write(line) catch {};
+            bout.putc('\n') catch {};
+        }
     } else {
         var linecnt = n;
 
@@ -81,6 +101,40 @@ pub fn main(argv: []const []const u8) void {
     }
     b.term() catch {};
     libc.exits(null);
+}
+
+var foldbuf: []u8 = &.{};
+
+/// s in lower case (ASCII), in a buffer kept from call to call.  As in
+/// the C, a 0 byte ends it.
+fn fold(s_: []const u8) []const u8 {
+    const s = s_[0 .. std.mem.findScalar(u8, s_, 0) orelse s_.len];
+    if (foldbuf.len < s.len + 1)
+        foldbuf = libc.allocator.realloc(foldbuf, s.len + 1) catch libc.sysfatal("out of memory", .{});
+    for (s, 0..) |c, i| foldbuf[i] = std.ascii.toLower(c);
+    return foldbuf[0..s.len];
+}
+
+/// Open the file the match names (subexpression 1 plus the suffix), or
+/// the next one in sequence.
+fn matchfile(match: []const libc.regexp.Resub, subject: []const u8) bool {
+    if (match[1].sp) |sp| {
+        const m = subject[sp..match[1].ep.?];
+        const room = namebuf.len - 1;
+        const n = @min(m.len, room);
+        @memcpy(namebuf[0..n], m[0..n]);
+        const k = @min(suffix.len, room - n);
+        @memcpy(namebuf[n..][0..k], suffix[0..k]);
+        name = namebuf[0 .. n + k];
+        openf();
+        return true;
+    }
+    return nextfile();
+}
+
+fn badexp() noreturn {
+    libc.fprint(2, "split: bad regular expression\n", .{});
+    libc.exits("bad regular expression");
 }
 
 var canopen = true;

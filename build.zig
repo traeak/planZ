@@ -75,13 +75,18 @@ pub fn build(b: *std.Build) void {
         "chmod", "cp",       "mv",        "tail",
         "mtime", "strings",  "freq",      "comm",
         "read",  "unicode",  "tr",        "xd",
-        "split", "du",       "test",
+        "split", "du",       "test",      "retest",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
         zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc);
         user_step.dependOn(&b.addInstallFile(zbins[i], b.fmt("user/bin/{s}", .{name})).step);
     }
+    // retest's other half, built in the guest against stock libregexp,
+    // and the table both read (see tools/retest.c)
+    const zdata = [_][]const u8{ "retest.c", "retest.txt" };
+    for (zdata) |name|
+        user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
 
     const kernel = b.addExecutable(.{
         .name = "planz",
@@ -290,6 +295,8 @@ pub fn build(b: *std.Build) void {
                 // checks them (docs/hardware-checklist.md)
                 for (zcmds, zbins) |name, bin|
                     mk.addPrefixedFileArg(b.fmt("zig/bin/{s}=", .{name}), bin);
+                for (zdata) |name|
+                    mk.addPrefixedFileArg(b.fmt("zig/bin/{s}=", .{name}), b.path(b.fmt("tools/{s}", .{name})));
                 mk.addPrefixedFileArg("zig/run=", b.path("tools/usbzig.rc"));
                 mk.has_side_effects = true;
                 if (usb_write) |w| mk.step.dependOn(&w.step);
@@ -348,6 +355,16 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "fmt", .module = fmt },
                 .{ .name = "fcall", .module = fcall },
             },
+        }) });
+        test_step.dependOn(&b.addRunArtifact(unit).step);
+    }
+    {
+        // libregexp, which needs only runes and fmt.
+        const unit = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path("src/user/lib/regexp.zig"),
+            .target = b.graph.host,
+            .optimize = .safe,
+            .imports = &.{.{ .name = "fmt", .module = fmt }},
         }) });
         test_step.dependOn(&b.addRunArtifact(unit).step);
     }

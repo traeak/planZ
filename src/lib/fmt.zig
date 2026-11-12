@@ -318,8 +318,91 @@ fn str(arg: anytype) []const u8 {
     }
 }
 
-fn sfmt(f: *Fmt, s: []const u8) void {
-    f.pad(if (f.flags.prec) runeprefix(s, f.prec) else s);
+/// %s: fmtstrcpy and _fmtcpy.  Each rune is decoded and encoded again,
+/// so a byte that is not UTF-8 prints as Runeerror, and an incomplete
+/// sequence at the end of the string is left out.  Width and precision
+/// count runes as chartorune decodes them.
+fn sfmt(f: *Fmt, s_: []const u8) void {
+    var s = s_;
+    var n: usize = 0;
+    if (f.flags.prec) {
+        var i: usize = 0;
+        while (n < f.prec and i < s.len) : (n += 1)
+            i += chartorune(s, i).n;
+        s = s[0..@min(i, s.len)];
+    } else {
+        var i: usize = 0;
+        while (i < s.len) : (n += 1)
+            i += chartorune(s, i).n;
+    }
+    const fill = if (f.flags.width and f.width > n) f.width - n else 0;
+    if (!f.flags.left) f.putn(' ', fill);
+    var m: usize = 0;
+    var nc = n;
+    while (nc > 0) : (nc -= 1) {
+        if (m >= s.len) break;
+        if (s[m] < 0x80) {
+            f.putc(s[m]);
+            m += 1;
+            continue;
+        }
+        if (s.len - m < 4 and !fullrune(s[m..]))
+            break;
+        const d = chartorune(s, m);
+        m += d.n;
+        var buf: [4]u8 = undefined;
+        f.puts(buf[0..runetochar(&buf, d.r)]);
+    }
+    if (f.flags.left) f.putn(' ', fill);
+}
+
+/// libc's fullrune.
+fn fullrune(s: []const u8) bool {
+    if (s.len == 0) return false;
+    const c = s[0];
+    if (c < 0x80) return true;
+    if (c < 0xE0) return s.len >= 2;
+    if (c < 0xF0) return s.len >= 3;
+    return s.len >= 4;
+}
+
+/// libc's chartorune at s[i..]: surrogates decode, anything else that
+/// is not UTF-8 is Runeerror, one byte long.  Past the end reads as the
+/// C string's 0.
+const Decoded = struct { r: u32, n: usize };
+
+fn chartorune(s: []const u8, i: usize) Decoded {
+    const S = struct {
+        fn at(b: []const u8, k: usize) u32 {
+            return if (k < b.len) b[k] else 0;
+        }
+    };
+    const bad: Decoded = .{ .r = 0xFFFD, .n = 1 };
+    const c = S.at(s, i);
+    if (c < 0x80) return .{ .r = c, .n = 1 };
+    const c1 = S.at(s, i + 1) ^ 0x80;
+    if (c1 & 0xC0 != 0) return bad;
+    if (c < 0xE0) {
+        if (c < 0xC0) return bad;
+        const l = ((c << 6) | c1) & 0x7FF;
+        if (l <= 0x7F) return bad;
+        return .{ .r = l, .n = 2 };
+    }
+    const c2 = S.at(s, i + 2) ^ 0x80;
+    if (c2 & 0xC0 != 0) return bad;
+    if (c < 0xF0) {
+        const l = ((((c << 6) | c1) << 6) | c2) & 0xFFFF;
+        if (l <= 0x7FF) return bad;
+        return .{ .r = l, .n = 3 };
+    }
+    const c3 = S.at(s, i + 3) ^ 0x80;
+    if (c3 & 0xC0 != 0) return bad;
+    if (c < 0xF8) {
+        const l = ((((((c << 6) | c1) << 6) | c2) << 6) | c3) & 0x1FFFFF;
+        if (l <= 0xFFFF or l > 0x10FFFF) return bad;
+        return .{ .r = l, .n = 4 };
+    }
+    return bad;
 }
 
 /// %q: quote the string rc-style if it is empty or has white space or
@@ -550,4 +633,17 @@ test "error string" {
     }.e;
     defer errstr = null;
     try expect("open: file does not exist", "open: %r", .{});
+}
+
+test "%s re-encodes as Plan 9 does" {
+    var buf: [64]u8 = undefined;
+    // a bad byte is Runeerror; near the end it looks like the start of an
+    // incomplete rune, which is left out with the rest, as in C
+    try std.testing.expectEqualStrings("a\xef\xbf\xbdbcde", snprint(&buf, "%s", .{"a\xffbcde"}));
+    try std.testing.expectEqualStrings("a", snprint(&buf, "%s", .{"a\xffb"}));
+    try std.testing.expectEqualStrings("a", snprint(&buf, "%s", .{"a\xe6\x97"}));
+    try std.testing.expectEqualStrings("[日本 ]", snprint(&buf, "[%-3s]", .{"日本"}));
+    try std.testing.expectEqualStrings("日", snprint(&buf, "%.1s", .{"日本"}));
+    // surrogates pass through
+    try std.testing.expectEqualStrings("\xed\xa0\x80", snprint(&buf, "%s", .{"\xed\xa0\x80"}));
 }

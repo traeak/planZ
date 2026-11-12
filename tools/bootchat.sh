@@ -32,6 +32,22 @@ for a in "$@"; do
 	[ "$a" = "--" ] && break
 	n=$((n + 1))
 done
+
+# 9front's kbdfs cooks typed lines in a 256-rune buffer and hands each
+# rune to its cooking thread with a non-blocking send: when the buffer
+# fills, the thread is busy passing it on and the next rune is lost,
+# every time (stock 9front and planZ alike).  So no typed line may be
+# that long.  (A character typed just after a newline can be lost the
+# same way, now and then; waiting for output between lines avoids it.)
+i=0
+for a in "$@"; do
+	[ $i -ge $n ] && break
+	if [ $((i % 2)) -eq 1 ] && [ "${a#@host }" = "$a" ] && [ ${#a} -ge 256 ]; then
+		echo "boot chat: a typed line of ${#a} bytes; kbdfs loses the 257th character of a line, so keep them under 256: $(printf '%s' "$a" | cut -c1-60)..." >&2
+		exit 2
+	fi
+	i=$((i + 1))
+done
 steps=$n
 i=0
 for a in "$@"; do

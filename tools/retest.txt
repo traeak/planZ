@@ -1,0 +1,1570 @@
+# retest table: flags<TAB>pattern<TAB>subject; generated once, see tools/retest.c
+-	a	
+-	a	a
+-	a	abc
+-	a	aaa
+-	a	abcabc
+-	a	xaby
+-	a	b
+-	a	ab\ncd
+-	a	\na\n
+-	a	zzazbz
+-	a	abbbc
+-	a	ac
+-	a	abcd
+-	a	日本語
+-	a	☺☺x☺
+-	a	héllo wörld
+-	a	a.c a*c
+-	a	key_9 = x
+-	a	a]b-c
+-	a	\xff\xfeab
+-	a	a\\b
+-	a	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a	the quick brown fox
+-	abc	
+-	abc	a
+-	abc	abc
+-	abc	aaa
+-	abc	abcabc
+-	abc	xaby
+-	abc	b
+-	abc	ab\ncd
+-	abc	\na\n
+-	abc	zzazbz
+-	abc	abbbc
+-	abc	ac
+-	abc	abcd
+-	abc	日本語
+-	abc	☺☺x☺
+-	abc	héllo wörld
+-	abc	a.c a*c
+-	abc	key_9 = x
+-	abc	a]b-c
+-	abc	\xff\xfeab
+-	abc	a\\b
+-	abc	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	abc	the quick brown fox
+-	a.c	
+-	a.c	a
+-	a.c	abc
+-	a.c	aaa
+-	a.c	abcabc
+-	a.c	xaby
+-	a.c	b
+-	a.c	ab\ncd
+-	a.c	\na\n
+-	a.c	zzazbz
+-	a.c	abbbc
+-	a.c	ac
+-	a.c	abcd
+-	a.c	日本語
+-	a.c	☺☺x☺
+-	a.c	héllo wörld
+-	a.c	a.c a*c
+-	a.c	key_9 = x
+-	a.c	a]b-c
+-	a.c	\xff\xfeab
+-	a.c	a\\b
+-	a.c	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a.c	the quick brown fox
+-	^a	
+-	^a	a
+-	^a	abc
+-	^a	aaa
+-	^a	abcabc
+-	^a	xaby
+-	^a	b
+-	^a	ab\ncd
+-	^a	\na\n
+-	^a	zzazbz
+-	^a	abbbc
+-	^a	ac
+-	^a	abcd
+-	^a	日本語
+-	^a	☺☺x☺
+-	^a	héllo wörld
+-	^a	a.c a*c
+-	^a	key_9 = x
+-	^a	a]b-c
+-	^a	\xff\xfeab
+-	^a	a\\b
+-	^a	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	^a	the quick brown fox
+-	a$	
+-	a$	a
+-	a$	abc
+-	a$	aaa
+-	a$	abcabc
+-	a$	xaby
+-	a$	b
+-	a$	ab\ncd
+-	a$	\na\n
+-	a$	zzazbz
+-	a$	abbbc
+-	a$	ac
+-	a$	abcd
+-	a$	日本語
+-	a$	☺☺x☺
+-	a$	héllo wörld
+-	a$	a.c a*c
+-	a$	key_9 = x
+-	a$	a]b-c
+-	a$	\xff\xfeab
+-	a$	a\\b
+-	a$	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a$	the quick brown fox
+-	^$	
+-	^$	a
+-	^$	abc
+-	^$	aaa
+-	^$	abcabc
+-	^$	xaby
+-	^$	b
+-	^$	ab\ncd
+-	^$	\na\n
+-	^$	zzazbz
+-	^$	abbbc
+-	^$	ac
+-	^$	abcd
+-	^$	日本語
+-	^$	☺☺x☺
+-	^$	héllo wörld
+-	^$	a.c a*c
+-	^$	key_9 = x
+-	^$	a]b-c
+-	^$	\xff\xfeab
+-	^$	a\\b
+-	^$	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	^$	the quick brown fox
+-	^	
+-	^	a
+-	^	abc
+-	^	aaa
+-	^	abcabc
+-	^	xaby
+-	^	b
+-	^	ab\ncd
+-	^	\na\n
+-	^	zzazbz
+-	^	abbbc
+-	^	ac
+-	^	abcd
+-	^	日本語
+-	^	☺☺x☺
+-	^	héllo wörld
+-	^	a.c a*c
+-	^	key_9 = x
+-	^	a]b-c
+-	^	\xff\xfeab
+-	^	a\\b
+-	^	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	^	the quick brown fox
+-	$	
+-	$	a
+-	$	abc
+-	$	aaa
+-	$	abcabc
+-	$	xaby
+-	$	b
+-	$	ab\ncd
+-	$	\na\n
+-	$	zzazbz
+-	$	abbbc
+-	$	ac
+-	$	abcd
+-	$	日本語
+-	$	☺☺x☺
+-	$	héllo wörld
+-	$	a.c a*c
+-	$	key_9 = x
+-	$	a]b-c
+-	$	\xff\xfeab
+-	$	a\\b
+-	$	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	$	the quick brown fox
+-	.	
+-	.	a
+-	.	abc
+-	.	aaa
+-	.	abcabc
+-	.	xaby
+-	.	b
+-	.	ab\ncd
+-	.	\na\n
+-	.	zzazbz
+-	.	abbbc
+-	.	ac
+-	.	abcd
+-	.	日本語
+-	.	☺☺x☺
+-	.	héllo wörld
+-	.	a.c a*c
+-	.	key_9 = x
+-	.	a]b-c
+-	.	\xff\xfeab
+-	.	a\\b
+-	.	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	.	the quick brown fox
+-	.*	
+-	.*	a
+-	.*	abc
+-	.*	aaa
+-	.*	abcabc
+-	.*	xaby
+-	.*	b
+-	.*	ab\ncd
+-	.*	\na\n
+-	.*	zzazbz
+-	.*	abbbc
+-	.*	ac
+-	.*	abcd
+-	.*	日本語
+-	.*	☺☺x☺
+-	.*	héllo wörld
+-	.*	a.c a*c
+-	.*	key_9 = x
+-	.*	a]b-c
+-	.*	\xff\xfeab
+-	.*	a\\b
+-	.*	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	.*	the quick brown fox
+-	a*	
+-	a*	a
+-	a*	abc
+-	a*	aaa
+-	a*	abcabc
+-	a*	xaby
+-	a*	b
+-	a*	ab\ncd
+-	a*	\na\n
+-	a*	zzazbz
+-	a*	abbbc
+-	a*	ac
+-	a*	abcd
+-	a*	日本語
+-	a*	☺☺x☺
+-	a*	héllo wörld
+-	a*	a.c a*c
+-	a*	key_9 = x
+-	a*	a]b-c
+-	a*	\xff\xfeab
+-	a*	a\\b
+-	a*	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a*	the quick brown fox
+-	a+	
+-	a+	a
+-	a+	abc
+-	a+	aaa
+-	a+	abcabc
+-	a+	xaby
+-	a+	b
+-	a+	ab\ncd
+-	a+	\na\n
+-	a+	zzazbz
+-	a+	abbbc
+-	a+	ac
+-	a+	abcd
+-	a+	日本語
+-	a+	☺☺x☺
+-	a+	héllo wörld
+-	a+	a.c a*c
+-	a+	key_9 = x
+-	a+	a]b-c
+-	a+	\xff\xfeab
+-	a+	a\\b
+-	a+	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a+	the quick brown fox
+-	a?	
+-	a?	a
+-	a?	abc
+-	a?	aaa
+-	a?	abcabc
+-	a?	xaby
+-	a?	b
+-	a?	ab\ncd
+-	a?	\na\n
+-	a?	zzazbz
+-	a?	abbbc
+-	a?	ac
+-	a?	abcd
+-	a?	日本語
+-	a?	☺☺x☺
+-	a?	héllo wörld
+-	a?	a.c a*c
+-	a?	key_9 = x
+-	a?	a]b-c
+-	a?	\xff\xfeab
+-	a?	a\\b
+-	a?	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a?	the quick brown fox
+-	ab*c	
+-	ab*c	a
+-	ab*c	abc
+-	ab*c	aaa
+-	ab*c	abcabc
+-	ab*c	xaby
+-	ab*c	b
+-	ab*c	ab\ncd
+-	ab*c	\na\n
+-	ab*c	zzazbz
+-	ab*c	abbbc
+-	ab*c	ac
+-	ab*c	abcd
+-	ab*c	日本語
+-	ab*c	☺☺x☺
+-	ab*c	héllo wörld
+-	ab*c	a.c a*c
+-	ab*c	key_9 = x
+-	ab*c	a]b-c
+-	ab*c	\xff\xfeab
+-	ab*c	a\\b
+-	ab*c	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	ab*c	the quick brown fox
+-	ab+c	
+-	ab+c	a
+-	ab+c	abc
+-	ab+c	aaa
+-	ab+c	abcabc
+-	ab+c	xaby
+-	ab+c	b
+-	ab+c	ab\ncd
+-	ab+c	\na\n
+-	ab+c	zzazbz
+-	ab+c	abbbc
+-	ab+c	ac
+-	ab+c	abcd
+-	ab+c	日本語
+-	ab+c	☺☺x☺
+-	ab+c	héllo wörld
+-	ab+c	a.c a*c
+-	ab+c	key_9 = x
+-	ab+c	a]b-c
+-	ab+c	\xff\xfeab
+-	ab+c	a\\b
+-	ab+c	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	ab+c	the quick brown fox
+-	ab?c	
+-	ab?c	a
+-	ab?c	abc
+-	ab?c	aaa
+-	ab?c	abcabc
+-	ab?c	xaby
+-	ab?c	b
+-	ab?c	ab\ncd
+-	ab?c	\na\n
+-	ab?c	zzazbz
+-	ab?c	abbbc
+-	ab?c	ac
+-	ab?c	abcd
+-	ab?c	日本語
+-	ab?c	☺☺x☺
+-	ab?c	héllo wörld
+-	ab?c	a.c a*c
+-	ab?c	key_9 = x
+-	ab?c	a]b-c
+-	ab?c	\xff\xfeab
+-	ab?c	a\\b
+-	ab?c	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	ab?c	the quick brown fox
+-	a|b	
+-	a|b	a
+-	a|b	abc
+-	a|b	aaa
+-	a|b	abcabc
+-	a|b	xaby
+-	a|b	b
+-	a|b	ab\ncd
+-	a|b	\na\n
+-	a|b	zzazbz
+-	a|b	abbbc
+-	a|b	ac
+-	a|b	abcd
+-	a|b	日本語
+-	a|b	☺☺x☺
+-	a|b	héllo wörld
+-	a|b	a.c a*c
+-	a|b	key_9 = x
+-	a|b	a]b-c
+-	a|b	\xff\xfeab
+-	a|b	a\\b
+-	a|b	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a|b	the quick brown fox
+-	ab|cd	
+-	ab|cd	a
+-	ab|cd	abc
+-	ab|cd	aaa
+-	ab|cd	abcabc
+-	ab|cd	xaby
+-	ab|cd	b
+-	ab|cd	ab\ncd
+-	ab|cd	\na\n
+-	ab|cd	zzazbz
+-	ab|cd	abbbc
+-	ab|cd	ac
+-	ab|cd	abcd
+-	ab|cd	日本語
+-	ab|cd	☺☺x☺
+-	ab|cd	héllo wörld
+-	ab|cd	a.c a*c
+-	ab|cd	key_9 = x
+-	ab|cd	a]b-c
+-	ab|cd	\xff\xfeab
+-	ab|cd	a\\b
+-	ab|cd	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	ab|cd	the quick brown fox
+-	a|b|c	
+-	a|b|c	a
+-	a|b|c	abc
+-	a|b|c	aaa
+-	a|b|c	abcabc
+-	a|b|c	xaby
+-	a|b|c	b
+-	a|b|c	ab\ncd
+-	a|b|c	\na\n
+-	a|b|c	zzazbz
+-	a|b|c	abbbc
+-	a|b|c	ac
+-	a|b|c	abcd
+-	a|b|c	日本語
+-	a|b|c	☺☺x☺
+-	a|b|c	héllo wörld
+-	a|b|c	a.c a*c
+-	a|b|c	key_9 = x
+-	a|b|c	a]b-c
+-	a|b|c	\xff\xfeab
+-	a|b|c	a\\b
+-	a|b|c	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a|b|c	the quick brown fox
+-	(a)	
+-	(a)	a
+-	(a)	abc
+-	(a)	aaa
+-	(a)	abcabc
+-	(a)	xaby
+-	(a)	b
+-	(a)	ab\ncd
+-	(a)	\na\n
+-	(a)	zzazbz
+-	(a)	abbbc
+-	(a)	ac
+-	(a)	abcd
+-	(a)	日本語
+-	(a)	☺☺x☺
+-	(a)	héllo wörld
+-	(a)	a.c a*c
+-	(a)	key_9 = x
+-	(a)	a]b-c
+-	(a)	\xff\xfeab
+-	(a)	a\\b
+-	(a)	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(a)	the quick brown fox
+-	(a)(b)	
+-	(a)(b)	a
+-	(a)(b)	abc
+-	(a)(b)	aaa
+-	(a)(b)	abcabc
+-	(a)(b)	xaby
+-	(a)(b)	b
+-	(a)(b)	ab\ncd
+-	(a)(b)	\na\n
+-	(a)(b)	zzazbz
+-	(a)(b)	abbbc
+-	(a)(b)	ac
+-	(a)(b)	abcd
+-	(a)(b)	日本語
+-	(a)(b)	☺☺x☺
+-	(a)(b)	héllo wörld
+-	(a)(b)	a.c a*c
+-	(a)(b)	key_9 = x
+-	(a)(b)	a]b-c
+-	(a)(b)	\xff\xfeab
+-	(a)(b)	a\\b
+-	(a)(b)	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(a)(b)	the quick brown fox
+-	(a|b)+	
+-	(a|b)+	a
+-	(a|b)+	abc
+-	(a|b)+	aaa
+-	(a|b)+	abcabc
+-	(a|b)+	xaby
+-	(a|b)+	b
+-	(a|b)+	ab\ncd
+-	(a|b)+	\na\n
+-	(a|b)+	zzazbz
+-	(a|b)+	abbbc
+-	(a|b)+	ac
+-	(a|b)+	abcd
+-	(a|b)+	日本語
+-	(a|b)+	☺☺x☺
+-	(a|b)+	héllo wörld
+-	(a|b)+	a.c a*c
+-	(a|b)+	key_9 = x
+-	(a|b)+	a]b-c
+-	(a|b)+	\xff\xfeab
+-	(a|b)+	a\\b
+-	(a|b)+	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(a|b)+	the quick brown fox
+-	(ab)*c	
+-	(ab)*c	a
+-	(ab)*c	abc
+-	(ab)*c	aaa
+-	(ab)*c	abcabc
+-	(ab)*c	xaby
+-	(ab)*c	b
+-	(ab)*c	ab\ncd
+-	(ab)*c	\na\n
+-	(ab)*c	zzazbz
+-	(ab)*c	abbbc
+-	(ab)*c	ac
+-	(ab)*c	abcd
+-	(ab)*c	日本語
+-	(ab)*c	☺☺x☺
+-	(ab)*c	héllo wörld
+-	(ab)*c	a.c a*c
+-	(ab)*c	key_9 = x
+-	(ab)*c	a]b-c
+-	(ab)*c	\xff\xfeab
+-	(ab)*c	a\\b
+-	(ab)*c	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(ab)*c	the quick brown fox
+-	((a)b)c	
+-	((a)b)c	a
+-	((a)b)c	abc
+-	((a)b)c	aaa
+-	((a)b)c	abcabc
+-	((a)b)c	xaby
+-	((a)b)c	b
+-	((a)b)c	ab\ncd
+-	((a)b)c	\na\n
+-	((a)b)c	zzazbz
+-	((a)b)c	abbbc
+-	((a)b)c	ac
+-	((a)b)c	abcd
+-	((a)b)c	日本語
+-	((a)b)c	☺☺x☺
+-	((a)b)c	héllo wörld
+-	((a)b)c	a.c a*c
+-	((a)b)c	key_9 = x
+-	((a)b)c	a]b-c
+-	((a)b)c	\xff\xfeab
+-	((a)b)c	a\\b
+-	((a)b)c	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	((a)b)c	the quick brown fox
+-	(a*)(b*)	
+-	(a*)(b*)	a
+-	(a*)(b*)	abc
+-	(a*)(b*)	aaa
+-	(a*)(b*)	abcabc
+-	(a*)(b*)	xaby
+-	(a*)(b*)	b
+-	(a*)(b*)	ab\ncd
+-	(a*)(b*)	\na\n
+-	(a*)(b*)	zzazbz
+-	(a*)(b*)	abbbc
+-	(a*)(b*)	ac
+-	(a*)(b*)	abcd
+-	(a*)(b*)	日本語
+-	(a*)(b*)	☺☺x☺
+-	(a*)(b*)	héllo wörld
+-	(a*)(b*)	a.c a*c
+-	(a*)(b*)	key_9 = x
+-	(a*)(b*)	a]b-c
+-	(a*)(b*)	\xff\xfeab
+-	(a*)(b*)	a\\b
+-	(a*)(b*)	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(a*)(b*)	the quick brown fox
+-	(a*)+	
+-	(a*)+	a
+-	(a*)+	abc
+-	(a*)+	aaa
+-	(a*)+	abcabc
+-	(a*)+	xaby
+-	(a*)+	b
+-	(a*)+	ab\ncd
+-	(a*)+	\na\n
+-	(a*)+	zzazbz
+-	(a*)+	abbbc
+-	(a*)+	ac
+-	(a*)+	abcd
+-	(a*)+	日本語
+-	(a*)+	☺☺x☺
+-	(a*)+	héllo wörld
+-	(a*)+	a.c a*c
+-	(a*)+	key_9 = x
+-	(a*)+	a]b-c
+-	(a*)+	\xff\xfeab
+-	(a*)+	a\\b
+-	(a*)+	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(a*)+	the quick brown fox
+-	(a|ab)(c|bcd)	
+-	(a|ab)(c|bcd)	a
+-	(a|ab)(c|bcd)	abc
+-	(a|ab)(c|bcd)	aaa
+-	(a|ab)(c|bcd)	abcabc
+-	(a|ab)(c|bcd)	xaby
+-	(a|ab)(c|bcd)	b
+-	(a|ab)(c|bcd)	ab\ncd
+-	(a|ab)(c|bcd)	\na\n
+-	(a|ab)(c|bcd)	zzazbz
+-	(a|ab)(c|bcd)	abbbc
+-	(a|ab)(c|bcd)	ac
+-	(a|ab)(c|bcd)	abcd
+-	(a|ab)(c|bcd)	日本語
+-	(a|ab)(c|bcd)	☺☺x☺
+-	(a|ab)(c|bcd)	héllo wörld
+-	(a|ab)(c|bcd)	a.c a*c
+-	(a|ab)(c|bcd)	key_9 = x
+-	(a|ab)(c|bcd)	a]b-c
+-	(a|ab)(c|bcd)	\xff\xfeab
+-	(a|ab)(c|bcd)	a\\b
+-	(a|ab)(c|bcd)	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(a|ab)(c|bcd)	the quick brown fox
+-	[abc]	
+-	[abc]	a
+-	[abc]	abc
+-	[abc]	aaa
+-	[abc]	abcabc
+-	[abc]	xaby
+-	[abc]	b
+-	[abc]	ab\ncd
+-	[abc]	\na\n
+-	[abc]	zzazbz
+-	[abc]	abbbc
+-	[abc]	ac
+-	[abc]	abcd
+-	[abc]	日本語
+-	[abc]	☺☺x☺
+-	[abc]	héllo wörld
+-	[abc]	a.c a*c
+-	[abc]	key_9 = x
+-	[abc]	a]b-c
+-	[abc]	\xff\xfeab
+-	[abc]	a\\b
+-	[abc]	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[abc]	the quick brown fox
+-	[a-c]+	
+-	[a-c]+	a
+-	[a-c]+	abc
+-	[a-c]+	aaa
+-	[a-c]+	abcabc
+-	[a-c]+	xaby
+-	[a-c]+	b
+-	[a-c]+	ab\ncd
+-	[a-c]+	\na\n
+-	[a-c]+	zzazbz
+-	[a-c]+	abbbc
+-	[a-c]+	ac
+-	[a-c]+	abcd
+-	[a-c]+	日本語
+-	[a-c]+	☺☺x☺
+-	[a-c]+	héllo wörld
+-	[a-c]+	a.c a*c
+-	[a-c]+	key_9 = x
+-	[a-c]+	a]b-c
+-	[a-c]+	\xff\xfeab
+-	[a-c]+	a\\b
+-	[a-c]+	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[a-c]+	the quick brown fox
+-	[^abc]	
+-	[^abc]	a
+-	[^abc]	abc
+-	[^abc]	aaa
+-	[^abc]	abcabc
+-	[^abc]	xaby
+-	[^abc]	b
+-	[^abc]	ab\ncd
+-	[^abc]	\na\n
+-	[^abc]	zzazbz
+-	[^abc]	abbbc
+-	[^abc]	ac
+-	[^abc]	abcd
+-	[^abc]	日本語
+-	[^abc]	☺☺x☺
+-	[^abc]	héllo wörld
+-	[^abc]	a.c a*c
+-	[^abc]	key_9 = x
+-	[^abc]	a]b-c
+-	[^abc]	\xff\xfeab
+-	[^abc]	a\\b
+-	[^abc]	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[^abc]	the quick brown fox
+-	[^a-c]+	
+-	[^a-c]+	a
+-	[^a-c]+	abc
+-	[^a-c]+	aaa
+-	[^a-c]+	abcabc
+-	[^a-c]+	xaby
+-	[^a-c]+	b
+-	[^a-c]+	ab\ncd
+-	[^a-c]+	\na\n
+-	[^a-c]+	zzazbz
+-	[^a-c]+	abbbc
+-	[^a-c]+	ac
+-	[^a-c]+	abcd
+-	[^a-c]+	日本語
+-	[^a-c]+	☺☺x☺
+-	[^a-c]+	héllo wörld
+-	[^a-c]+	a.c a*c
+-	[^a-c]+	key_9 = x
+-	[^a-c]+	a]b-c
+-	[^a-c]+	\xff\xfeab
+-	[^a-c]+	a\\b
+-	[^a-c]+	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[^a-c]+	the quick brown fox
+-	[0-9]+	
+-	[0-9]+	a
+-	[0-9]+	abc
+-	[0-9]+	aaa
+-	[0-9]+	abcabc
+-	[0-9]+	xaby
+-	[0-9]+	b
+-	[0-9]+	ab\ncd
+-	[0-9]+	\na\n
+-	[0-9]+	zzazbz
+-	[0-9]+	abbbc
+-	[0-9]+	ac
+-	[0-9]+	abcd
+-	[0-9]+	日本語
+-	[0-9]+	☺☺x☺
+-	[0-9]+	héllo wörld
+-	[0-9]+	a.c a*c
+-	[0-9]+	key_9 = x
+-	[0-9]+	a]b-c
+-	[0-9]+	\xff\xfeab
+-	[0-9]+	a\\b
+-	[0-9]+	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[0-9]+	the quick brown fox
+-	[a-zA-Z_][a-zA-Z0-9_]*	
+-	[a-zA-Z_][a-zA-Z0-9_]*	a
+-	[a-zA-Z_][a-zA-Z0-9_]*	abc
+-	[a-zA-Z_][a-zA-Z0-9_]*	aaa
+-	[a-zA-Z_][a-zA-Z0-9_]*	abcabc
+-	[a-zA-Z_][a-zA-Z0-9_]*	xaby
+-	[a-zA-Z_][a-zA-Z0-9_]*	b
+-	[a-zA-Z_][a-zA-Z0-9_]*	ab\ncd
+-	[a-zA-Z_][a-zA-Z0-9_]*	\na\n
+-	[a-zA-Z_][a-zA-Z0-9_]*	zzazbz
+-	[a-zA-Z_][a-zA-Z0-9_]*	abbbc
+-	[a-zA-Z_][a-zA-Z0-9_]*	ac
+-	[a-zA-Z_][a-zA-Z0-9_]*	abcd
+-	[a-zA-Z_][a-zA-Z0-9_]*	日本語
+-	[a-zA-Z_][a-zA-Z0-9_]*	☺☺x☺
+-	[a-zA-Z_][a-zA-Z0-9_]*	héllo wörld
+-	[a-zA-Z_][a-zA-Z0-9_]*	a.c a*c
+-	[a-zA-Z_][a-zA-Z0-9_]*	key_9 = x
+-	[a-zA-Z_][a-zA-Z0-9_]*	a]b-c
+-	[a-zA-Z_][a-zA-Z0-9_]*	\xff\xfeab
+-	[a-zA-Z_][a-zA-Z0-9_]*	a\\b
+-	[a-zA-Z_][a-zA-Z0-9_]*	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[a-zA-Z_][a-zA-Z0-9_]*	the quick brown fox
+-	[\]]	
+-	[\]]	a
+-	[\]]	abc
+-	[\]]	aaa
+-	[\]]	abcabc
+-	[\]]	xaby
+-	[\]]	b
+-	[\]]	ab\ncd
+-	[\]]	\na\n
+-	[\]]	zzazbz
+-	[\]]	abbbc
+-	[\]]	ac
+-	[\]]	abcd
+-	[\]]	日本語
+-	[\]]	☺☺x☺
+-	[\]]	héllo wörld
+-	[\]]	a.c a*c
+-	[\]]	key_9 = x
+-	[\]]	a]b-c
+-	[\]]	\xff\xfeab
+-	[\]]	a\\b
+-	[\]]	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[\]]	the quick brown fox
+-	[\-]	
+-	[\-]	a
+-	[\-]	abc
+-	[\-]	aaa
+-	[\-]	abcabc
+-	[\-]	xaby
+-	[\-]	b
+-	[\-]	ab\ncd
+-	[\-]	\na\n
+-	[\-]	zzazbz
+-	[\-]	abbbc
+-	[\-]	ac
+-	[\-]	abcd
+-	[\-]	日本語
+-	[\-]	☺☺x☺
+-	[\-]	héllo wörld
+-	[\-]	a.c a*c
+-	[\-]	key_9 = x
+-	[\-]	a]b-c
+-	[\-]	\xff\xfeab
+-	[\-]	a\\b
+-	[\-]	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[\-]	the quick brown fox
+-	[a\-z]	
+-	[a\-z]	a
+-	[a\-z]	abc
+-	[a\-z]	aaa
+-	[a\-z]	abcabc
+-	[a\-z]	xaby
+-	[a\-z]	b
+-	[a\-z]	ab\ncd
+-	[a\-z]	\na\n
+-	[a\-z]	zzazbz
+-	[a\-z]	abbbc
+-	[a\-z]	ac
+-	[a\-z]	abcd
+-	[a\-z]	日本語
+-	[a\-z]	☺☺x☺
+-	[a\-z]	héllo wörld
+-	[a\-z]	a.c a*c
+-	[a\-z]	key_9 = x
+-	[a\-z]	a]b-c
+-	[a\-z]	\xff\xfeab
+-	[a\-z]	a\\b
+-	[a\-z]	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[a\-z]	the quick brown fox
+-	[.]	
+-	[.]	a
+-	[.]	abc
+-	[.]	aaa
+-	[.]	abcabc
+-	[.]	xaby
+-	[.]	b
+-	[.]	ab\ncd
+-	[.]	\na\n
+-	[.]	zzazbz
+-	[.]	abbbc
+-	[.]	ac
+-	[.]	abcd
+-	[.]	日本語
+-	[.]	☺☺x☺
+-	[.]	héllo wörld
+-	[.]	a.c a*c
+-	[.]	key_9 = x
+-	[.]	a]b-c
+-	[.]	\xff\xfeab
+-	[.]	a\\b
+-	[.]	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[.]	the quick brown fox
+-	x*y*z*	
+-	x*y*z*	a
+-	x*y*z*	abc
+-	x*y*z*	aaa
+-	x*y*z*	abcabc
+-	x*y*z*	xaby
+-	x*y*z*	b
+-	x*y*z*	ab\ncd
+-	x*y*z*	\na\n
+-	x*y*z*	zzazbz
+-	x*y*z*	abbbc
+-	x*y*z*	ac
+-	x*y*z*	abcd
+-	x*y*z*	日本語
+-	x*y*z*	☺☺x☺
+-	x*y*z*	héllo wörld
+-	x*y*z*	a.c a*c
+-	x*y*z*	key_9 = x
+-	x*y*z*	a]b-c
+-	x*y*z*	\xff\xfeab
+-	x*y*z*	a\\b
+-	x*y*z*	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	x*y*z*	the quick brown fox
+-	(x|y|z)*w	
+-	(x|y|z)*w	a
+-	(x|y|z)*w	abc
+-	(x|y|z)*w	aaa
+-	(x|y|z)*w	abcabc
+-	(x|y|z)*w	xaby
+-	(x|y|z)*w	b
+-	(x|y|z)*w	ab\ncd
+-	(x|y|z)*w	\na\n
+-	(x|y|z)*w	zzazbz
+-	(x|y|z)*w	abbbc
+-	(x|y|z)*w	ac
+-	(x|y|z)*w	abcd
+-	(x|y|z)*w	日本語
+-	(x|y|z)*w	☺☺x☺
+-	(x|y|z)*w	héllo wörld
+-	(x|y|z)*w	a.c a*c
+-	(x|y|z)*w	key_9 = x
+-	(x|y|z)*w	a]b-c
+-	(x|y|z)*w	\xff\xfeab
+-	(x|y|z)*w	a\\b
+-	(x|y|z)*w	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(x|y|z)*w	the quick brown fox
+-	a.*b	
+-	a.*b	a
+-	a.*b	abc
+-	a.*b	aaa
+-	a.*b	abcabc
+-	a.*b	xaby
+-	a.*b	b
+-	a.*b	ab\ncd
+-	a.*b	\na\n
+-	a.*b	zzazbz
+-	a.*b	abbbc
+-	a.*b	ac
+-	a.*b	abcd
+-	a.*b	日本語
+-	a.*b	☺☺x☺
+-	a.*b	héllo wörld
+-	a.*b	a.c a*c
+-	a.*b	key_9 = x
+-	a.*b	a]b-c
+-	a.*b	\xff\xfeab
+-	a.*b	a\\b
+-	a.*b	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a.*b	the quick brown fox
+-	a.*?b	
+-	a.*?b	a
+-	a.*?b	abc
+-	a.*?b	aaa
+-	a.*?b	abcabc
+-	a.*?b	xaby
+-	a.*?b	b
+-	a.*?b	ab\ncd
+-	a.*?b	\na\n
+-	a.*?b	zzazbz
+-	a.*?b	abbbc
+-	a.*?b	ac
+-	a.*?b	abcd
+-	a.*?b	日本語
+-	a.*?b	☺☺x☺
+-	a.*?b	héllo wörld
+-	a.*?b	a.c a*c
+-	a.*?b	key_9 = x
+-	a.*?b	a]b-c
+-	a.*?b	\xff\xfeab
+-	a.*?b	a\\b
+-	a.*?b	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a.*?b	the quick brown fox
+-	\.	
+-	\.	a
+-	\.	abc
+-	\.	aaa
+-	\.	abcabc
+-	\.	xaby
+-	\.	b
+-	\.	ab\ncd
+-	\.	\na\n
+-	\.	zzazbz
+-	\.	abbbc
+-	\.	ac
+-	\.	abcd
+-	\.	日本語
+-	\.	☺☺x☺
+-	\.	héllo wörld
+-	\.	a.c a*c
+-	\.	key_9 = x
+-	\.	a]b-c
+-	\.	\xff\xfeab
+-	\.	a\\b
+-	\.	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	\.	the quick brown fox
+-	\*	
+-	\*	a
+-	\*	abc
+-	\*	aaa
+-	\*	abcabc
+-	\*	xaby
+-	\*	b
+-	\*	ab\ncd
+-	\*	\na\n
+-	\*	zzazbz
+-	\*	abbbc
+-	\*	ac
+-	\*	abcd
+-	\*	日本語
+-	\*	☺☺x☺
+-	\*	héllo wörld
+-	\*	a.c a*c
+-	\*	key_9 = x
+-	\*	a]b-c
+-	\*	\xff\xfeab
+-	\*	a\\b
+-	\*	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	\*	the quick brown fox
+-	\\	
+-	\\	a
+-	\\	abc
+-	\\	aaa
+-	\\	abcabc
+-	\\	xaby
+-	\\	b
+-	\\	ab\ncd
+-	\\	\na\n
+-	\\	zzazbz
+-	\\	abbbc
+-	\\	ac
+-	\\	abcd
+-	\\	日本語
+-	\\	☺☺x☺
+-	\\	héllo wörld
+-	\\	a.c a*c
+-	\\	key_9 = x
+-	\\	a]b-c
+-	\\	\xff\xfeab
+-	\\	a\\b
+-	\\	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	\\	the quick brown fox
+-	\n	
+-	\n	a
+-	\n	abc
+-	\n	aaa
+-	\n	abcabc
+-	\n	xaby
+-	\n	b
+-	\n	ab\ncd
+-	\n	\na\n
+-	\n	zzazbz
+-	\n	abbbc
+-	\n	ac
+-	\n	abcd
+-	\n	日本語
+-	\n	☺☺x☺
+-	\n	héllo wörld
+-	\n	a.c a*c
+-	\n	key_9 = x
+-	\n	a]b-c
+-	\n	\xff\xfeab
+-	\n	a\\b
+-	\n	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	\n	the quick brown fox
+-	a\|b	
+-	a\|b	a
+-	a\|b	abc
+-	a\|b	aaa
+-	a\|b	abcabc
+-	a\|b	xaby
+-	a\|b	b
+-	a\|b	ab\ncd
+-	a\|b	\na\n
+-	a\|b	zzazbz
+-	a\|b	abbbc
+-	a\|b	ac
+-	a\|b	abcd
+-	a\|b	日本語
+-	a\|b	☺☺x☺
+-	a\|b	héllo wörld
+-	a\|b	a.c a*c
+-	a\|b	key_9 = x
+-	a\|b	a]b-c
+-	a\|b	\xff\xfeab
+-	a\|b	a\\b
+-	a\|b	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a\|b	the quick brown fox
+-	日本	
+-	日本	a
+-	日本	abc
+-	日本	aaa
+-	日本	abcabc
+-	日本	xaby
+-	日本	b
+-	日本	ab\ncd
+-	日本	\na\n
+-	日本	zzazbz
+-	日本	abbbc
+-	日本	ac
+-	日本	abcd
+-	日本	日本語
+-	日本	☺☺x☺
+-	日本	héllo wörld
+-	日本	a.c a*c
+-	日本	key_9 = x
+-	日本	a]b-c
+-	日本	\xff\xfeab
+-	日本	a\\b
+-	日本	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	日本	the quick brown fox
+-	[日-本]	
+-	[日-本]	a
+-	[日-本]	abc
+-	[日-本]	aaa
+-	[日-本]	abcabc
+-	[日-本]	xaby
+-	[日-本]	b
+-	[日-本]	ab\ncd
+-	[日-本]	\na\n
+-	[日-本]	zzazbz
+-	[日-本]	abbbc
+-	[日-本]	ac
+-	[日-本]	abcd
+-	[日-本]	日本語
+-	[日-本]	☺☺x☺
+-	[日-本]	héllo wörld
+-	[日-本]	a.c a*c
+-	[日-本]	key_9 = x
+-	[日-本]	a]b-c
+-	[日-本]	\xff\xfeab
+-	[日-本]	a\\b
+-	[日-本]	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[日-本]	the quick brown fox
+-	[^☺]+	
+-	[^☺]+	a
+-	[^☺]+	abc
+-	[^☺]+	aaa
+-	[^☺]+	abcabc
+-	[^☺]+	xaby
+-	[^☺]+	b
+-	[^☺]+	ab\ncd
+-	[^☺]+	\na\n
+-	[^☺]+	zzazbz
+-	[^☺]+	abbbc
+-	[^☺]+	ac
+-	[^☺]+	abcd
+-	[^☺]+	日本語
+-	[^☺]+	☺☺x☺
+-	[^☺]+	héllo wörld
+-	[^☺]+	a.c a*c
+-	[^☺]+	key_9 = x
+-	[^☺]+	a]b-c
+-	[^☺]+	\xff\xfeab
+-	[^☺]+	a\\b
+-	[^☺]+	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[^☺]+	the quick brown fox
+-	☺+	
+-	☺+	a
+-	☺+	abc
+-	☺+	aaa
+-	☺+	abcabc
+-	☺+	xaby
+-	☺+	b
+-	☺+	ab\ncd
+-	☺+	\na\n
+-	☺+	zzazbz
+-	☺+	abbbc
+-	☺+	ac
+-	☺+	abcd
+-	☺+	日本語
+-	☺+	☺☺x☺
+-	☺+	héllo wörld
+-	☺+	a.c a*c
+-	☺+	key_9 = x
+-	☺+	a]b-c
+-	☺+	\xff\xfeab
+-	☺+	a\\b
+-	☺+	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	☺+	the quick brown fox
+-	.☺.	
+-	.☺.	a
+-	.☺.	abc
+-	.☺.	aaa
+-	.☺.	abcabc
+-	.☺.	xaby
+-	.☺.	b
+-	.☺.	ab\ncd
+-	.☺.	\na\n
+-	.☺.	zzazbz
+-	.☺.	abbbc
+-	.☺.	ac
+-	.☺.	abcd
+-	.☺.	日本語
+-	.☺.	☺☺x☺
+-	.☺.	héllo wörld
+-	.☺.	a.c a*c
+-	.☺.	key_9 = x
+-	.☺.	a]b-c
+-	.☺.	\xff\xfeab
+-	.☺.	a\\b
+-	.☺.	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	.☺.	the quick brown fox
+-	é	
+-	é	a
+-	é	abc
+-	é	aaa
+-	é	abcabc
+-	é	xaby
+-	é	b
+-	é	ab\ncd
+-	é	\na\n
+-	é	zzazbz
+-	é	abbbc
+-	é	ac
+-	é	abcd
+-	é	日本語
+-	é	☺☺x☺
+-	é	héllo wörld
+-	é	a.c a*c
+-	é	key_9 = x
+-	é	a]b-c
+-	é	\xff\xfeab
+-	é	a\\b
+-	é	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	é	the quick brown fox
+-	[éö]	
+-	[éö]	a
+-	[éö]	abc
+-	[éö]	aaa
+-	[éö]	abcabc
+-	[éö]	xaby
+-	[éö]	b
+-	[éö]	ab\ncd
+-	[éö]	\na\n
+-	[éö]	zzazbz
+-	[éö]	abbbc
+-	[éö]	ac
+-	[éö]	abcd
+-	[éö]	日本語
+-	[éö]	☺☺x☺
+-	[éö]	héllo wörld
+-	[éö]	a.c a*c
+-	[éö]	key_9 = x
+-	[éö]	a]b-c
+-	[éö]	\xff\xfeab
+-	[éö]	a\\b
+-	[éö]	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[éö]	the quick brown fox
+-	(((a)))	
+-	(((a)))	a
+-	(((a)))	abc
+-	(((a)))	aaa
+-	(((a)))	abcabc
+-	(((a)))	xaby
+-	(((a)))	b
+-	(((a)))	ab\ncd
+-	(((a)))	\na\n
+-	(((a)))	zzazbz
+-	(((a)))	abbbc
+-	(((a)))	ac
+-	(((a)))	abcd
+-	(((a)))	日本語
+-	(((a)))	☺☺x☺
+-	(((a)))	héllo wörld
+-	(((a)))	a.c a*c
+-	(((a)))	key_9 = x
+-	(((a)))	a]b-c
+-	(((a)))	\xff\xfeab
+-	(((a)))	a\\b
+-	(((a)))	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(((a)))	the quick brown fox
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	a
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	abc
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	aaa
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	abcabc
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	xaby
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	b
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	ab\ncd
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	\na\n
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	zzazbz
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	abbbc
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	ac
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	abcd
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	日本語
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	☺☺x☺
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	héllo wörld
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	a.c a*c
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	key_9 = x
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	a]b-c
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	\xff\xfeab
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	a\\b
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)	the quick brown fox
+-	^(.*)$	
+-	^(.*)$	a
+-	^(.*)$	abc
+-	^(.*)$	aaa
+-	^(.*)$	abcabc
+-	^(.*)$	xaby
+-	^(.*)$	b
+-	^(.*)$	ab\ncd
+-	^(.*)$	\na\n
+-	^(.*)$	zzazbz
+-	^(.*)$	abbbc
+-	^(.*)$	ac
+-	^(.*)$	abcd
+-	^(.*)$	日本語
+-	^(.*)$	☺☺x☺
+-	^(.*)$	héllo wörld
+-	^(.*)$	a.c a*c
+-	^(.*)$	key_9 = x
+-	^(.*)$	a]b-c
+-	^(.*)$	\xff\xfeab
+-	^(.*)$	a\\b
+-	^(.*)$	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	^(.*)$	the quick brown fox
+-	(.)(.)\1	
+-	(.)(.)\1	a
+-	(.)(.)\1	abc
+-	(.)(.)\1	aaa
+-	(.)(.)\1	abcabc
+-	(.)(.)\1	xaby
+-	(.)(.)\1	b
+-	(.)(.)\1	ab\ncd
+-	(.)(.)\1	\na\n
+-	(.)(.)\1	zzazbz
+-	(.)(.)\1	abbbc
+-	(.)(.)\1	ac
+-	(.)(.)\1	abcd
+-	(.)(.)\1	日本語
+-	(.)(.)\1	☺☺x☺
+-	(.)(.)\1	héllo wörld
+-	(.)(.)\1	a.c a*c
+-	(.)(.)\1	key_9 = x
+-	(.)(.)\1	a]b-c
+-	(.)(.)\1	\xff\xfeab
+-	(.)(.)\1	a\\b
+-	(.)(.)\1	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(.)(.)\1	the quick brown fox
+-	[ab][cd]	
+-	[ab][cd]	a
+-	[ab][cd]	abc
+-	[ab][cd]	aaa
+-	[ab][cd]	abcabc
+-	[ab][cd]	xaby
+-	[ab][cd]	b
+-	[ab][cd]	ab\ncd
+-	[ab][cd]	\na\n
+-	[ab][cd]	zzazbz
+-	[ab][cd]	abbbc
+-	[ab][cd]	ac
+-	[ab][cd]	abcd
+-	[ab][cd]	日本語
+-	[ab][cd]	☺☺x☺
+-	[ab][cd]	héllo wörld
+-	[ab][cd]	a.c a*c
+-	[ab][cd]	key_9 = x
+-	[ab][cd]	a]b-c
+-	[ab][cd]	\xff\xfeab
+-	[ab][cd]	a\\b
+-	[ab][cd]	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	[ab][cd]	the quick brown fox
+-	a{2}	
+-	a{2}	a
+-	a{2}	abc
+-	a{2}	aaa
+-	a{2}	abcabc
+-	a{2}	xaby
+-	a{2}	b
+-	a{2}	ab\ncd
+-	a{2}	\na\n
+-	a{2}	zzazbz
+-	a{2}	abbbc
+-	a{2}	ac
+-	a{2}	abcd
+-	a{2}	日本語
+-	a{2}	☺☺x☺
+-	a{2}	héllo wörld
+-	a{2}	a.c a*c
+-	a{2}	key_9 = x
+-	a{2}	a]b-c
+-	a{2}	\xff\xfeab
+-	a{2}	a\\b
+-	a{2}	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a{2}	the quick brown fox
+-	(a|)	
+-	(a|)	a
+-	(a|)	abc
+-	(a|)	aaa
+-	(a|)	abcabc
+-	(a|)	xaby
+-	(a|)	b
+-	(a|)	ab\ncd
+-	(a|)	\na\n
+-	(a|)	zzazbz
+-	(a|)	abbbc
+-	(a|)	ac
+-	(a|)	abcd
+-	(a|)	日本語
+-	(a|)	☺☺x☺
+-	(a|)	héllo wörld
+-	(a|)	a.c a*c
+-	(a|)	key_9 = x
+-	(a|)	a]b-c
+-	(a|)	\xff\xfeab
+-	(a|)	a\\b
+-	(a|)	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(a|)	the quick brown fox
+-	(|a)	
+-	(|a)	a
+-	(|a)	abc
+-	(|a)	aaa
+-	(|a)	abcabc
+-	(|a)	xaby
+-	(|a)	b
+-	(|a)	ab\ncd
+-	(|a)	\na\n
+-	(|a)	zzazbz
+-	(|a)	abbbc
+-	(|a)	ac
+-	(|a)	abcd
+-	(|a)	日本語
+-	(|a)	☺☺x☺
+-	(|a)	héllo wörld
+-	(|a)	a.c a*c
+-	(|a)	key_9 = x
+-	(|a)	a]b-c
+-	(|a)	\xff\xfeab
+-	(|a)	a\\b
+-	(|a)	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	(|a)	the quick brown fox
+-	a**	
+-	a**	a
+-	a**	abc
+-	a**	aaa
+-	a**	abcabc
+-	a**	xaby
+-	a**	b
+-	a**	ab\ncd
+-	a**	\na\n
+-	a**	zzazbz
+-	a**	abbbc
+-	a**	ac
+-	a**	abcd
+-	a**	日本語
+-	a**	☺☺x☺
+-	a**	héllo wörld
+-	a**	a.c a*c
+-	a**	key_9 = x
+-	a**	a]b-c
+-	a**	\xff\xfeab
+-	a**	a\\b
+-	a**	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a**	the quick brown fox
+-	a+?	
+-	a+?	a
+-	a+?	abc
+-	a+?	aaa
+-	a+?	abcabc
+-	a+?	xaby
+-	a+?	b
+-	a+?	ab\ncd
+-	a+?	\na\n
+-	a+?	zzazbz
+-	a+?	abbbc
+-	a+?	ac
+-	a+?	abcd
+-	a+?	日本語
+-	a+?	☺☺x☺
+-	a+?	héllo wörld
+-	a+?	a.c a*c
+-	a+?	key_9 = x
+-	a+?	a]b-c
+-	a+?	\xff\xfeab
+-	a+?	a\\b
+-	a+?	aaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+-	a+?	the quick brown fox
+-	(ab	
+-	(ab	a)b[c
+-	(ab	[]^-
+-	a|	
+-	a|	a)b[c
+-	a|	[]^-
+-	|a	
+-	|a	a)b[c
+-	|a	[]^-
+-	()	
+-	()	a)b[c
+-	()	[]^-
+-	*a	
+-	*a	a)b[c
+-	*a	[]^-
+-	+	
+-	+	a)b[c
+-	+	[]^-
+-	?	
+-	?	a)b[c
+-	?	[]^-
+-	a||b	
+-	a||b	a)b[c
+-	a||b	[]^-
+-	[a-]	
+-	[a-]	a)b[c
+-	[a-]	[]^-
+-	[-a]	
+-	[-a]	a)b[c
+-	[-a]	[]^-
+-	[a-b-c]	
+-	[a-b-c]	a)b[c
+-	[a-b-c]	[]^-
+-	[abc	
+-	[abc	a)b[c
+-	[abc	[]^-
+-	[	
+-	[	a)b[c
+-	[	[]^-
+-	(	
+-	(	a)b[c
+-	(	[]^-
+-	)	
+-	)	a)b[c
+-	)	[]^-
+-	a)	
+-	a)	a)b[c
+-	a)	[]^-
+-	[]	
+-	[]	a)b[c
+-	[]	[]^-
+-	[^]	
+-	[^]	a)b[c
+-	[^]	[]^-
+-	a(	
+-	a(	a)b[c
+-	a(	[]^-
+-	((a)	
+-	((a)	a)b[c
+-	((a)	[]^-
+-	[\	
+-	[\	a)b[c
+-	[\	[]^-
+-	\	
+-	\	a)b[c
+-	\	[]^-
+-	a\	
+-	a\	a)b[c
+-	a\	[]^-
+-	x[^-]	
+-	x[^-]	a)b[c
+-	x[^-]	[]^-
+n	.	a\nb
+n	.	\n\n
+n	.	x\ny\nz
+n	a.b	a\nb
+n	a.b	\n\n
+n	a.b	x\ny\nz
+n	^.*$	a\nb
+n	^.*$	\n\n
+n	^.*$	x\ny\nz
+n	(.)\n	a\nb
+n	(.)\n	\n\n
+n	(.)\n	x\ny\nz
+l	a.c	a.c abc
+l	a.c	[x]*
+l	a.c	(a)
+l	a.c	\\
+l	a.c	a|b
+l	[x]*	a.c abc
+l	[x]*	[x]*
+l	[x]*	(a)
+l	[x]*	\\
+l	[x]*	a|b
+l	(a)	a.c abc
+l	(a)	[x]*
+l	(a)	(a)
+l	(a)	\\
+l	(a)	a|b
+l	\	a.c abc
+l	\	[x]*
+l	\	(a)
+l	\	\\
+l	\	a|b
+l	a|b	a.c abc
+l	a|b	[x]*
+l	a|b	(a)
+l	a|b	\\
+l	a|b	a|b
+-	[ĀĂĄĆĈĊČĎĐĒĔĖĘĚĜĞĠĢĤĦĨĪĬĮİĲĴĶĸĺļľŀłńņňŊŌŎŐŒŔŖŘŚŜŞŠŢŤŦŨŪŬŮŰŲŴŶŸźżžƀƂƄƆƈƊƌƎƐƒƔƖƘƚƜƞƠƢƤƦƨƪƬƮưƲƴƶƸƺƼƾǀǂǄǆǈǊǌǎǐǒǔǖǘǚǜǞǠǢǤǦǨǪǬǮǰǲǴǶǸǺǼǾȀȂȄȆȈȊȌȎȐȒȔȖȘȚȜȞȠȢȤȦȨȪȬȮȰȲȴȶȸȺȼȾɀɂɄɆɈɊɌɎɐɒɔɖɘɚɜɞɠɢɤɦɨɪɬɮɰɲɴɶɸɺɼɾʀʂʄʆʈʊʌ]	Āā
+-	[ĀĂĄĆĈĊČĎĐĒĔĖĘĚĜĞĠĢĤĦĨĪĬĮİĲĴĶĸĺļľŀłńņňŊŌŎŐŒŔŖŘŚŜŞŠŢŤŦŨŪŬŮŰŲŴŶŸźżžƀƂƄƆƈƊƌƎƐƒƔƖƘƚƜƞƠƢƤƦƨƪƬƮưƲƴƶƸƺƼƾǀǂǄǆǈǊǌǎǐǒǔǖǘǚǜǞǠǢǤǦǨǪǬǮǰǲǴǶǸǺǼǾȀȂȄȆȈȊȌȎȐȒȔȖȘȚȜȞȠȢȤȦȨȪȬȮȰȲȴȶȸȺȼȾɀɂɄɆɈɊɌɎɐɒɔɖɘɚɜɞɠɢɤɦɨɪɬɮɰɲɴɶɸɺɼɾʀʂʄʆʈʊʌʎʐ]	q
+-	[a-ca-cb-d]+	xbdcay
+-	[z-a]	m
+-	[^\n]+	ab\ncd
+-	a\x00b	ab
+-	b	a\x00b
+-	\xff	\xff
+-	.	\xe6\x97
+-	a$	ab\nab
+-	a	b	c\ta
