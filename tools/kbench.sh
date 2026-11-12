@@ -91,7 +91,10 @@ planzesp() {
 	cp ref/root/amd64/bin/auth/factotum "$2/boot/factotum"
 }
 
-# The overlay, prepared by this tree's kernel.
+# The overlay, prepared by this tree's kernel.  The profile still
+# starts rio here, so the console window is clicked first, as the tests
+# do (see riofocus.sh): rio's focus race otherwise sends what is typed
+# to another window now and then.
 echo "kbench: building planZ . and preparing the disk" >&2
 zig build || exit 1
 planzesp "$top" "$tmp/prep"
@@ -101,12 +104,14 @@ qemu-img create -q -f qcow2 -F qcow2 -b "$disk" "$tmp/disk.qcow2" || exit 1
 if ! CHATLOG=$out/prepare.log sh tools/bootchat.sh 400 \
 	"bootargs is" "" \
 	"user[" "" \
-	"term%" "dossrv -f /dev/sdE0/dos kb && mount -c /srv/kb /n/kb && echo mnt^ok" \
+	"term%" "@host sh tools/riofocus.sh $tmp/qmp" \
+	"" "dossrv -f /dev/sdE0/dos kb && mount -c /srv/kb /n/kb && echo mnt^ok" \
 	"mntok" "cd /usr/glenda && cp /n/kb/bench.c . && 6c bench.c && 6l -o bench bench.6 && echo cc^ok" \
 	"ccok" "sed 's/rio -i riostart/if(! ~ \$norio 1) rio -i riostart/' lib/profile >/tmp/p && cp /tmp/p lib/profile && grep -c norio lib/profile && echo pr^ok" \
 	"prok" "fshalt" \
 	"done halting" \
-	-- $(qemucmd 1 "$tmp/prep" "file=$tmp/disk.qcow2") >"$tmp/chat" 2>&1; then
+	-- $(qemucmd 1 "$tmp/prep" "file=$tmp/disk.qcow2") \
+	-device qemu-xhci -device usb-tablet -qmp "unix:$tmp/qmp,server=on,wait=off" >"$tmp/chat" 2>&1; then
 	echo "kbench: preparing the disk failed:" >&2
 	tail -20 "$tmp/chat" >&2
 	exit 1
