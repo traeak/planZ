@@ -160,9 +160,77 @@ Boot on one physical 2011-or-later machine; add the NIC and quirks it needs; aud
 
 The user's test machine: AMD Ryzen 5 3600 (Zen 2) on a Jingyue B550i mini-ITX board, 32GB RAM, Radeon RX 6500 XT. It has no integrated graphics, so the display is the card's UEFI framebuffer. Assume no serial console. The development machine has the same board (DMI: JGINYUE B550i-GAMING), so its hardware can be read from Linux there: Ethernet is a Realtek RTL8125B (`10ec:8125` rev 05), for which 9front has no driver at this commit; two xHCI controllers (AMD 500-series chipset `1022:43ee`, Matisse `1022:149c`); AMD AHCI `1022:43eb`; no PS/2 controller and no UART; HPET and ACPI PM timer; an IOMMU; the video card's framebuffer BAR near 480GiB. Keyboards and mice there are full-speed devices, some behind high-speed hubs, which needs the transaction-translator path of xHCI that QEMU cannot exercise. `zig build usb-image` makes a stick that boots it to rio with no other disk; `docs/real-hardware.md` has the steps and what to look for.
 
+#### Audio (HDA): plan, not started
+Port 9front's audio stack as it is configured in `9/pc64/pc64` (`audio` device, `audiohda` driver; `audiosb16` and `audioac97` stay out). Stock `termrc` already binds `#A` onto `/dev` when it exists, so `zuke`, `audio/wavdec`, `audio/mixfs` and the other stock programs need nothing more.
+
+| New file | From | C lines |
+|---|---|---|
+| `port/audioif.zig` | `port/audioif.h` | 56 |
+| `port/devaudio.zig` | `port/devaudio.c` | 508 |
+| `port/audiohda.zig` | `pc/audiohda.c` | 2023 |
+
+`audiohda` goes in `port/` like `ether8125` and `sdiahci`, since it uses only PCI, `vmap`, `xspanalloc` and `intrenable`. `conf/pc64.zig` gains `audiodevtab` ('A') and `audiohdalink()` in `links()`.
+
+Steps, each one built and tested before the next:
+1. **`audioif` and `devaudio`.** `Audio` keeps its function pointers; `waserror` in `audioopen`, `audioread`, `audiowrite` and `audioclose` becomes `errdefer`/`catch`. `Audiochan` is malloc'd as in C, so its 4001-byte buffer is not on the stack. Kept: the defaults written on first attach (`speed 44100`, `delay 1764`, volumes 100), `genaudiovolread` and `genaudiovolwrite`. With no card linked, the kernel still boots and `#A` fails with "no such device".
+2. **`audiohda`, in the C's order.** First the controller reset, CORB/RIRB and `hdacmd`; then codec, function-group and widget enumeration, `findpath`, `connectpath` and the pin scoring; then the stream ring, the interrupt, read/write/close, volume, `audiostat` and `audioctl` (`pin`, `inpin`). Size checks: `findpath`'s queue is 2 KB on the stack and `Codec` is about 2 KB and malloc'd, both fine with 16K stacks. `hdastatus` writes into `Audiochan.buf`. Known DIFFs:
+   - `hdacmd` is dropped: it is an `addarchfile` file, planZ has no `devarch`, and nothing in 9front's tree uses it.
+   - MMIO goes through volatile pointers. `Sdctl` stays byte-accessed where the C uses `csr8`, because it is a 24-bit register.
+   - `PCIWADDR` becomes `arch.paddr`.
+   - `intrenable` gets MSI when the device offers it, as other planZ drivers do.
+
+   To check against the HDA specification while porting: `Agetright` is `1<<15`. That is harmless for the output amplifier, but `getinamp`'s right channel then reads the *output* amplifier. If confirmed, fix it and note "Fixed from C".
+3. **QEMU test, `zig build test-audio $D`.** QEMU runs with `-device intel-hda -device hda-duplex,audiodev=snd0 -audiodev wav,id=snd0,path=<scratch>/out.wav`. The guest mounts the FAT boot partition (as `test-usb` does), checks that `/dev/audiostat` lists a codec and an `outpath`, and plays a known tone with `audio/wavdec < tone.wav > /dev/audio`. The host then checks `out.wav`: not silent, the expected frequency, about the expected length. The guest also checks that:
+   - `/dev/volume` reads back and accepts `master 50`;
+   - a second open for writing fails with "device is busy";
+   - reading `/dev/audio` returns data and does not hang (QEMU's line-in is silence).
+
+   Run it with `ich9-intel-hda`, and with the `hda-output` and `hda-micro` codecs, so pin choice is exercised on more than one layout. Run it with 1, 4 and 8 processors and in a debug build.
+4. **Real hardware: the motherboard's controller only, for now.** The board has two HDA controllers.
+   - The target is the chipset's controller (`1022:1487`, Starship/Matisse, which 9front lists), which carries a Realtek ALC897 codec.
+   - The RX 6500 XT's HDMI/DP audio (`1002:ab28`) is out of scope for now, but `hdamatch` would still match it by class `0403`. Linux shows no codec on it with the current monitor, so its probe would fail anyway. A monitor that takes audio would give it a codec, though, and then it could become an `#A` device.
+   - `DIFF:` `hdamatch` therefore skips an HDA function whose device's function 0 is a display controller (PCI class 03), marked as temporary until GPU audio is wanted.
+   - With that, the chipset controller is always `#A0`. Confirm it from the boot messages.
+   - The checklist gains a step: save `/dev/audiostat` and `/dev/volume` to the FAT partition, play a file through the rear green jack, then try the front headphone jack with `echo pin N > /dev/audioctl`.
+5. **Documentation.** Update the README status, `docs/hardware-checklist.md`, the M9 status row and the kept-and-dropped lists.
+
+Risks: QEMU emulates only Intel's controller, so AMD controller quirks show up only on the machine. The ALC897's default pin configuration may not score the jack the user expects; `audioctl`'s `pin` command is the fallback. Recording is tested only against silence.
+
+#### Minimal Zig libc: plan, not started
+The goal is a Zig library for planZ's own user programs that covers what 9front's `libc` gives a simple program, so Zig can replace C for new user programs. It is a Zig API (errors as error unions, slices instead of NUL-terminated strings where the kernel allows it), not a C ABI libc. Stock C programs keep using 9front's own libc.
+
+**Why not Zig's `plan9` target.** In Zig 0.17, `-target x86_64-plan9` cannot write an executable ("UnsupportedObjectFormat"), and with `-ofmt=elf` `std/start.zig` fails to compile (it asks for `elf.AT.HWCAP`). `std.os.plan9` has only a handful of calls. The library therefore keeps today's method: freestanding x86_64, linked with `src/user/user.ld` into an a.out. If upstream fixes the target later, the library can become the `std.os.plan9` back end.
+
+**Layout.** It goes in `src/user/lib/`, one module named `libc` with a file per area. `sys.zig` becomes its lowest layer. `build.zig`'s `addUserProgram` gives every user program the module. A new `zig build user` installs the programs in `zig-out/user/bin`, and test boots put that directory on the FAT partition.
+
+Steps, each with a program that uses it:
+1. **System calls, complete.** Every call in `libc/9syscall/sys.h` that the kernel serves. Added to today's set: `seek`, `remove`, `mount`, `unmount`, `fversion`, `fauth`, `wstat`, `fwstat`, `fstat`, `stat`, `segattach`, `segbrk`, `segfree`, `segflush`, `semacquire`, `tsemacquire`, `semrelease`, `nsec`, `noted`, `errstr`. Each has a raw form, as today, and a checked form returning `error.Plan9`, with the kernel's message kept per process for `errstr()`. The numbers and the Tos layout are checked against `std.os.plan9` where both exist.
+2. **Start-up, from `amd64/main9.s` and `port/main.c`.**
+   - `_start` saves `_tos` from RAX and reads argc/argv from the stack. It calls `main(args: []const [*:0]const u8)`, which may return `!void`.
+   - A normal return calls `exits(nil)`. An error return calls `exits` with the error string.
+   - `boot.zig`'s and `initcode.zig`'s own `_start` stay. `initcode` must fit in a page and uses only raw calls.
+   - `main9p.s` (profiling) is not ported.
+3. **Memory.** A `std.mem.Allocator` over `brk`, so `std.ArrayList`, `std.HashMap` and the rest work. First choice: reuse the kernel's `port/pool.zig`, the same pool library 9front's `malloc` uses. If it cannot be separated from kernel locks cleanly, use a small free-list allocator in its place. Allocator failure is `error.OutOfMemory`, not `sysfatal`.
+4. **Formatted output.**
+   - `print`, `fprint`, `sprint`, `seprint` and `sysfatal` on top of `src/lib/fmt.zig`, which already implements Plan 9's verbs.
+   - A `std.Io.Writer` over a file descriptor, so Zig's own `{d}`/`{s}` formatting also works.
+   - `%r` prints the last error string.
+5. **Files.**
+   - `Dir`, with `dirstat`, `dirfstat`, `dirwstat`, `dirfwstat` and `dirread`, using `convM2D` and `convD2M` from `src/lib/fcall.zig`.
+   - `readn`, plus a buffered reader and writer (the role of `bio`, as `std.Io.Reader`/`Writer` over a descriptor) and `readline`.
+6. **Processes and notes.**
+   - `fork` and `rfork`; `exec` from a slice of arguments; `wait`, which parses `await`'s text into a `Waitmsg`.
+   - `notify` with the stack trampoline `boot.zig` already has, `atnotify`, and `postnote`.
+   - `getpid` from `_tos`.
+   - Environment through `/env`: `getenv` and `putenv`.
+
+**Proof programs.** `echo`, `cat`, `ls` and `wc` in Zig, plus `boot.zig` moved onto the library. A new step `zig build test-zuser $D` boots stock 9front, runs each Zig program and its stock counterpart on the same input, and compares the outputs.
+
+**Not in this plan.** Locks for shared-memory processes (`Lock`, `QLock`, `rendezvous`), threads (`libthread`), a full `std.Io` implementation (`std.Io.File`, `std.process.Init`), dial and networking, and aarch64/riscv64 start-up code. Each is a later step once a program needs it.
+
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
-- Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail. To be examined as a topic of its own before any of it is planned; `src/user` already shows that Zig can produce Plan 9 a.out binaries without a host tool.
+- Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail. The first step, a minimal libc, is planned above under M9; the rest is still to be examined as a topic of its own. `src/user` already shows that Zig can produce Plan 9 a.out binaries without a host tool.
 - File servers are user programs, so `gefs`, `cwfs` and `hjfs` run unmodified as stock binaries from M7 and need no port for the kernel to use them. When userland is ported, `gefs` (about 12K lines of C) is the file server to do first.
 
 ## Future additions
