@@ -1,7 +1,8 @@
 //! libctest - exercise the parts of the library the commands do not:
 //! Zig's containers on the library's allocator, the Io.Writer over a
 //! file descriptor, dirstat and dirfstat, the environment, fork and
-//! wait with an exit message, notes through atnotify, %r and seek.
+//! wait with an exit message, notes through atnotify, %r, seek, names
+//! with a 0 byte or too long, and exec.
 //! Prints one line per check and "libctest ok" at the end; exits with
 //! the name of the first check that fails.
 //!
@@ -117,6 +118,36 @@ pub fn main() !void {
     try libc.close(tf);
     try libc.remove("/tmp/libctest");
     ok("seek");
+
+    // names: a 0 byte inside is refused, and so is a name too long for
+    // sys.Name; nothing is cut short silently
+    if (libc.open("/dev/cons\x00/x", libc.OREAD)) |_| fail("NUL in a name") else |_| {}
+    if (std.mem.indexOf(u8, libc.rerrstr(&eb), "bad character") == null) fail("NUL in a name: error");
+    const long = try a.alloc(u8, libc.sys.Name.max);
+    @memset(long, 'x');
+    long[0] = '/';
+    if (libc.open(long, libc.OREAD)) |_| fail("long name") else |_| {}
+    if (std.mem.indexOf(u8, libc.rerrstr(&eb), "too long") == null) fail("long name: error");
+    a.free(long);
+    ok("names");
+
+    // exec: a child runs the stock echo with arguments, into a pipe
+    const ep = try libc.pipe();
+    const epid = try libc.fork();
+    if (epid == 0) {
+        _ = try libc.dup(ep[1], 1);
+        libc.exec("/bin/echo", &.{ "echo", "exec", "with 'quotes'", "" }) catch {};
+        libc.exits("exec failed");
+    }
+    try libc.close(ep[1]);
+    var ebuf: [64]u8 = undefined;
+    const en = try libc.readn(ep[0], &ebuf);
+    _ = try libc.wait();
+    if (!std.mem.eql(u8, ebuf[0..en], "exec with 'quotes' \n")) {
+        libc.werrstr("got '%s'", .{ebuf[0..en]});
+        fail("exec");
+    }
+    ok("exec");
 
     libc.print("libctest ok\n", .{});
 }

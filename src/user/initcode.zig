@@ -20,7 +20,8 @@ comptime {
 }
 
 export fn startboot(sp: [*]usize) callconv(.c) noreturn {
-    const argv: [*]const ?[*:0]const u8 = @ptrCast(sp + 1);
+    // the kernel's 0-ended array of string addresses, passed on as it is
+    const argv: [*]const usize = @ptrCast(sp + 1);
 
     _ = sys.bind("#c", "/dev", sys.MAFTER);
     _ = sys.bind("#d", "/fd", sys.MREPL);
@@ -34,11 +35,11 @@ export fn startboot(sp: [*]usize) callconv(.c) noreturn {
     _ = sys.open("/dev/cons", sys.OWRITE);
     _ = sys.open("/dev/cons", sys.OWRITE);
 
-    _ = sys.exec("/boot/boot", argv);
+    _ = sys.execaddrs("/boot/boot", argv);
 
     var buf: [200]u8 = undefined; // keep this fairly large to capture error details
     buf[0] = 0;
     _ = sys.errstr(&buf);
     buf[buf.len - 1] = 0;
-    sys.exits(@ptrCast(&buf));
+    sys.exits(sys.upto0(&buf));
 }

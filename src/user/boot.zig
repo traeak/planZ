@@ -43,15 +43,9 @@ fn fail(what: []const u8) noreturn {
     print("usertest: FAILED: ");
     print(what);
     print(": ");
-    print(cstr(@ptrCast(&err)));
+    print(sys.upto0(&err));
     print("\n");
     while (true) _ = sys.sleep(1000);
-}
-
-fn cstr(p: [*:0]const u8) []const u8 {
-    var n: usize = 0;
-    while (p[n] != 0) n += 1;
-    return p[0..n];
 }
 
 fn eql(a: []const u8, b: []const u8) bool {
@@ -95,8 +89,8 @@ comptime {
 
 extern fn notetramp() callconv(.c) void;
 
-export fn handler(_: *anyopaque, msg: [*:0]const u8) callconv(.c) void {
-    if (eql(cstr(msg), "alarm")) {
+export fn handler(_: *anyopaque, msg: [*]const u8) callconv(.c) void {
+    if (eql(sys.span(msg), "alarm")) {
         notes += 1;
         _ = sys.noted(sys.NCONT);
     }
@@ -120,16 +114,16 @@ fn waitmsg(buf: []u8) []const u8 {
 
 export fn bootmain(sp: [*]usize, tos: usize) callconv(.c) noreturn {
     const argc = sp[0];
-    const argv: [*]const ?[*:0]const u8 = @ptrCast(sp + 1);
+    const argv: [*]const [*]const u8 = @ptrCast(sp + 1);
 
     // Second life: started by the exec test below.
-    if (argc == 2 and eql(cstr(argv[1].?), "execd")) {
+    if (argc == 2 and eql(sys.span(argv[1]), "execd")) {
         if (counter != 7) sys.exits("data segment not fresh after exec");
         sys.exits("execd ok");
     }
 
     print("usertest: hello from user mode\n");
-    if (argc != 1 or !eql(cstr(argv[0].?), "boot")) fail("argv");
+    if (argc != 1 or !eql(sys.span(argv[0]), "boot")) fail("argv");
     if (tos == 0) fail("no Tos");
 
     // Data, bss and the stack.
@@ -145,7 +139,7 @@ export fn bootmain(sp: [*]usize, tos: usize) callconv(.c) noreturn {
     if (sys.open("/no/such/file", sys.OREAD) != -1) fail("open of a missing file worked");
     var err: [sys.ERRMAX]u8 = undefined;
     _ = sys.errstr(&err);
-    if (!contains(cstr(@ptrCast(&err)), "does not exist")) fail("errstr");
+    if (!contains(sys.upto0(&err), "does not exist")) fail("errstr");
 
     // Files.
     var buf: [256]u8 = undefined;
@@ -153,7 +147,7 @@ export fn bootmain(sp: [*]usize, tos: usize) callconv(.c) noreturn {
     if (fd < 0) fail("open /dev/pid");
     const n = sys.read(fd, &buf);
     if (n <= 0) fail("read /dev/pid");
-    if (sys.fd2path(fd, &buf) < 0 or !eql(cstr(@ptrCast(&buf)), "/dev/pid")) fail("fd2path");
+    if (sys.fd2path(fd, &buf) < 0 or !eql(sys.upto0(&buf), "/dev/pid")) fail("fd2path");
     _ = sys.close(fd);
 
     const e = sys.create("/env/usertest", sys.OWRITE, 0o666);
@@ -212,8 +206,8 @@ export fn bootmain(sp: [*]usize, tos: usize) callconv(.c) noreturn {
     const pid2 = sys.rfork(sys.RFPROC | sys.RFFDG);
     if (pid2 < 0) fail("rfork");
     if (pid2 == 0) {
-        const args = [_]?[*:0]const u8{ "boot", "execd", null };
-        _ = sys.exec("/boot/boot", &args);
+        var abuf: [256]u8 align(8) = undefined;
+        _ = sys.exec("/boot/boot", &abuf, &.{ "boot", "execd" });
         sys.exits("exec failed");
     }
     if (!contains(waitmsg(&buf), "execd ok")) fail("exec'd child exit message");
@@ -231,7 +225,7 @@ export fn bootmain(sp: [*]usize, tos: usize) callconv(.c) noreturn {
     if (counter != 55) fail("RFMEM did not share data");
 
     // Notes: an alarm interrupts a sleep and runs the handler.
-    if (sys.notify(@ptrCast(&notetramp)) < 0) fail("notify");
+    if (sys.notify(&notetramp) < 0) fail("notify");
     _ = sys.alarm(50);
     _ = sys.sleep(2000);
     if (notes != 1) fail("alarm note not delivered");
@@ -254,8 +248,8 @@ export fn bootmain(sp: [*]usize, tos: usize) callconv(.c) noreturn {
         const pid5 = sys.rfork(sys.RFPROC | sys.RFFDG);
         if (pid5 < 0) fail("rfork");
         if (pid5 == 0) {
-            const args = [_]?[*:0]const u8{ "echo", "hello", "from", "stock", "9front", "echo", null };
-            _ = sys.exec("/boot/echo", &args);
+            var abuf: [256]u8 align(8) = undefined;
+            _ = sys.exec("/boot/echo", &abuf, &.{ "echo", "hello", "from", "stock", "9front", "echo" });
             sys.exits("exec of /boot/echo failed");
         }
         const m = waitmsg(&buf);

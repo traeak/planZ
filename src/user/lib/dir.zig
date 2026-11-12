@@ -68,11 +68,7 @@ const Statfn = struct {
 
     fn call(self: Statfn, buf: []u8) Error!isize {
         return switch (self.ctx) {
-            .name => |n| blk: {
-                var c: libc.Cstr = .{};
-                defer c.deinit();
-                break :blk sys.stat(try c.z(n), buf);
-            },
+            .name => |n| sys.stat(n, buf),
             .fd => |fd| sys.fstat(fd, buf),
         };
     }
@@ -132,9 +128,7 @@ fn wstatgen(d: *const Dir, name: ?[]const u8, fd: i32) Error!void {
     const r = fcall.convD2M(d, buf);
     if (r <= BIT16SZ)
         return badstat();
-    var c: libc.Cstr = .{};
-    defer c.deinit();
-    const rv = if (name) |n| sys.wstat(try c.z(n), buf[0..r]) else sys.fwstat(fd, buf[0..r]);
+    const rv = if (name) |n| sys.wstat(n, buf[0..r]) else sys.fwstat(fd, buf[0..r]);
     if (rv < 0)
         return error.Plan9;
 }

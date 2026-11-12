@@ -165,8 +165,8 @@ comptime {
 
 extern fn _libc_notetramp() callconv(.c) void;
 
-export fn _libc_notifier(v: *anyopaque, s: [*:0]const u8) callconv(.c) void {
-    const msg = std.mem.span(s);
+export fn _libc_notifier(v: *anyopaque, s: [*]const u8) callconv(.c) void {
+    const msg = sys.span(s);
     for (onnot) |f| {
         if (f) |fun| {
             if (fun(v, msg)) {
@@ -191,7 +191,7 @@ fn unlock() void {
 /// was added or removed.
 pub fn atnotify(f: Notefn, in: bool) bool {
     if (!init) {
-        _ = sys.notify(@ptrCast(&_libc_notetramp));
+        _ = sys.notify(&_libc_notetramp);
         init = true;
     }
     var ret = false;

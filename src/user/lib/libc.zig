@@ -7,12 +7,13 @@
 //! as in C.  Memory comes from `allocator`, 9front's pool allocator
 //! over brk.
 //!
-//! Strings are slices everywhere: paths, arguments, exit messages,
-//! error strings and environment values are `[]const u8`.  The kernel
-//! takes NUL-terminated strings, so the library copies a path into a
-//! terminated buffer (Cstr) at the moment of the system call, and
-//! refuses one that has a NUL byte in it ("bad character in file
-//! name").  Only sys.zig, the raw calls, has NUL-terminated strings.
+//! Strings are plain slices everywhere, including sys.zig: paths,
+//! arguments, exit messages, error strings and environment values are
+//! `[]const u8`, and there are no sentinel-terminated types.  The kernel
+//! takes a string as the address of bytes ending in a 0, so sys.zig
+//! copies each one into a stack buffer and adds the 0 at the call; a
+//! string with a 0 byte in it is refused ("bad character in file
+//! name"), and so is a name of sys.Name.max bytes or more.
 //!
 //! A program has `pub fn main() !void` or
 //! `pub fn main(args: []const []const u8) !void`; see start.zig.
@@ -145,7 +146,7 @@ pub fn rerrstr(buf: []u8) []const u8 {
     var tmp: [ERRMAX]u8 = undefined;
     tmp[0] = 0;
     _ = sys.errstr(&tmp);
-    const s = std.mem.sliceTo(&tmp, 0);
+    const s = sys.upto0(&tmp);
     const n = @min(s.len, buf.len -| 1);
     @memcpy(buf[0..n], s[0..n]);
     if (buf.len > 0) buf[n] = 0;
@@ -182,53 +183,14 @@ fn checkfd(r: isize) Error!i32 {
     return @intCast(r);
 }
 
-/// A slice copied into a NUL-terminated buffer for a system call: on
-/// the stack if it is short, from the allocator if not.
-///
-///     var c: Cstr = .{};
-///     defer c.deinit();
-///     const r = sys.open(try c.z(name), mode);
-pub const Cstr = struct {
-    stack: [512]u8 = undefined,
-    heap: ?[:0]u8 = null,
-
-    pub fn z(c: *Cstr, s: []const u8) Error![*:0]const u8 {
-        if (std.mem.findScalar(u8, s, 0) != null) {
-            werrstr("bad character in file name", .{});
-            return error.Plan9;
-        }
-        if (s.len < c.stack.len) {
-            @memcpy(c.stack[0..s.len], s);
-            c.stack[s.len] = 0;
-            return @ptrCast(&c.stack);
-        }
-        const h = allocator.allocSentinel(u8, s.len, 0) catch {
-            werrstr("out of memory", .{});
-            return error.Plan9;
-        };
-        @memcpy(h[0..s.len], s);
-        c.heap = h;
-        return h.ptr;
-    }
-
-    pub fn deinit(c: *Cstr) void {
-        if (c.heap) |h| allocator.free(h);
-        c.heap = null;
-    }
-};
-
 // The checked calls
 
 pub fn open(name: []const u8, mode: u32) Error!i32 {
-    var c: Cstr = .{};
-    defer c.deinit();
-    return checkfd(sys.open(try c.z(name), mode));
+    return checkfd(sys.open(name, mode));
 }
 
 pub fn create(name: []const u8, mode: u32, perm: u32) Error!i32 {
-    var c: Cstr = .{};
-    defer c.deinit();
-    return checkfd(sys.create(try c.z(name), mode, perm));
+    return checkfd(sys.create(name, mode, perm));
 }
 
 pub fn close(fd: i32) Error!void {
@@ -285,9 +247,7 @@ pub fn seek(fd: i32, n: i64, typ: u32) Error!i64 {
 }
 
 pub fn remove(name: []const u8) Error!void {
-    var c: Cstr = .{};
-    defer c.deinit();
-    _ = try check(sys.remove(try c.z(name)));
+    _ = try check(sys.remove(name));
 }
 
 pub fn dup(old: i32, new: i32) Error!i32 {
@@ -301,35 +261,19 @@ pub fn pipe() Error![2]i32 {
 }
 
 pub fn chdir(name: []const u8) Error!void {
-    var c: Cstr = .{};
-    defer c.deinit();
-    _ = try check(sys.chdir(try c.z(name)));
+    _ = try check(sys.chdir(name));
 }
 
 pub fn bind(name: []const u8, old: []const u8, flag: u32) Error!void {
-    var c1: Cstr = .{};
-    defer c1.deinit();
-    var c2: Cstr = .{};
-    defer c2.deinit();
-    _ = try check(sys.bind(try c1.z(name), try c2.z(old), flag));
+    _ = try check(sys.bind(name, old, flag));
 }
 
 pub fn mount(fd: i32, afd: i32, old: []const u8, flag: u32, aname: ?[]const u8) Error!void {
-    var c1: Cstr = .{};
-    defer c1.deinit();
-    var c2: Cstr = .{};
-    defer c2.deinit();
-    const an = if (aname) |n| try c2.z(n) else null;
-    _ = try check(sys.mount(fd, afd, try c1.z(old), flag, an));
+    _ = try check(sys.mount(fd, afd, old, flag, aname));
 }
 
 pub fn unmount(name: ?[]const u8, old: []const u8) Error!void {
-    var c1: Cstr = .{};
-    defer c1.deinit();
-    var c2: Cstr = .{};
-    defer c2.deinit();
-    const n = if (name) |x| try c1.z(x) else null;
-    _ = try check(sys.unmount(n, try c2.z(old)));
+    _ = try check(sys.unmount(name, old));
 }
 
 pub fn sleep(ms: u32) Error!void {
@@ -339,7 +283,7 @@ pub fn sleep(ms: u32) Error!void {
 /// The path of fd's file, in buf.
 pub fn fd2path(fd: i32, buf: []u8) Error![]const u8 {
     _ = try check(sys.fd2path(fd, buf));
-    return std.mem.sliceTo(buf, 0);
+    return sys.upto0(buf);
 }
 
 pub fn rfork(flags: u32) Error!i32 {
@@ -349,23 +293,9 @@ pub fn rfork(flags: u32) Error!i32 {
 /// Replace the program with name, giving it args (args[0] first).
 /// Returns only on failure.
 pub fn exec(name: []const u8, args: []const []const u8) (Error || std.mem.Allocator.Error) {
-    // the kernel wants a nil-terminated array of terminated strings
-    var c: Cstr = .{};
-    defer c.deinit();
-    const n = try c.z(name);
-    const av = try allocator.alloc(?[*:0]const u8, args.len + 1);
-    defer allocator.free(av);
-    var cs = try allocator.alloc(Cstr, args.len);
-    defer allocator.free(cs);
-    var done: usize = 0;
-    defer for (cs[0..done]) |*x| x.deinit();
-    for (args, 0..) |a, i| {
-        cs[i] = .{};
-        done = i + 1;
-        av[i] = try cs[i].z(a);
-    }
-    av[args.len] = null;
-    _ = sys.exec(n, av.ptr);
+    const buf = try allocator.alignedAlloc(u8, .of(usize), sys.argvsize(args));
+    defer allocator.free(buf);
+    _ = sys.exec(name, buf, args);
     return error.Plan9;
 }
 
@@ -374,13 +304,7 @@ pub fn exec(name: []const u8, args: []const []const u8) (Error || std.mem.Alloca
 /// given to atexit run first, the last one given first.
 pub fn exits(msg: ?[]const u8) noreturn {
     onexit();
-    const m = msg orelse sys.exits(null);
-    var buf: [ERRMAX]u8 = undefined;
-    const n = @min(m.len, ERRMAX - 1);
-    @memcpy(buf[0..n], m[0..n]);
-    buf[n] = 0;
-    // a NUL inside cuts it short, which is all the kernel can take
-    sys.exits(@ptrCast(&buf));
+    sys.exits(msg);
 }
 
 pub fn nsec() i64 {

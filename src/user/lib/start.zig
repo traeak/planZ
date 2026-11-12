@@ -35,12 +35,12 @@ pub fn _start() callconv(.naked) noreturn {
 export fn _callmain(sp: [*]usize, tos: *libc.Tos) callconv(.c) noreturn {
     libc.tos = tos;
     const argc = sp[0];
-    const argvp: [*]const [*:0]const u8 = @ptrCast(sp + 1);
+    const argvp: [*]const [*]const u8 = @ptrCast(sp + 1);
     // DIFF: the arguments as slices, in memory from the allocator
     const args = libc.allocator.alloc([]const u8, argc) catch
         sys.exits("no memory for arguments");
     for (args, 0..) |*a, i|
-        a.* = std.mem.span(argvp[i]);
+        a.* = sys.span(argvp[i]);
     libc.argv = args;
     if (argc > 0)
         libc.argv0 = args[0];

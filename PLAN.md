@@ -246,7 +246,11 @@ Steps, each with a program that uses it:
 
 Progress: the library is in `src/user/lib/` (module `libc`).
 - **Files:** `sys.zig` (every call the kernel serves, with argument layouts taken from the kernel's handlers), `start.zig`, `malloc.zig` (the kernel's `pool.zig` over `brk`, plus a `std.mem.Allocator`), `dir.zig`, `proc.zig`, `string.zig` (`tokenize`, `cleanname`, rc quoting, `Args` for ARGBEGIN), `qsort.zig` (9front's algorithm step for step) and `libc.zig` (the checked calls, `print`/`fprint`/`sprint`/`sysfatal` on `src/lib/fmt.zig` with `%r`, and `FdWriter`/`FdReader` for `std.Io`).
-- **Slices, not NUL-terminated strings (the user's rule).** Every string a program sees is a slice: paths, `main(args: []const []const u8)`, `exits`, error strings, the environment. NUL termination exists only in `sys.zig`. `libc.Cstr` copies a slice into a terminated buffer at the call (stack up to 511 bytes, the allocator beyond), and refuses one with a NUL inside ("bad character in file name").
+- **Slices, not NUL-terminated strings (the user's rule).** Every string is a plain slice, and there is no sentinel-terminated type anywhere in `src/user`, `sys.zig` included: paths, `main(args: []const []const u8)`, `exits`, error strings, the environment.
+  - **Outgoing.** The kernel takes the address of bytes ending in a 0. `sys.Name` copies a slice into a plain stack buffer, adds the 0 and passes the address. A slice with a 0 byte in it is refused ("bad character in file name"), and so is one of `Name.max` (1024) bytes or more ("file name too long"); `sys.zig` cannot allocate, because `initcode` uses it.
+  - **`exec`.** It lays the argument array out in a plain caller-supplied buffer, sized by `sys.argvsize`.
+  - **Incoming.** Strings from the kernel (`argv`, a note's message) are read through `sys.span`; strings it wrote into a buffer of ours (`errstr`, `fd2path`) through the bounded `sys.upto0`.
+  - **Tests.** `libctest` checks both refusals and `exec`.
 - **Build.** A program is built with `src/user/lib/root.zig` as its root file and its own file as the module `program`. Zig analyses an imported file only as far as it is used, so this is where `_start` is exported and the panic handler is set. The panic handler prints `argv0: panic: msg` and exits with the message. `boot.zig` and `initcode.zig` stay their own roots and use `libc.sys` only; `initcode` is still one page with no data.
 
 Proof programs in `src/user/cmd/`: `echo`, `cat`, `wc` and `ls`, each from its 9front C file, plus `libctest` (more below).
