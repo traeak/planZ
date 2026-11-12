@@ -249,12 +249,18 @@ Progress: the library is in `src/user/lib/` (module `libc`).
 - **Slices, not NUL-terminated strings (the user's rule).** Every string a program sees is a slice: paths, `main(args: []const []const u8)`, `exits`, error strings, the environment. NUL termination exists only in `sys.zig`. `libc.Cstr` copies a slice into a terminated buffer at the call (stack up to 511 bytes, the allocator beyond), and refuses one with a NUL inside ("bad character in file name").
 - **Build.** A program is built with `src/user/lib/root.zig` as its root file and its own file as the module `program`. Zig analyses an imported file only as far as it is used, so this is where `_start` is exported and the panic handler is set. The panic handler prints `argv0: panic: msg` and exits with the message. `boot.zig` and `initcode.zig` stay their own roots and use `libc.sys` only; `initcode` is still one page with no data.
 
-Proof programs in `src/user/cmd/`: `echo`, `cat`, `wc` and `ls`, each from its 9front C file, plus `libctest`.
+Proof programs in `src/user/cmd/`: `echo`, `cat`, `wc` and `ls`, each from its 9front C file, plus `libctest` (more below).
 - `ls` has no `-l` or `-m` yet: they need `ctime`, the time zone and the `%M`/`%C` formats.
 - `zig build user` installs them in `zig-out/user/bin`.
 - `zig build test-zuser $D` (`tools/zusertest.sh`) fetches them into a booted stock 9front over HTTP and runs each beside the stock program with the same arguments. All 16 cases match byte for byte: standard output, and standard error for the failures.
 - `ls -tr` matches only because the library's `qsort` is 9front's algorithm, since `ls` breaks ties by the entries' addresses while `qsort` moves them.
 - `libctest` checks the rest of the library: containers on the allocator, a 4096-aligned allocation, the `Io.Writer`, `dirstat`/`dirfstat`, `%r` and `rerrstr`, `getenv`/`putenv`, `fork` and `wait` (with the kernel's "name pid: " in front of the exit message), an alarm note through `atnotify`, and `seek`.
+
+Second batch of commands: `pwd`, `basename`, `cleanname`, `sleep`, `touch`, `tee`, `mkdir`, `rm`, `cmp`, `uniq`, `chmod`, `cp`, `mv` and `tail`, each from its 9front C file. `date` and `seq` wait for `ctime`/time zones and floating-point formatting.
+- **Library additions.** `bio.zig` is the core of libbio: `Biobuf` with `init`/`term`/`flush`/`getc`/`ungetc`/`read`/`write`/`putc`/`rdline`/`linelen`/`print`, the C's buffer arithmetic kept, and writers flushed at exit. The rest: `atexit` (run by `exits`), `getwd`, `access`, `time`, `iounit`, `strtol`/`strtoul` returning how much they consumed, and `basename`.
+- **One shared check script.** `tools/usbzig.rc` is now the only one: the stick's `zig/run`, and what `test-zuser` fetches and runs. It compares outputs, exit statuses (without "name pid: ") and error messages with the stock programs. For `mkdir`, `touch`, `chmod`, `cp`, `mv`, `rm` and `tee` it runs one sequence of operations in two directories, one per set of programs, and compares mode, length and name of everything left.
+- **Result.** All 22 comparisons are byte-identical, and `libctest` passes. On a difference it prints the first lines of `diff`.
+- **Fixed from C, in `cleanname`.** The C cleans names in place in `argv`, so cleaning `''` writes ".\0" into a one-byte string and turns the next argument into "": `cleanname '' ../../a` prints "." twice. The Zig version copies each name.
 
 Found while testing it and fixed: once in about 8 boots under TCG the kernel panicked with `sched: no process` as hjfs started.
 - **Cause.** `proc.sched()` read `arch.m()` with interrupts on and only then read `mach.proc` through it. The `randomseed` kproc, which calls `sched()` in a loop, could be preempted between the two reads and resume on another processor holding the old one's `Mach`. That gave nil there if the old processor was idle, another process if it was busy, or a wrong `ilockdepth`.

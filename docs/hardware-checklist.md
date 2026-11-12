@@ -69,10 +69,12 @@ Note which pin numbers worked, if any.
 
 ## 4. Zig programs
 
-planZ's first user programs written in Zig are on the stick: `echo`,
-`cat`, `wc` and `ls`, and `libctest`, which checks the library under
-them. The script copies them to `/tmp/zig` and runs each one beside
-the stock 9front program of the same name:
+planZ's user programs written in Zig are on the stick: eighteen
+commands (`echo`, `cat`, `wc`, `ls`, `pwd`, `basename`, `cleanname`,
+`sleep`, `touch`, `tee`, `mkdir`, `rm`, `cmp`, `uniq`, `chmod`, `cp`,
+`mv` and `tail`) and `libctest`, which checks the library under them.
+The script copies them to `/tmp/zig` and runs each one beside the stock
+9front program of the same name. If anything differs, it shows how:
 
 ```
 dossrv -f /dev/sdU*/esp esp

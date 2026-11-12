@@ -46,6 +46,11 @@ pub const OCEXEC = sys.OCEXEC;
 pub const ORCLOSE = sys.ORCLOSE;
 pub const OEXCL = sys.OEXCL;
 pub const DMDIR = fcall.DMDIR;
+pub const AEXIST = sys.AEXIST;
+pub const AEXEC = sys.AEXEC;
+pub const AWRITE = sys.AWRITE;
+pub const AREAD = sys.AREAD;
+pub const IOUNIT = 32768; // default buffer size for 9p io
 
 /// The per-process block at the top of the stack.
 /// from /sys/include/tos.h
@@ -123,6 +128,14 @@ pub const needsrcquote = string_.needsrcquote;
 pub const quote = string_.quote;
 pub const Args = string_.Args;
 pub const qsort = @import("qsort.zig").qsort;
+pub const strtol = string_.strtol;
+pub const strtoul = string_.strtoul;
+pub const basename = string_.basename;
+
+// Buffered I/O
+
+pub const Biobuf = @import("bio.zig").Biobuf;
+pub const Bsize = @import("bio.zig").Bsize;
 
 // Errors
 
@@ -153,7 +166,7 @@ pub fn werrstr(comptime format: []const u8, args: anytype) void {
 var rbuf: [ERRMAX]u8 = undefined;
 
 /// For %r.
-fn errtext() []const u8 {
+pub fn errtext() []const u8 {
     return rerrstr(&rbuf);
 }
 
@@ -357,8 +370,10 @@ pub fn exec(name: []const u8, args: []const []const u8) (Error || std.mem.Alloca
 }
 
 /// Exit with msg as the exit status; null or empty for success.  A
-/// message longer than ERRMAX-1 bytes is cut there.
+/// message longer than ERRMAX-1 bytes is cut there.  The functions
+/// given to atexit run first, the last one given first.
 pub fn exits(msg: ?[]const u8) noreturn {
+    onexit();
     const m = msg orelse sys.exits(null);
     var buf: [ERRMAX]u8 = undefined;
     const n = @min(m.len, ERRMAX - 1);
@@ -370,6 +385,98 @@ pub fn exits(msg: ?[]const u8) noreturn {
 
 pub fn nsec() i64 {
     return sys.nsec();
+}
+
+/// Seconds since the epoch.
+/// from libc/9sys/time.c
+pub fn time() i64 {
+    return @divTrunc(nsec(), 1000000000);
+}
+
+/// The current directory, in buf.
+/// from libc/9sys/getwd.c
+pub fn getwd(buf: []u8) Error![]const u8 {
+    const fd = try open(".", OREAD | OCEXEC);
+    defer _ = sys.close(fd);
+    return fd2path(fd, buf);
+}
+
+/// Whether name exists (AEXIST) or can be opened for the access
+/// given (AREAD, AWRITE, AEXEC, or'd together).
+/// from libc/9sys/access.c
+pub fn access(name: []const u8, mode: u32) bool {
+    if (mode == AEXIST) {
+        var st = dirstat(allocator, name) catch return false;
+        st.deinit(allocator);
+        return true;
+    }
+    const omode = [8]u32{
+        0,
+        OEXEC,
+        OWRITE,
+        ORDWR,
+        OREAD,
+        OEXEC, // only approximate
+        ORDWR,
+        ORDWR, // only approximate
+    };
+    const fd = open(name, omode[mode & 7]) catch return false;
+    _ = sys.close(fd);
+    return true;
+}
+
+/// The largest read or write that fd's file server takes in one
+/// message; 0 if it is not known.
+/// from libc/9sys/iounit.c
+pub fn iounit(fd: i32) usize {
+    var buf: [128]u8 = undefined;
+    const name = sprint(&buf, "/fd/%dctl", .{fd});
+    const cfd = open(name, OREAD | OCEXEC) catch return 0;
+    var b: [128]u8 = undefined;
+    const n = sys.read(cfd, b[0 .. b.len - 1]);
+    _ = sys.close(cfd);
+    if (n <= 0)
+        return 0;
+    var args: [10][]u8 = undefined;
+    if (string_.tokenize(b[0..@intCast(n)], &args) != args.len)
+        return 0;
+    const v = atoi(args[7]);
+    return if (v > 0) @intCast(v) else 0;
+}
+
+/// from libc/port/atexit.c
+/// DIFF: no lock (the library has no shared-memory processes yet) and
+/// no atexitdont.
+const Onex = struct {
+    f: ?*const fn () void = null,
+    pid: u32 = 0,
+};
+var onex: [33]Onex = @splat(.{});
+
+fn onexit() void {
+    const pid = proc_.getpid();
+    var i = onex.len;
+    while (i > 0) {
+        i -= 1;
+        if (onex[i].f) |f| {
+            if (onex[i].pid == pid) {
+                onex[i].f = null;
+                f();
+            }
+        }
+    }
+}
+
+/// Have f called when the process exits through exits.
+pub fn atexit(f: *const fn () void) bool {
+    for (&onex) |*o| {
+        if (o.f == null) {
+            o.pid = proc_.getpid();
+            o.f = f;
+            return true;
+        }
+    }
+    return false;
 }
 
 // Formatted output

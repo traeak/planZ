@@ -68,7 +68,12 @@ pub fn build(b: *std.Build) void {
     // Commands written in Zig on the library, installed in
     // zig-out/user/bin by `zig build user`.
     const user_step = b.step("user", "Build the user programs written in Zig into zig-out/user/bin");
-    const zcmds = [_][]const u8{ "echo", "cat", "ls", "wc", "libctest" };
+    const zcmds = [_][]const u8{
+        "echo",  "cat",      "ls",        "wc",    "libctest",
+        "pwd",   "basename", "cleanname", "sleep", "touch",
+        "tee",   "mkdir",    "rm",        "cmp",   "uniq",
+        "chmod", "cp",       "mv",        "tail",
+    };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
         zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc);

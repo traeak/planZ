@@ -1,19 +1,27 @@
 #!/bin/rc
-# planZ's Zig programs on the USB stick.  On the stick this is zig/run,
-# beside zig/bin/*.  The FAT file server gives no execute permission,
-# so the programs are copied to /tmp/zig and made executable there.
-# Then each runs beside the stock program of the same name with the
-# same arguments, as `zig build test-zuser` does in QEMU, and libctest
-# checks the rest of the library.  The report is also kept in
-# /tmp/zig.txt.
+# planZ's Zig programs beside the stock 9front ones.  On the USB stick
+# this is zig/run, beside zig/bin/*; `zig build test-zuser` fetches it
+# into a booted 9front with the programs and runs it the same way.
 #
-# usage, with the stick's FAT partition mounted on /n/esp:
-#	rc /n/esp/zig/run
+# The programs are copied to /tmp/zig and made executable there (the
+# FAT file server gives no execute permission).  Then each runs beside
+# the stock program of the same name with the same arguments, and the
+# output must be the same byte for byte; for the commands that change
+# files, the same steps are run in two directories, one with each set
+# of programs, and the resulting trees compared.  libctest checks the
+# rest of the library.  The report is also kept in /tmp/zig.txt, and
+# its last line is "zig: all the same as stock, libctest ok" or says
+# what failed.
+#
+# usage: rc run [bindir]	(default /n/esp/zig/bin)
 
 rfork e
+src=/n/esp/zig/bin
+if(! ~ $#* 0)
+	src=$1
 z=/tmp/zig
 mkdir -p $z
-for(f in /n/esp/zig/bin/*){
+for(f in $src/*){
 	b=`{basename $f}
 	cp $f $z/$b && chmod +x $z/$b
 }
@@ -22,28 +30,145 @@ fn t {
 	if(cmp -s /tmp/zig.a /tmp/zig.b)
 		echo same $1
 	if not {
-		echo DIFF $1
+		echo DIFF $1 '(< planZ, > stock)'
+		diff /tmp/zig.a /tmp/zig.b | sed 20q
 		nbad=($nbad $1)
 	}
 }
 
+# the exit status without "name pid: " in front
+fn s {
+	echo status `{echo $status | sed 's/^[^:]*: //'}
+}
+
+# the files under $1: mode, length and name of each
+fn tree {
+	@{
+		cd $1
+		for(f in `{du -a . | awk '$2 != "." {print $2}' | sort})
+			ls -ld $f | awk '{print $1, $6, $10}'
+	}
+}
+
+# what the file commands are tested with: $1 is /tmp/zig/ for planZ's
+# programs and empty for the stock ones
+fn ops {
+	p=$1
+	$p^mkdir -p a/b/c x; s
+	$p^mkdir -m 750 m; s
+	$p^mkdir a; s
+	$p^touch t1 a/t2; s
+	$p^touch -c nothere; s
+	$p^chmod 640 t1; s
+	$p^chmod a+x a/t2; s
+	$p^chmod go-w m; s
+	$p^chmod q+x t1; s
+	$p^cp /lib/namespace ns; s
+	$p^cp ns t1 x; s
+	$p^cp -x /lib/namespace nsx; s
+	$p^cp nothere y; s
+	$p^mv ns ns2; s
+	$p^mv t1 x/t1b; s
+	$p^mv a/t2 .; s
+	$p^mv nothere y; s
+	$p^rm m; s
+	$p^rm -r a/b; s
+	$p^rm nothere; s
+	$p^rm -f nothere; s
+	$p^cmp ns2 /lib/namespace; s
+	{echo one; echo two} | $p^tee -a log x/log >tee.out; s
+	{echo three} | $p^tee -a log; s
+}
+
+# Each of these runs a command's cases with the programs $1 names
+# (/tmp/zig/ or the stock ones); checks compares the two outputs.
+fn basenames {
+	p=$1
+	$p^basename /a/b/c.c .c; $p^basename -d /a/b/c; $p^basename x
+	$p^basename -d x; $p^basename /a/b/; $p^basename c.c c.c; $p^basename; s
+}
+
+fn cleannames {
+	p=$1
+	# '' last: the C cleans names in place in argv, and cleaning ''
+	# writes ".\0" over the first byte of the argument after it
+	$p^cleanname /a/../b//c/. x/./y/.. ../../a /.. ''
+	$p^cleanname -d /usr/glenda ../x lib/./y /abs ''
+	$p^cleanname; s
+}
+
+fn sleeps {
+	p=$1
+	$p^sleep 0.25; s; $p^sleep 1.5; s; $p^sleep 0; s
+}
+
+fn uniqs {
+	p=$1
+	{echo a; echo a; echo b; echo c; echo c; echo c; echo 'x  1 q'; echo 'y  1 q'; echo 'y  1 q'; echo -n last} >/tmp/zig.u
+	$p^uniq </tmp/zig.u; $p^uniq -u /tmp/zig.u; $p^uniq -d /tmp/zig.u
+	$p^uniq -c /tmp/zig.u; $p^uniq -1 /tmp/zig.u; $p^uniq +1 /tmp/zig.u
+	$p^uniq -s /tmp/zig.u
+	rm -f /tmp/zig.u
+}
+
+fn cmps {
+	p=$1
+	$p^cmp /lib/namespace /lib/namespace; s
+	$p^cmp /lib/namespace /lib/namespace.ftp; s
+	$p^cmp -L /lib/namespace /lib/namespace.ftp; s
+	$p^cmp -l /lib/namespace /lib/namespace.ftp | sed 6q
+	$p^cmp -s /lib/namespace /lib/namespace.ftp; s
+	$p^cmp /lib/namespace /lib/namespace 10 10; s
+	$p^cmp /lib/namespace /lib/namespace 10; s
+	$p^cmp /lib/namespace /dev/null; s
+	$p^cmp /lib/namespace; s
+}
+
+fn tails {
+	p=$1
+	$p^tail /lib/namespace; $p^tail -n 3 /lib/namespace; $p^tail +5 /lib/namespace
+	$p^tail -c 20 /lib/namespace; $p^tail +20c /lib/namespace; $p^tail -r /lib/namespace
+	$p^tail -3r /lib/namespace; cat /lib/namespace | $p^tail -2
+	cat /lib/namespace | $p^tail +30; cat /lib/namespace | $p^tail -r
+	cat /lib/namespace | $p^tail -c 7; $p^tail -n; s
+}
+
 fn checks {
 	nbad=()
-	$z/echo hello 'a b' -x >/tmp/zig.a; echo hello 'a b' -x >/tmp/zig.b; t echo1
-	$z/echo -n x y >/tmp/zig.a; echo -n x y >/tmp/zig.b; t echo2
-	$z/cat /lib/namespace /amd64/bin/rc >/tmp/zig.a; cat /lib/namespace /amd64/bin/rc >/tmp/zig.b; t cat1
-	$z/cat </lib/namespace >/tmp/zig.a; cat </lib/namespace >/tmp/zig.b; t cat2
-	$z/cat /nope >[2]/tmp/zig.a; cat /nope >[2]/tmp/zig.b; t cat3
-	$z/wc /lib/namespace /amd64/bin/rc >/tmp/zig.a; wc /lib/namespace /amd64/bin/rc >/tmp/zig.b; t wc1
-	$z/wc -lwrbc /amd64/bin/rc </lib/namespace >/tmp/zig.a; wc -lwrbc /amd64/bin/rc </lib/namespace >/tmp/zig.b; t wc2
-	$z/ls /dev /env/home /bin/ip /lib/namespace >/tmp/zig.a; ls /dev /env/home /bin/ip /lib/namespace >/tmp/zig.b; t ls1
-	$z/ls -F /amd64/bin >/tmp/zig.a; ls -F /amd64/bin >/tmp/zig.b; t ls2
-	$z/ls -ds /lib /amd64/bin/rc >/tmp/zig.a; ls -ds /lib /amd64/bin/rc >/tmp/zig.b; t ls3
-	$z/ls -tr /lib >/tmp/zig.a; ls -tr /lib >/tmp/zig.b; t ls4
-	$z/ls -pq /lib/ndb >/tmp/zig.a; ls -pq /lib/ndb >/tmp/zig.b; t ls5
-	$z/ls /nope >[2]/tmp/zig.a; ls /nope >[2]/tmp/zig.b; t ls6
-	rm -f /tmp/zig.a /tmp/zig.b
-	if(! $z/libctest)
+	Z=$z/
+
+	$Z^echo hello 'a b' -x >/tmp/zig.a; echo hello 'a b' -x >/tmp/zig.b; t echo1
+	$Z^echo -n x y >/tmp/zig.a; echo -n x y >/tmp/zig.b; t echo2
+	$Z^cat /lib/namespace /amd64/bin/rc >/tmp/zig.a; cat /lib/namespace /amd64/bin/rc >/tmp/zig.b; t cat1
+	$Z^cat </lib/namespace >/tmp/zig.a; cat </lib/namespace >/tmp/zig.b; t cat2
+	$Z^cat /nope >[2]/tmp/zig.a; cat /nope >[2]/tmp/zig.b; t cat3
+	$Z^wc /lib/namespace /amd64/bin/rc >/tmp/zig.a; wc /lib/namespace /amd64/bin/rc >/tmp/zig.b; t wc1
+	$Z^wc -lwrbc /amd64/bin/rc </lib/namespace >/tmp/zig.a; wc -lwrbc /amd64/bin/rc </lib/namespace >/tmp/zig.b; t wc2
+	$Z^ls /dev /env/home /bin/ip /lib/namespace >/tmp/zig.a; ls /dev /env/home /bin/ip /lib/namespace >/tmp/zig.b; t ls1
+	$Z^ls -F /amd64/bin >/tmp/zig.a; ls -F /amd64/bin >/tmp/zig.b; t ls2
+	$Z^ls -ds /lib /amd64/bin/rc >/tmp/zig.a; ls -ds /lib /amd64/bin/rc >/tmp/zig.b; t ls3
+	$Z^ls -tr /lib >/tmp/zig.a; ls -tr /lib >/tmp/zig.b; t ls4
+	$Z^ls -pq /lib/ndb >/tmp/zig.a; ls -pq /lib/ndb >/tmp/zig.b; t ls5
+	$Z^ls /nope >[2]/tmp/zig.a; ls /nope >[2]/tmp/zig.b; t ls6
+
+	@{cd /lib/ndb; $Z^pwd} >/tmp/zig.a; @{cd /lib/ndb; pwd} >/tmp/zig.b; t pwd
+	for(c in basename cleanname sleep uniq cmp tail){
+		$c^s $Z >/tmp/zig.a >[2=1]
+		$c^s '' >/tmp/zig.b >[2=1]
+		t $c
+	}
+
+	rm -rf /tmp/zig.zd /tmp/zig.sd
+	mkdir /tmp/zig.zd /tmp/zig.sd
+	@{cd /tmp/zig.zd; ops $Z} >/tmp/zig.a >[2=1]; tree /tmp/zig.zd >>/tmp/zig.a
+	@{cd /tmp/zig.sd; ops ''} >/tmp/zig.b >[2=1]; tree /tmp/zig.sd >>/tmp/zig.b
+	t files
+	cat /tmp/zig.zd/log /tmp/zig.zd/x/log /tmp/zig.zd/tee.out >/tmp/zig.a
+	cat /tmp/zig.sd/log /tmp/zig.sd/x/log /tmp/zig.sd/tee.out >/tmp/zig.b
+	t tee
+	rm -rf /tmp/zig.a /tmp/zig.b /tmp/zig.u /tmp/zig.zd /tmp/zig.sd
+
+	if(! $Z^libctest)
 		nbad=($nbad libctest)
 	if(~ $#nbad 0)
 		echo 'zig: all the same as stock, libctest ok'

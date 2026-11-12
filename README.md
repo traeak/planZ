@@ -23,7 +23,7 @@ cache.
   working typing, on one machine (Ryzen 5 3600, B550 board). Checking
   the rest of that machine is in progress; see
   [docs/hardware-checklist.md](docs/hardware-checklist.md).
-- **Not yet:** a Zig userland beyond a small libc and four commands, sound
+- **Not yet:** a Zig userland beyond a small libc and eighteen commands, sound
   on real hardware, GPU acceleration, aarch64 and riscv64. The portable kernel already
   compiles for the last two.
 

@@ -5,7 +5,8 @@
 //! cleanname from libc/port/cleanname.c, the same as the kernel's in
 //! src/kernel/port/lib.zig; needsrcquote and the quoting of %q from
 //! libc/port/needsrcquote.c and libc/fmt/fmtquote.c; Args from the
-//! ARGBEGIN/ARGEND macros of libc.h.
+//! ARGBEGIN/ARGEND macros of libc.h; strtou the same as the kernel's in
+//! src/kernel/port/netif.zig (libc/port/strtoul.c).
 
 const std = @import("std");
 
@@ -262,3 +263,102 @@ pub const Args = struct {
         return a.argv[@min(a.i, a.argv.len)..];
     }
 };
+
+/// libc's strtoul for an unsigned type T: the value, and how many bytes
+/// of s were used (0 when there are no digits).  A base of 0 means C
+/// syntax: 0x for hexadecimal, a leading 0 for octal.
+pub fn strtou(comptime T: type, s: []const u8, base_: u32) struct { v: T, n: usize } {
+    const S = struct {
+        fn at(str: []const u8, i: usize) u8 {
+            return if (i < str.len) str[i] else 0;
+        }
+    };
+    const at = S.at;
+    var base = base_;
+    var p: usize = 0;
+    var neg = false;
+    var ndig: usize = 0;
+    var ovfl = false;
+    var n: T = 0;
+
+    // White space
+    while (true) : (p += 1) {
+        switch (at(s, p)) {
+            ' ', '\t', '\n', 0x0c, '\r', 0x0b => continue,
+            else => {},
+        }
+        break;
+    }
+
+    // Sign
+    if (at(s, p) == '-' or at(s, p) == '+') {
+        neg = at(s, p) == '-';
+        p += 1;
+    }
+
+    // Base
+    if (base == 0) {
+        if (at(s, p) != '0')
+            base = 10
+        else {
+            base = 8;
+            if (at(s, p + 1) == 'x' or at(s, p + 1) == 'X')
+                base = 16;
+        }
+    }
+    if (base >= 2 and base <= 36) {
+        if (base == 16 and at(s, p) == '0') {
+            if ((at(s, p + 1) == 'x' or at(s, p + 1) == 'X') and std.ascii.isHex(at(s, p + 2)))
+                p += 2;
+        }
+        // Non-empty sequence of digits
+        const m = @as(T, std.math.maxInt(T)) / @as(T, @intCast(base));
+        while (true) : ({
+            p += 1;
+            ndig += 1;
+        }) {
+            const c = at(s, p);
+            var v: u32 = base;
+            if ('0' <= c and c <= '9')
+                v = c - '0'
+            else if ('a' <= c and c <= 'z')
+                v = c - 'a' + 10
+            else if ('A' <= c and c <= 'Z')
+                v = c - 'A' + 10;
+            if (v >= base)
+                break;
+            if (n > m)
+                ovfl = true;
+            const nn = n *% @as(T, @intCast(base)) +% @as(T, @intCast(v));
+            if (nn < n)
+                ovfl = true;
+            n = nn;
+        }
+    }
+
+    if (ndig == 0)
+        p = 0;
+    if (ovfl)
+        return .{ .v = std.math.maxInt(T), .n = p };
+    if (neg)
+        return .{ .v = 0 -% n, .n = p };
+    return .{ .v = n, .n = p };
+}
+
+/// libc's strtoul: the value and how many bytes of s were used.
+pub fn strtoul(s: []const u8, base: u32) struct { v: u64, n: usize } {
+    const r = strtou(u64, s, base);
+    return .{ .v = r.v, .n = r.n };
+}
+
+/// libc's strtol: the value and how many bytes of s were used.
+/// DIFF: a value that does not fit wraps; the C clamps it.
+pub fn strtol(s: []const u8, base: u32) struct { v: i64, n: usize } {
+    const r = strtou(u64, s, base);
+    return .{ .v = @bitCast(r.v), .n = r.n };
+}
+
+/// The last element of a path: what follows the last '/'.
+pub fn basename(s: []const u8) []const u8 {
+    return if (std.mem.findScalarLast(u8, s, '/')) |i| s[i + 1 ..] else s;
+}
