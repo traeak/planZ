@@ -21,9 +21,13 @@ pub const RWLock = portdat.RWLock;
 const Proc = portdat.Proc;
 
 fn checklocks(name: []const u8, pc: usize) void {
-    const mach = arch.m();
-    if (mach.ilockdepth != 0)
-        print("%s: %#p: ilockdepth %d\n", .{ name, pc, mach.ilockdepth });
+    // DIFF: with interrupts off, so that m() is this processor's; see
+    // proc.sched.
+    const s = arch.splhi();
+    const depth = arch.m().ilockdepth;
+    arch.splx(s);
+    if (depth != 0)
+        print("%s: %#p: ilockdepth %d\n", .{ name, pc, depth });
     if (arch.up()) |up| {
         if (up.nlocks != 0)
             print("%s: %#p: nlocks %d\n", .{ name, pc, up.nlocks });

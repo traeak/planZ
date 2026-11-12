@@ -256,7 +256,11 @@ Proof programs in `src/user/cmd/`: `echo`, `cat`, `wc` and `ls`, each from its 9
 - `ls -tr` matches only because the library's `qsort` is 9front's algorithm, since `ls` breaks ties by the entries' addresses while `qsort` moves them.
 - `libctest` checks the rest of the library: containers on the allocator, a 4096-aligned allocation, the `Io.Writer`, `dirstat`/`dirfstat`, `%r` and `rerrstr`, `getenv`/`putenv`, `fork` and `wait` (with the kernel's "name pid: " in front of the exit message), an alarm note through `atnotify`, and `seek`.
 
-Open: once during these runs (about 1 boot in 8), the kernel panicked with `sched: no process` right after the selftest, before `/bin/rc` started. It is not yet investigated.
+Found while testing it and fixed: once in about 8 boots under TCG the kernel panicked with `sched: no process` as hjfs started.
+- **Cause.** `proc.sched()` read `arch.m()` with interrupts on and only then read `mach.proc` through it. The `randomseed` kproc, which calls `sched()` in a loop, could be preempted between the two reads and resume on another processor holding the old one's `Mach`. That gave nil there if the old processor was idle, another process if it was busy, or a wrong `ilockdepth`.
+- **Fix.** `sched()` now takes `up` from `arch.up()`, one `%gs` load, and reads `m` with interrupts off. `qlock.zig`'s `checklocks` reads `ilockdepth` the same way.
+- **Check.** A 1 ms delay was put between the two reads, temporarily. The old code then panicked in 6 of 14 TCG boots (`sched: no process` and `cpu3: ilockdepth 0`); the fixed code panicked in none of 14.
+- **Other uses of `arch.m().x` from process context.** They are statistics counters or a CPU number used as a hint, as in the C.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).

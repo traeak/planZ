@@ -214,6 +214,16 @@ fn procswitch() void {
 /// Give up the processor.  The caller has already changed up.state if it
 /// is going to wait for something; otherwise the process stays runnable.
 pub fn sched() void {
+    // DIFF: m and up are read with interrupts off, and up through
+    // arch.up().  m() is a pointer read and then a read through it: a
+    // process preempted in between resumes on another processor with
+    // the old one's Mach, whose proc is whatever runs there now: nil if
+    // it is idle ("sched: no process"), or another process, which would
+    // then be switched out in this one's place; and whose ilockdepth
+    // is that processor's ("ilockdepth 0" panics).  The C reads m and
+    // up in one instruction each.  Interrupts are on here unless the
+    // caller holds an ilock, which the check below catches.
+    const s0 = arch.splhi();
     const mach = arch.m();
     if (mach.ilockdepth != 0) {
         const il = if (arch.up()) |p| p.lastilock else null;
@@ -224,7 +234,8 @@ pub fn sched() void {
             if (il) |x| x.pc else 0,
         });
     }
-    const p = mach.proc orelse panic("sched: no process, pc %#p", .{@returnAddress()});
+    const p = arch.up() orelse panic("sched: no process, pc %#p", .{@returnAddress()});
+    arch.splx(s0);
 
     // Delay the sched until the process gives up the locks
     // it is holding.  This avoids dumb lock loops.
