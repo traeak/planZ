@@ -9,6 +9,9 @@
 //!   - The compatibility calls (the ones with an underscore in sys.h)
 //!     only return an error saying they are gone.
 //!   - Syscall tracing (Proc_tracesyscall, syscallfmt) is not ported.
+//!   - planZ's own calls, from 64 on, take each string as two argument
+//!     words, address then length, where 9front's take the address of
+//!     bytes ending in a 0 (see the block of numbers below).
 
 const std = @import("std");
 const arch = @import("../arch.zig");
@@ -79,7 +82,28 @@ pub const PWRITE = 51;
 pub const TSEMACQUIRE = 52;
 pub const _NSEC = 53;
 
-pub const nsyscall = 54;
+// DIFF (new): planZ's calls that take strings as (address, length)
+// pairs, for its Zig programs.  A string is two consecutive argument
+// words, address then length, which is also what a C struct {ptr, len}
+// passed by value gives.  exec's arguments are an array of 16-byte
+// {ptr, len} pairs (sysproc.Upair), passed by address with a count.
+// Stock 9front programs never use these; 9front's calls stay as they
+// are.  64 leaves 9front room to grow.
+pub const OPENN = 64; // open(name, namelen, mode)
+pub const CREATEN = 65; // create(name, namelen, mode, perm)
+pub const REMOVEN = 66; // remove(name, namelen)
+pub const CHDIRN = 67; // chdir(name, namelen)
+pub const STATN = 68; // stat(name, namelen, buf, len)
+pub const WSTATN = 69; // wstat(name, namelen, buf, len)
+pub const BINDN = 70; // bind(new, newlen, old, oldlen, flag)
+pub const MOUNTN = 71; // mount(fd, afd, old, oldlen, flag, spec, speclen)
+pub const UNMOUNTN = 72; // unmount(name, namelen, old, oldlen)
+pub const SEGATTACHN = 73; // segattach(attr, class, classlen, va, len)
+pub const EXITSN = 74; // exits(msg, msglen)
+pub const EXECN = 75; // exec(file, filelen, args, nargs)
+pub const FAUTHN = 76; // fauth(fd, aname, anamelen)
+
+pub const nsyscall = 77;
 
 const Entry = struct {
     /// What /proc/n/status says while the call is running.
@@ -126,10 +150,20 @@ pub fn systabinit() void {
     install(_WSTAT, "_wstat", f.sys_wstat);
     install(_FWSTAT, "_fwstat", f.sys_fwstat);
     install(_MOUNT, "_mount", f.sys_mount);
+    install(OPENN, "Open", f.sysopenn);
+    install(CREATEN, "Create", f.syscreaten);
+    install(REMOVEN, "Remove", f.sysremoven);
+    install(CHDIRN, "Chdir", f.syschdirn);
+    install(STATN, "Stat", f.sysstatn);
+    install(WSTATN, "Wstat", f.syswstatn);
+    install(BINDN, "Bind", f.sysbindn);
+    install(MOUNTN, "Mount", f.sysmountn);
+    install(UNMOUNTN, "Unmount", f.sysunmountn);
 
     const au = @import("auth.zig");
     install(FAUTH, "Fauth", au.sysfauth);
     install(FVERSION, "Fversion", au.sysfversion);
+    install(FAUTHN, "Fauth", au.sysfauthn);
 
     const p = @import("sysproc.zig");
     install(SYSR1, "Running", p.sysr1);
@@ -155,6 +189,9 @@ pub fn systabinit() void {
     install(_ERRSTR, "_errstr", p.sys_errstr);
     install(_WAIT, "_wait", p.sys_wait);
     install(_NSEC, "_nsec", p.sys_nsec);
+    install(SEGATTACHN, "Segattach", p.syssegattachn);
+    install(EXITSN, "Exits", p.sysexitsn);
+    install(EXECN, "Exec", p.sysexecn);
 }
 
 /// Run system call scallnr with the arguments at user address `args`.

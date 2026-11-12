@@ -555,6 +555,18 @@ pub fn userstr(addr: usize) Error![]const u8 {
     return @as([*]const u8, @ptrFromInt(addr))[0..n];
 }
 
+/// DIFF (new): a string passed as (address, length), for planZ's slice
+/// system calls, as a slice of user memory.  Fails with Etoolong at
+/// 2^16 bytes or more, before touching memory.  A length of 0 gives an
+/// empty slice whatever the address, without checking it.
+pub fn userstrn(addr: usize, len: usize) Error![]const u8 {
+    if (len >= 1 << 16)
+        return error.Etoolong;
+    if (len == 0)
+        return &.{};
+    return userslice(addr, len, false);
+}
+
 /// The segment of p holding addr, locked if `dolock`.
 pub fn seg(p: *Proc, addr: usize, dolock: bool) ?*Segment {
     for (p.seg) |x| {

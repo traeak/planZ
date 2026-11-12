@@ -45,7 +45,19 @@ pub fn sysfversion(a: *Sargs) Error!usize {
 pub fn sysfauth(a: *Sargs) Error!usize {
     const fd = a.next(i32);
     const uaname = a.next(usize);
-    const aname = try chan.validnamedup(try fault.userstr(uaname), true);
+    return fauth(fd, try fault.userstr(uaname));
+}
+
+/// DIFF (new): planZ's fauth(fd, aname, anamelen).
+pub fn sysfauthn(a: *Sargs) Error!usize {
+    const fd = a.next(i32);
+    const uaname = a.next(usize);
+    const ualen = a.next(usize);
+    return fauth(fd, try fault.userstrn(uaname, ualen));
+}
+
+fn fauth(fd: i32, uaname: []const u8) Error!usize {
+    const aname = try chan.validnamedup(uaname, true);
     const ac = blk: {
         defer alloc.free(aname.ptr);
         const c = try sysfile.fdtochan(fd, lib.ORDWR, false, true);

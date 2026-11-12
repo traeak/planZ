@@ -247,10 +247,10 @@ Steps, each with a program that uses it:
 Progress: the library is in `src/user/lib/` (module `libc`).
 - **Files:** `sys.zig` (every call the kernel serves, with argument layouts taken from the kernel's handlers), `start.zig`, `malloc.zig` (the kernel's `pool.zig` over `brk`, plus a `std.mem.Allocator`), `dir.zig`, `proc.zig`, `string.zig` (`tokenize`, `cleanname`, rc quoting, `Args` for ARGBEGIN), `qsort.zig` (9front's algorithm step for step) and `libc.zig` (the checked calls, `print`/`fprint`/`sprint`/`sysfatal` on `src/lib/fmt.zig` with `%r`, and `FdWriter`/`FdReader` for `std.Io`).
 - **Slices, not NUL-terminated strings (the user's rule).** Every string is a plain slice, and there is no sentinel-terminated type anywhere in `src/user`, `sys.zig` included: paths, `main(args: []const []const u8)`, `exits`, error strings, the environment.
-  - **Outgoing.** The kernel takes the address of bytes ending in a 0. `sys.Name` copies a slice into a plain stack buffer, adds the 0 and passes the address. A slice with a 0 byte in it is refused ("bad character in file name"), and so is one of `Name.max` (1024) bytes or more ("file name too long"); `sys.zig` cannot allocate, because `initcode` uses it.
-  - **`exec`.** It lays the argument array out in a plain caller-supplied buffer, sized by `sys.argvsize`.
+  - **Outgoing.** Every call that takes a string uses planZ's slice system calls (below), so a slice goes to the kernel as (address, length) with no copy and no 0 after it.
+  - **`exec`.** Its arguments go as an array of `sys.Str` pairs; `sys.exec` fills one the caller gives, `libc.exec` uses a stack array of 32 or allocates.
   - **Incoming.** Strings from the kernel (`argv`, a note's message) are read through `sys.span`; strings it wrote into a buffer of ours (`errstr`, `fd2path`) through the bounded `sys.upto0`.
-  - **Tests.** `libctest` checks both refusals and `exec`.
+  - **Tests.** `libctest` checks names and `exec` (see the slice system calls below).
 - **Build.** A program is built with `src/user/lib/root.zig` as its root file and its own file as the module `program`. Zig analyses an imported file only as far as it is used, so this is where `_start` is exported and the panic handler is set. The panic handler prints `argv0: panic: msg` and exits with the message. `boot.zig` and `initcode.zig` stay their own roots and use `libc.sys` only; `initcode` is still one page with no data.
 
 Proof programs in `src/user/cmd/`: `echo`, `cat`, `wc` and `ls`, each from its 9front C file, plus `libctest` (more below).
@@ -272,7 +272,7 @@ Found while testing it and fixed: once in about 8 boots under TCG the kernel pan
 - **Check.** A 1 ms delay was put between the two reads, temporarily. The old code then panicked in 6 of 14 TCG boots (`sched: no process` and `cpu3: ilockdepth 0`); the fixed code panicked in none of 14.
 - **Other uses of `arch.m().x` from process context.** They are statistics counters or a CPU number used as a hint, as in the C.
 
-#### System calls that take slices: planned
+#### System calls that take slices: done
 planZ's own extension, with no 9front counterpart. 9front's calls take names as addresses of bytes ending in a 0, so `sys.zig` copies each slice into a stack buffer to add the 0, refuses names of 1024 bytes or more, and makes `exec` lay out a C argument array. A second set of calls takes each string as a (pointer, length) pair instead. It is for planZ's Zig programs only: 9front's calls stay, unchanged, for stock C binaries, and 9front's libc never uses the new ones.
 
 **The kernel is already mostly done.** Inside it, names are slices (`namec`, `validname`, ...); the one place a 0-terminated string becomes a slice is `fault.userstr`. A new handler is the old one with `fault.userslice(addr, len, false)` in place of `userstr`, plus a length check. A 0 byte inside a name is refused by `validname`, since 0 is one of the characters `isfrog` rejects.
@@ -306,6 +306,13 @@ Limits: names under 2^16 bytes (what 9P can carry, as `validname` checks today);
 - `libctest`: a 0 byte in a name is refused (now by the kernel); a name over 1024 bytes now works and one of 2^16 is refused; a 0-length name; `exec` with an empty argument and one with spaces; a bad pointer in exec's pairs array gives an error, not a crash.
 - `test-9front` shows the old calls still serve stock binaries; `test-boot`, `test-zuser` and `test-usb` as now.
 - A DIFF note in `syscall.zig` and on each new handler.
+
+Progress: done, with one call more than the table: `fauth` also takes a name, so it has a slice form too (`FAUTHN`, 76).
+- **Kernel.** `fault.userstrn` turns (address, length) into a slice of user memory, refusing 2^16 bytes or more before touching memory, and returning an empty slice for length 0 without checking the address (namec then says "empty file name"). Each old handler became a wrapper over a body that takes the name as a slice; the new handler reads two words instead. `bindmount` takes its three strings as a small `Ustr` (address, optional length), read only where the C reads them. `MAXSYSARG` is 7, for the slice `mount`.
+- **exec.** `sysexecn` checks the count and alignment, copies the pairs into kernel memory (`newslice`, so a huge count is `Enomem`, not a wait) and calls the same body as `sysexec` with a `Uargs` union. The two argument loops have a branch each; the pairs branch copies each argument onto the new stack and refuses a 0 byte in the copy, which no other process can change. `#!` drops the first pair as it drops `argv[0]`.
+- **exits.** `sysexitsn` copies at most ERRMAX-1 bytes and cuts at a 0 byte, as 9front's `exits` reads the message.
+- **User space.** `sys.Name`, `argvsize` and `execaddrs` are gone; `call` takes a tuple of up to seven words. `initcode` makes its `Str` array from the kernel's argv with `span` (the word below argv is a 0 return address, not argc) and is 1.5 KB of text, down from 2.5 KB.
+- **Tests.** `libctest`: a 0 byte in a name ("bad character"), an empty name ("empty file name"), a name passed as a slice of a longer string, a 3009-byte name that opens `/dev/cons`, a 2^16-byte name ("name too long"), an `exec` argument with a 0 byte ("bad arg"), and an `exec` with a bad address in its pairs, which kills the child with "sys: bad address in syscall" as any bad address in a system call does. `test-boot`, `test-9front`, `test-zuser`, `test-usb`, `test` and `check-ports` pass.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).

@@ -9,11 +9,10 @@
 //!
 //! Strings are plain slices everywhere, including sys.zig: paths,
 //! arguments, exit messages, error strings and environment values are
-//! `[]const u8`, and there are no sentinel-terminated types.  The kernel
-//! takes a string as the address of bytes ending in a 0, so sys.zig
-//! copies each one into a stack buffer and adds the 0 at the call; a
-//! string with a 0 byte in it is refused ("bad character in file
-//! name"), and so is a name of sys.Name.max bytes or more.
+//! `[]const u8`, and there are no sentinel-terminated types.  sys.zig
+//! passes each string to the kernel as an (address, length) pair, with
+//! planZ's own call numbers; the kernel refuses a name with a 0 byte in
+//! it ("bad character in file name") or of 2^16 bytes or more.
 //!
 //! A program has `pub fn main() !void` or
 //! `pub fn main(args: []const []const u8) !void`; see start.zig.
@@ -293,9 +292,10 @@ pub fn rfork(flags: u32) Error!i32 {
 /// Replace the program with name, giving it args (args[0] first).
 /// Returns only on failure.
 pub fn exec(name: []const u8, args: []const []const u8) (Error || std.mem.Allocator.Error) {
-    const buf = try allocator.alignedAlloc(u8, .of(usize), sys.argvsize(args));
-    defer allocator.free(buf);
-    _ = sys.exec(name, buf, args);
+    var small: [32]sys.Str = undefined;
+    const strs = if (args.len <= small.len) &small else try allocator.alloc(sys.Str, args.len);
+    defer if (strs.len > small.len) allocator.free(strs);
+    _ = sys.exec(name, strs, args);
     return error.Plan9;
 }
 

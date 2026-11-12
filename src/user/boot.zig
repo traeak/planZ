@@ -206,8 +206,8 @@ export fn bootmain(sp: [*]usize, tos: usize) callconv(.c) noreturn {
     const pid2 = sys.rfork(sys.RFPROC | sys.RFFDG);
     if (pid2 < 0) fail("rfork");
     if (pid2 == 0) {
-        var abuf: [256]u8 align(8) = undefined;
-        _ = sys.exec("/boot/boot", &abuf, &.{ "boot", "execd" });
+        var strs: [2]sys.Str = undefined;
+        _ = sys.exec("/boot/boot", &strs, &.{ "boot", "execd" });
         sys.exits("exec failed");
     }
     if (!contains(waitmsg(&buf), "execd ok")) fail("exec'd child exit message");
@@ -248,8 +248,8 @@ export fn bootmain(sp: [*]usize, tos: usize) callconv(.c) noreturn {
         const pid5 = sys.rfork(sys.RFPROC | sys.RFFDG);
         if (pid5 < 0) fail("rfork");
         if (pid5 == 0) {
-            var abuf: [256]u8 align(8) = undefined;
-            _ = sys.exec("/boot/echo", &abuf, &.{ "echo", "hello", "from", "stock", "9front", "echo" });
+            var strs: [6]sys.Str = undefined;
+            _ = sys.exec("/boot/echo", &strs, &.{ "echo", "hello", "from", "stock", "9front", "echo" });
             sys.exits("exec of /boot/echo failed");
         }
         const m = waitmsg(&buf);

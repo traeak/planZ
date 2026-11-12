@@ -325,7 +325,8 @@ pub const Palloc = struct {
     pwait: [2]Rendezq = .{ .{}, .{} }, // Queues of procs waiting for memory
 };
 
-pub const MAXSYSARG = 5; // for mount(fd, afd, mpt, flag, arg)
+// DIFF: 7, not 5, for planZ's slice mount(fd, afd, mpt, mptlen, flag, arg, arglen)
+pub const MAXSYSARG = 7;
 
 /// The arguments of a system call, as the words the user pushed.
 /// DIFF: the C handlers take a va_list and va_arg each argument off it;

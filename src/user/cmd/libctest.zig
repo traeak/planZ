@@ -2,7 +2,8 @@
 //! Zig's containers on the library's allocator, the Io.Writer over a
 //! file descriptor, dirstat and dirfstat, the environment, fork and
 //! wait with an exit message, notes through atnotify, %r, seek, names
-//! with a 0 byte or too long, and exec.
+//! as (address, length) pairs (a 0 byte, empty, long, too long), and
+//! exec, including a bad address among its arguments.
 //! Prints one line per check and "libctest ok" at the end; exits with
 //! the name of the first check that fails.
 //!
@@ -119,16 +120,33 @@ pub fn main() !void {
     try libc.remove("/tmp/libctest");
     ok("seek");
 
-    // names: a 0 byte inside is refused, and so is a name too long for
-    // sys.Name; nothing is cut short silently
+    // names go to the kernel as (address, length): a 0 byte inside is
+    // refused by the kernel, nothing is cut short silently, an empty
+    // name is an error, a long one works and one of 2^16 bytes is
+    // refused
     if (libc.open("/dev/cons\x00/x", libc.OREAD)) |_| fail("NUL in a name") else |_| {}
     if (std.mem.indexOf(u8, libc.rerrstr(&eb), "bad character") == null) fail("NUL in a name: error");
-    const long = try a.alloc(u8, libc.sys.Name.max);
-    @memset(long, 'x');
-    long[0] = '/';
-    if (libc.open(long, libc.OREAD)) |_| fail("long name") else |_| {}
-    if (std.mem.indexOf(u8, libc.rerrstr(&eb), "too long") == null) fail("long name: error");
-    a.free(long);
+    if (libc.open("", libc.OREAD)) |_| fail("empty name") else |_| {}
+    if (std.mem.indexOf(u8, libc.rerrstr(&eb), "empty file name") == null) fail("empty name: error");
+    // a slice of a longer string: the bytes after it must not count
+    if (!libc.access("/dev/consX"[0..9], libc.AEXIST)) fail("name as a slice");
+    {
+        const long = try a.alloc(u8, 1 + 2 * 1500 + "dev/cons".len);
+        defer a.free(long);
+        long[0] = '/';
+        for (0..1500) |k| @memcpy(long[1 + 2 * k ..][0..2], "./");
+        @memcpy(long[1 + 2 * 1500 ..], "dev/cons");
+        const lfd = libc.open(long, libc.OREAD) catch fail("long name");
+        try libc.close(lfd);
+    }
+    {
+        const huge = try a.alloc(u8, 1 << 16);
+        defer a.free(huge);
+        @memset(huge, 'x');
+        huge[0] = '/';
+        if (libc.open(huge, libc.OREAD)) |_| fail("huge name") else |_| {}
+        if (std.mem.indexOf(u8, libc.rerrstr(&eb), "too long") == null) fail("huge name: error");
+    }
     ok("names");
 
     // exec: a child runs the stock echo with arguments, into a pipe
@@ -146,6 +164,26 @@ pub fn main() !void {
     if (!std.mem.eql(u8, ebuf[0..en], "exec with 'quotes' \n")) {
         libc.werrstr("got '%s'", .{ebuf[0..en]});
         fail("exec");
+    }
+
+    // exec: an argument with a 0 byte in it is refused, since the new
+    // program's argv could not carry it
+    libc.exec("/bin/echo", &.{ "echo", "a\x00b" }) catch {};
+    if (std.mem.indexOf(u8, libc.rerrstr(&eb), "bad arg") == null) fail("exec NUL: error");
+
+    // exec: a bad address among the arguments kills the caller with the
+    // kernel's note, as any bad address in a system call does, and
+    // leaves the kernel standing
+    const bpid = try libc.fork();
+    if (bpid == 0) {
+        const bad = [_]libc.sys.Str{ .of("echo"), .{ .ptr = 0x10, .len = 4 } };
+        _ = libc.sys.execstr("/bin/echo", &bad);
+        libc.exits("exec with a bad address returned");
+    }
+    const bw = try libc.wait();
+    if (std.mem.indexOf(u8, bw.msg(), "bad address") == null) {
+        libc.werrstr("msg '%s'", .{bw.msg()});
+        fail("exec bad address");
     }
     ok("exec");
 

@@ -103,6 +103,7 @@ const okaddr = fault.okaddr;
 const vmemchr = fault.vmemchr;
 const userslice = fault.userslice;
 const userstr = fault.userstr;
+const userstrn = fault.userstrn;
 const newseg = segment.newseg;
 const attachseg = segment.attachseg;
 const detachseg = segment.detachseg;
@@ -536,8 +537,6 @@ fn segalign(magic: u32) usize {
 }
 
 pub fn sysexec(a: *Sargs) Error!usize {
-    const up = arch.up().?;
-
     const ufile = a.next(usize);
     try validaddr(ufile, 1, false);
     const argp = a.next(usize);
@@ -545,10 +544,53 @@ pub fn sysexec(a: *Sargs) Error!usize {
     try validaddr(argp, 2 * BY2WD, false);
     if (uword(argp) == 0)
         return error.Ebadarg;
+    return exec0(try userstr(ufile), .{ .cstr = argp });
+}
+
+/// DIFF (new): one argument of planZ's exec, as the user passes it.
+pub const Upair = extern struct {
+    ptr: u64,
+    len: u64,
+};
+
+/// DIFF (new): planZ's exec(file, filelen, args, nargs), where args is
+/// an array of nargs (pointer, length) pairs.  The array is copied into
+/// the kernel once, so another process sharing the memory cannot change
+/// a pair between its check and its use.  The new process's stack is
+/// the same as 9front's exec makes (argv of 0-terminated strings), since
+/// the program may be a stock C one.
+pub fn sysexecn(a: *Sargs) Error!usize {
+    const ufile = a.next(usize);
+    const unamelen = a.next(usize);
+    const uargs = a.next(usize);
+    const nargs = a.next(usize);
+    // each argument takes at least a pointer and a 0 on the new stack
+    if (nargs < 1 or nargs >= USTKSIZE / (BY2WD + 1))
+        return error.Ebadarg;
+    if (uargs % @alignOf(Upair) != 0)
+        return error.Ebadarg;
+    const ua = try userslice(uargs, nargs * @sizeOf(Upair), false);
+    const pairs = alloc.newslice(Upair, nargs) orelse return error.Enomem;
+    defer alloc.free(pairs.ptr);
+    @memcpy(std.mem.sliceAsBytes(pairs), ua);
+    return exec0(try userstrn(ufile, unamelen), .{ .pairs = pairs });
+}
+
+/// DIFF (new): where exec's user arguments come from.
+const Uargs = union(enum) {
+    /// 9front's: the address of a nil-ended array of addresses of
+    /// 0-terminated strings
+    cstr: usize,
+    /// planZ's: the kernel's copy of the (pointer, length) pairs
+    pairs: []const Upair,
+};
+
+fn exec0(ufile: []const u8, uargs: Uargs) Error!usize {
+    const up = arch.up().?;
 
     // The C's outermost waserror.  By the time exec1 has returned an
     // error it has released everything else it held.
-    return exec1(ufile, argp) catch |e| {
+    return exec1(ufile, uargs) catch |e| {
         // Disaster after commit
         if (up.seg[SSEG] == null) {
             var estr: [ERRMAX]u8 = undefined;
@@ -570,14 +612,14 @@ pub fn sysexec(a: *Sargs) Error!usize {
 
 /// The body of sysexec, from the point where the C sets its first
 /// error label.
-fn exec1(ufile: usize, argp_: usize) Error!usize {
+fn exec1(ufile: []const u8, uargs_: Uargs) Error!usize {
     const up = arch.up().?;
-    var argp = argp_;
+    var uargs = uargs_;
     var buf: [256]u8 align(@alignOf(Ehdr)) = undefined; // u.buf
     const ehdr: *const Ehdr = @ptrCast(&buf); // u.ehdr
     var progarg: [32 + 1][]u8 = undefined;
 
-    const file = try chan.validnamedup(try userstr(ufile), true);
+    const file = try chan.validnamedup(ufile, true);
     errdefer alloc.free(file.ptr);
 
     // DIFF: null between closing a script and opening its interpreter,
@@ -709,25 +751,39 @@ fn exec1(ufile: usize, argp_: usize) Error!usize {
         if (charp <= tstk - USTKSIZE)
             return error.Enovmem;
         putstr(charp, elem);
-        argp += BY2WD;
+        switch (uargs) {
+            .cstr => |*argp| argp.* += BY2WD,
+            .pairs => |*pairs| pairs.* = pairs.*[1..],
+        }
     }
 
     // Count user arguments
     var nbytes: usize = tstk - charp;
     var i: usize = 0;
-    while (true) : (i += 1) {
-        const ap = argp + i * BY2WD; // &argp[i]
-        const ua = uword(ap);
-        if (ua == 0)
-            break;
-        try validaddr(ua, 1, false);
-        const e = (try vmemchr(ua, 0, USTKSIZE - nbytes)) orelse return error.Ebadarg;
-        nbytes += e + 1;
-        if (nbytes >= USTKSIZE)
-            return error.Enovmem;
-        // crossing page boundary?
-        if ((ap & (BY2PG - 1)) >= BY2PG - BY2WD)
-            try validaddr(ap + BY2WD, BY2WD, false);
+    switch (uargs) {
+        .cstr => |argp| while (true) : (i += 1) {
+            const ap = argp + i * BY2WD; // &argp[i]
+            const ua = uword(ap);
+            if (ua == 0)
+                break;
+            try validaddr(ua, 1, false);
+            const e = (try vmemchr(ua, 0, USTKSIZE - nbytes)) orelse return error.Ebadarg;
+            nbytes += e + 1;
+            if (nbytes >= USTKSIZE)
+                return error.Enovmem;
+            // crossing page boundary?
+            if ((ap & (BY2PG - 1)) >= BY2PG - BY2WD)
+                try validaddr(ap + BY2WD, BY2WD, false);
+        },
+        .pairs => |pairs| for (pairs) |p| {
+            if (p.len >= USTKSIZE - nbytes)
+                return error.Enovmem;
+            _ = try userstrn(p.ptr, p.len);
+            nbytes += p.len + 1;
+            if (nbytes >= USTKSIZE)
+                return error.Enovmem;
+            i += 1;
+        },
     }
     argc += i;
     if (argc < 1)
@@ -761,15 +817,36 @@ fn exec1(ufile: usize, argp_: usize) Error!usize {
             ia += n;
         }
     }
+    var j: usize = 0; // index into uargs.pairs
     while (i < argc) : (i += 1) {
-        const ua = uword(argp);
-        argp += BY2WD;
-        try validaddr(ua, 1, false);
-        if (charp >= tos)
-            return error.Ebadarg;
-        const e = (try vmemchr(ua, 0, tos - charp)) orelse return error.Ebadarg;
-        n = e + 1;
-        @memmove(ubytes(charp, n), ubytes(ua, n));
+        switch (uargs) {
+            .cstr => |*argp| {
+                const ua = uword(argp.*);
+                argp.* += BY2WD;
+                try validaddr(ua, 1, false);
+                if (charp >= tos)
+                    return error.Ebadarg;
+                const e = (try vmemchr(ua, 0, tos - charp)) orelse return error.Ebadarg;
+                n = e + 1;
+                @memmove(ubytes(charp, n), ubytes(ua, n));
+            },
+            .pairs => |pairs| {
+                const p = pairs[j];
+                j += 1;
+                if (p.len >= tos - charp)
+                    return error.Ebadarg;
+                const src = try userstrn(p.ptr, p.len);
+                const dst = ubytes(charp, p.len + 1);
+                @memmove(dst[0..p.len], src);
+                // A 0 byte cannot be carried in the new stack's
+                // 0-terminated argv.  The check is on the copy, which no
+                // other process can change.
+                if (std.mem.findScalar(u8, dst[0..p.len], 0) != null)
+                    return error.Ebadarg;
+                dst[p.len] = 0;
+                n = p.len + 1;
+            },
+        }
         putword(argv + i * BY2WD, charp + (USTKTOP - tstk));
         charp += n;
     }
@@ -959,6 +1036,28 @@ pub fn sysexits(a: *Sargs) Error!usize {
     proc.pexit(status, true);
 }
 
+/// DIFF (new): planZ's exits(msg, msglen).  A null address is no
+/// message, as in exits(nil); the message is cut at ERRMAX-1 bytes or
+/// at a 0 byte, as 9front's exits reads it.
+pub fn sysexitsn(a: *Sargs) Error!usize {
+    const inval = "invalid exit string";
+    var buf: [ERRMAX]u8 = undefined;
+
+    const ustatus = a.next(usize);
+    const ulen = @min(a.next(usize), ERRMAX - 1);
+    var status: ?[]const u8 = null;
+    if (ustatus != 0) {
+        status = blk: {
+            const u = userstrn(ustatus, ulen) catch break :blk inval;
+            // copied, so it cannot change under pexit
+            @memcpy(buf[0..u.len], u);
+            const m = buf[0..u.len];
+            break :blk m[0 .. std.mem.findScalar(u8, m, 0) orelse m.len];
+        };
+    }
+    proc.pexit(status, true);
+}
+
 pub fn sys_wait(_: *Sargs) Error!usize {
     // DIFF: legacy
     return proc.errorf("old wait system call - recompile", .{});
@@ -1119,6 +1218,18 @@ pub fn syssegattach(a: *Sargs) Error!usize {
     const len = a.next(u32);
     try validaddr(uname, 1, false);
     const name = try chan.validnamedup(try userstr(uname), true);
+    defer alloc.free(name.ptr);
+    return segment.segattach(@bitCast(attr), name, va, len);
+}
+
+/// DIFF (new): planZ's segattach(attr, class, classlen, va, len).
+pub fn syssegattachn(a: *Sargs) Error!usize {
+    const attr = a.next(i32);
+    const uname = a.next(usize);
+    const unamelen = a.next(usize);
+    const va = a.next(usize);
+    const len = a.next(u32);
+    const name = try chan.validnamedup(try userstrn(uname, unamelen), true);
     defer alloc.free(name.ptr);
     return segment.segattach(@bitCast(attr), name, va, len);
 }

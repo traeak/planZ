@@ -68,6 +68,7 @@ const openmode = devmod.openmode;
 const validaddr = fault.validaddr;
 const userslice = fault.userslice;
 const userstr = fault.userstr;
+const userstrn = fault.userstrn;
 
 pub const Error = proc.Error;
 const Sargs = portdat.Sargs;
@@ -341,7 +342,19 @@ pub fn sysopen(a: *Sargs) Error!usize {
     const uname = a.next(usize);
     const mode = a.next(u32);
     _ = try openmode(mode); // error check only
-    const name = try userstr(uname);
+    return open(try userstr(uname), mode);
+}
+
+/// DIFF (new): planZ's open(name, namelen, mode).
+pub fn sysopenn(a: *Sargs) Error!usize {
+    const uname = a.next(usize);
+    const unamelen = a.next(usize);
+    const mode = a.next(u32);
+    _ = try openmode(mode); // error check only
+    return open(try userstrn(uname, unamelen), mode);
+}
+
+fn open(name: []const u8, mode: u32) Error!usize {
     const c = try namec(name, portdat.Aopen, mode, 0);
     errdefer cclose(c);
     const fd = newfd(c, mode);
@@ -955,7 +968,21 @@ pub fn sysstat(a: *Sargs) Error!usize {
     const us = a.next(usize);
     const l = a.next(u32);
     const s = try userslice(us, l, true);
-    const c = try namec(try userstr(uname), portdat.Aaccess, 0, 0);
+    return stat(try userstr(uname), s);
+}
+
+/// DIFF (new): planZ's stat(name, namelen, buf, len).
+pub fn sysstatn(a: *Sargs) Error!usize {
+    const uname = a.next(usize);
+    const unamelen = a.next(usize);
+    const us = a.next(usize);
+    const l = a.next(u32);
+    const s = try userslice(us, l, true);
+    return stat(try userstrn(uname, unamelen), s);
+}
+
+fn stat(aname: []const u8, s: []u8) Error!usize {
+    const c = try namec(aname, portdat.Aaccess, 0, 0);
     defer cclose(c);
     var r = try dev(c).stat(c, s);
     if (pathlast(c.path)) |name|
@@ -964,15 +991,36 @@ pub fn sysstat(a: *Sargs) Error!usize {
 }
 
 pub fn syschdir(a: *Sargs) Error!usize {
+    return chdir(try userstr(a.next(usize)));
+}
+
+/// DIFF (new): planZ's chdir(name, namelen).
+pub fn syschdirn(a: *Sargs) Error!usize {
     const uname = a.next(usize);
-    const c = try namec(try userstr(uname), portdat.Atodir, 0, 0);
+    return chdir(try userstrn(uname, a.next(usize)));
+}
+
+fn chdir(name: []const u8) Error!usize {
+    const c = try namec(name, portdat.Atodir, 0, 0);
     const p = up();
     cclose(p.dot.?);
     p.dot = c;
     return 0;
 }
 
-fn bindmount(ismount: bool, fd: i32, afd: i32, arg0: usize, arg1: usize, flag: u32, uspec: usize) Error!usize {
+/// DIFF: the strings arrive as Ustr, which is either a 0-terminated
+/// string's address (9front's calls) or an (address, length) pair
+/// (planZ's), and are read only where the C reads them.
+const Ustr = struct {
+    addr: usize,
+    len: ?usize = null,
+
+    fn get(u: Ustr) Error![]const u8 {
+        return if (u.len) |n| userstrn(u.addr, n) else userstr(u.addr);
+    }
+};
+
+fn bindmount(ismount: bool, fd: i32, afd: i32, arg0: Ustr, arg1: Ustr, flag: u32, uspec: Ustr) Error!usize {
     if (flag & ~@as(u32, lib.MMASK) != 0 or flag & lib.MORDER == (lib.MBEFORE | lib.MAFTER))
         return error.Ebadarg;
 
@@ -983,7 +1031,7 @@ fn bindmount(ismount: bool, fd: i32, afd: i32, arg0: usize, arg1: usize, flag: u
         if (!pgrp.canmount(up().pgrp.?))
             return error.Enoattach;
 
-        spec = try chan.validnamedup(try userstr(uspec), true);
+        spec = try chan.validnamedup(try uspec.get(), true);
         const bc = try fdtochan(fd, lib.ORDWR, false, true);
         defer cclose(bc);
         var ac: ?*Chan = null;
@@ -991,10 +1039,10 @@ fn bindmount(ismount: bool, fd: i32, afd: i32, arg0: usize, arg1: usize, flag: u
             ac = try fdtochan(afd, lib.ORDWR, false, true);
         defer if (ac) |x| cclose(x);
         break :blk try devmnt.mntattach(bc, ac, spec.?, flag & lib.MCACHE);
-    } else try namec(try userstr(arg0), portdat.Abind, 0, 0);
+    } else try namec(try arg0.get(), portdat.Abind, 0, 0);
     {
         defer cclose(c0);
-        const c1 = try namec(try userstr(arg1), portdat.Amount, 0, 0);
+        const c1 = try namec(try arg1.get(), portdat.Amount, 0, 0);
         defer cclose(c1);
         try chan.cmount(c0, c1, flag, spec);
     }
@@ -1008,7 +1056,15 @@ pub fn sysbind(a: *Sargs) Error!usize {
     const arg0 = a.next(usize);
     const arg1 = a.next(usize);
     const flag = a.next(u32);
-    return bindmount(false, -1, -1, arg0, arg1, flag, 0);
+    return bindmount(false, -1, -1, .{ .addr = arg0 }, .{ .addr = arg1 }, flag, .{ .addr = 0 });
+}
+
+/// DIFF (new): planZ's bind(new, newlen, old, oldlen, flag).
+pub fn sysbindn(a: *Sargs) Error!usize {
+    const arg0: Ustr = .{ .addr = a.next(usize), .len = a.next(usize) };
+    const arg1: Ustr = .{ .addr = a.next(usize), .len = a.next(usize) };
+    const flag = a.next(u32);
+    return bindmount(false, -1, -1, arg0, arg1, flag, .{ .addr = 0, .len = 0 });
 }
 
 pub fn sysmount(a: *Sargs) Error!usize {
@@ -1017,7 +1073,17 @@ pub fn sysmount(a: *Sargs) Error!usize {
     const arg1 = a.next(usize);
     const flag = a.next(u32);
     const spec = a.next(usize);
-    return bindmount(true, fd, afd, 0, arg1, flag, spec);
+    return bindmount(true, fd, afd, .{ .addr = 0 }, .{ .addr = arg1 }, flag, .{ .addr = spec });
+}
+
+/// DIFF (new): planZ's mount(fd, afd, old, oldlen, flag, spec, speclen).
+pub fn sysmountn(a: *Sargs) Error!usize {
+    const fd = a.next(i32);
+    const afd = a.next(i32);
+    const arg1: Ustr = .{ .addr = a.next(usize), .len = a.next(usize) };
+    const flag = a.next(u32);
+    const spec: Ustr = .{ .addr = a.next(usize), .len = a.next(usize) };
+    return bindmount(true, fd, afd, .{ .addr = 0, .len = 0 }, arg1, flag, spec);
 }
 
 pub fn sys_mount(_: *Sargs) Error!usize {
@@ -1028,13 +1094,24 @@ pub fn sys_mount(_: *Sargs) Error!usize {
 pub fn sysunmount(a: *Sargs) Error!usize {
     const name = a.next(usize);
     const old = a.next(usize);
+    return unmount(if (name == 0) null else .{ .addr = name }, .{ .addr = old });
+}
 
-    const cmount = try namec(try userstr(old), portdat.Amount, 0, 0);
+/// DIFF (new): planZ's unmount(name, namelen, old, oldlen); a name of
+/// length 0 is none, as a nil name is in 9front's.
+pub fn sysunmountn(a: *Sargs) Error!usize {
+    const name: Ustr = .{ .addr = a.next(usize), .len = a.next(usize) };
+    const old: Ustr = .{ .addr = a.next(usize), .len = a.next(usize) };
+    return unmount(if (name.len == 0) null else name, old);
+}
+
+fn unmount(name: ?Ustr, old: Ustr) Error!usize {
+    const cmount = try namec(try old.get(), portdat.Amount, 0, 0);
     defer cclose(cmount);
-    if (name == 0) {
+    if (name == null) {
         try chan.cunmount(cmount, null);
     } else {
-        const cmounted = try namec(try userstr(name), portdat.Aunmount, lib.OREAD, 0);
+        const cmounted = try namec(try name.?.get(), portdat.Aunmount, lib.OREAD, 0);
         defer cclose(cmounted);
         try chan.cunmount(cmount, cmounted);
     }
@@ -1046,7 +1123,21 @@ pub fn syscreate(a: *Sargs) Error!usize {
     const mode = a.next(u32);
     const perm = a.next(u32);
     _ = try openmode(mode & ~@as(u32, lib.OEXCL)); // error check only; OEXCL okay here
-    const c = try namec(try userstr(uname), portdat.Acreate, mode, perm);
+    return create(try userstr(uname), mode, perm);
+}
+
+/// DIFF (new): planZ's create(name, namelen, mode, perm).
+pub fn syscreaten(a: *Sargs) Error!usize {
+    const uname = a.next(usize);
+    const unamelen = a.next(usize);
+    const mode = a.next(u32);
+    const perm = a.next(u32);
+    _ = try openmode(mode & ~@as(u32, lib.OEXCL)); // error check only; OEXCL okay here
+    return create(try userstrn(uname, unamelen), mode, perm);
+}
+
+fn create(name: []const u8, mode: u32, perm: u32) Error!usize {
+    const c = try namec(name, portdat.Acreate, mode, perm);
     errdefer cclose(c);
     const fd = newfd(c, mode);
     if (fd < 0)
@@ -1055,8 +1146,17 @@ pub fn syscreate(a: *Sargs) Error!usize {
 }
 
 pub fn sysremove(a: *Sargs) Error!usize {
+    return remove(try userstr(a.next(usize)));
+}
+
+/// DIFF (new): planZ's remove(name, namelen).
+pub fn sysremoven(a: *Sargs) Error!usize {
     const uname = a.next(usize);
-    const c = try namec(try userstr(uname), portdat.Aremove, 0, 0);
+    return remove(try userstrn(uname, a.next(usize)));
+}
+
+fn remove(name: []const u8) Error!usize {
+    const c = try namec(name, portdat.Aremove, 0, 0);
     // Removing mount points is disallowed to avoid surprises
     // (which should be removed: the mount point or the mounted Chan?).
     if (c.ismtpt) {
@@ -1097,6 +1197,18 @@ pub fn syswstat(a: *Sargs) Error!usize {
     const s = try userslice(us, l, false);
     try validstat(s);
     const c = try namec(try userstr(uname), portdat.Aaccess, 0, 0);
+    return wstat(c, s);
+}
+
+/// DIFF (new): planZ's wstat(name, namelen, buf, len).
+pub fn syswstatn(a: *Sargs) Error!usize {
+    const uname = a.next(usize);
+    const unamelen = a.next(usize);
+    const us = a.next(usize);
+    const l = a.next(u32);
+    const s = try userslice(us, l, false);
+    try validstat(s);
+    const c = try namec(try userstrn(uname, unamelen), portdat.Aaccess, 0, 0);
     return wstat(c, s);
 }
 
