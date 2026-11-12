@@ -222,7 +222,7 @@ The goal is a Zig library for planZ's own user programs that covers what 9front'
 Steps, each with a program that uses it:
 1. **System calls, complete.** Every call in `libc/9syscall/sys.h` that the kernel serves. Added to today's set: `seek`, `remove`, `mount`, `unmount`, `fversion`, `fauth`, `wstat`, `fwstat`, `fstat`, `stat`, `segattach`, `segbrk`, `segfree`, `segflush`, `semacquire`, `tsemacquire`, `semrelease`, `nsec`, `noted`, `errstr`. Each has a raw form, as today, and a checked form returning `error.Plan9`, with the kernel's message kept per process for `errstr()`. The numbers and the Tos layout are checked against `std.os.plan9` where both exist.
 2. **Start-up, from `amd64/main9.s` and `port/main.c`.**
-   - `_start` saves `_tos` from RAX and reads argc/argv from the stack. It calls `main(args: []const [*:0]const u8)`, which may return `!void`.
+   - `_start` saves `_tos` from RAX and reads argc/argv from the stack. It calls `main(args: []const []const u8)`, which may return `!void`.
    - A normal return calls `exits(nil)`. An error return calls `exits` with the error string.
    - `boot.zig`'s and `initcode.zig`'s own `_start` stay. `initcode` must fit in a page and uses only raw calls.
    - `main9p.s` (profiling) is not ported.
@@ -271,6 +271,41 @@ Found while testing it and fixed: once in about 8 boots under TCG the kernel pan
 - **Fix.** `sched()` now takes `up` from `arch.up()`, one `%gs` load, and reads `m` with interrupts off. `qlock.zig`'s `checklocks` reads `ilockdepth` the same way.
 - **Check.** A 1 ms delay was put between the two reads, temporarily. The old code then panicked in 6 of 14 TCG boots (`sched: no process` and `cpu3: ilockdepth 0`); the fixed code panicked in none of 14.
 - **Other uses of `arch.m().x` from process context.** They are statistics counters or a CPU number used as a hint, as in the C.
+
+#### System calls that take slices: planned
+planZ's own extension, with no 9front counterpart. 9front's calls take names as addresses of bytes ending in a 0, so `sys.zig` copies each slice into a stack buffer to add the 0, refuses names of 1024 bytes or more, and makes `exec` lay out a C argument array. A second set of calls takes each string as a (pointer, length) pair instead. It is for planZ's Zig programs only: 9front's calls stay, unchanged, for stock C binaries, and 9front's libc never uses the new ones.
+
+**The kernel is already mostly done.** Inside it, names are slices (`namec`, `validname`, ...); the one place a 0-terminated string becomes a slice is `fault.userstr`. A new handler is the old one with `fault.userslice(addr, len, false)` in place of `userstr`, plus a length check. A 0 byte inside a name is refused by `validname`, since 0 is one of the characters `isfrog` rejects.
+
+**The interface.**
+- **A string is two consecutive argument words, pointer then length.** The kernel reads arguments as 8-byte words from the user stack, so this is also exactly what a C struct `{ptr, len}` passed by value gives on 6c (and on SysV, in two registers). The interface is documented as two words, so it depends on no compiler's struct-passing rules, and a caller may use either form.
+- **Arrays of strings (exec's arguments) are an array of 16-byte pairs**, `{ptr: u64, len: u64}`: an `extern struct` in Zig (a Zig slice's own layout is not guaranteed), two 8-byte fields in C (not `ulong`, which is 32 bits on 9front). The array is passed by address with a count. The kernel checks the array, copies it into kernel memory once, and works only from the copy, so another process sharing the memory cannot change a pair between the check and the use.
+- **No struct passed by address for a single string.** It would add a second validation, a copy-in and the same check/use race for no gain.
+- **Zig wrappers take `[]const u8` and `[]const []const u8`**, so programs never see the split.
+
+**Numbers.** 9front uses 0–53. The new calls start at 64, leaving 9front room to grow, and `nsyscall` grows to match.
+
+| New call | Arguments | Replaces |
+|---|---|---|
+| `open`, `create`, `remove`, `chdir` | name (ptr, len), then the old arguments | 1 string |
+| `stat`, `wstat` | name (ptr, len), buffer, buffer length | 1 string |
+| `bind` | new (ptr, len), old (ptr, len), flag | 2 strings |
+| `mount` | fd, afd, old (ptr, len), flag, spec (ptr, len) | 2 strings |
+| `unmount` | name (ptr, len; length 0 for none), old (ptr, len) | 2 strings |
+| `segattach` | attr, class (ptr, len), va, len | 1 string |
+| `exits` | message (ptr, len) | scans for the 0, up to ERRMAX |
+| `exec` | file (ptr, len), pairs array address, count | NUL strings in a nil-ended argv |
+
+Limits: names under 2^16 bytes (what 9P can carry, as `validname` checks today); the `exits` message is cut to ERRMAX as now. The calls that already take a buffer and length (`read`, `write`, `pread`, `pwrite`, `fd2path`, `errstr`, `await`) are not duplicated.
+
+**exec.** The kernel validates the pairs array and each slice in it, replacing the `vmemchr` scan in `sysexec`. The new process's stack keeps the C layout (argv of 0-terminated strings), because a Zig program may exec a stock C one such as `rc` and the kernel cannot tell which kind it is starting. So `start.zig` still turns argv into slices with `sys.span`. Giving Zig programs a stack with lengths would need a marker in the a.out header; not in this plan. The `#!` path in `sysexec` works on its own copies and is unaffected.
+
+**User space.** `sys.zig` passes `s.ptr, s.len` straight through: `sys.Name`, its 1024-byte limit and the copy go, and `sys.exec` needs no caller buffer (a small stack array of pairs, or the allocator in `libc.exec` past that). `initcode` should shrink back toward its earlier ~800 bytes. `sys.span` stays for argv and notes, `sys.upto0` for `errstr`/`fd2path`.
+
+**Tests.**
+- `libctest`: a 0 byte in a name is refused (now by the kernel); a name over 1024 bytes now works and one of 2^16 is refused; a 0-length name; `exec` with an empty argument and one with spaces; a bad pointer in exec's pairs array gives an error, not a crash.
+- `test-9front` shows the old calls still serve stock binaries; `test-boot`, `test-zuser` and `test-usb` as now.
+- A DIFF note in `syscall.zig` and on each new handler.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
