@@ -5,7 +5,9 @@
 # that the firmware starts the loader from it, that 9front boots from
 # its Plan 9 partition into rio without a key being pressed, that a
 # click and typed commands reach rio's window, that the root is the USB
-# disk and can be written, and that the pointer moves.
+# disk and can be written, that the pointer moves, and that planZ's
+# Zig programs on the boot volume (zig/run) install and match the
+# stock programs.
 #
 # usage: usbtest.sh timeout-seconds image qemu-command...
 #
@@ -70,7 +72,8 @@ sh "$here/bootchat.sh" "$timeout" \
 	"/srv/boot" "@host $qmp type 'echo planZ^usb >/usr/glenda/zt && cat /usr/glenda/zt >/dev/eia0\\n'" \
 	"planZusb" "@host $qmp abs 16384 16384 , abs 16390 16390 , type 'dd -if /dev/mousein -bs 60 -count 1 -quiet 1 >/dev/eia0; echo >/dev/eia0\\n'" \
 	"  640         400" "@host ${USBSHOT:+$qmp shot $USBSHOT} :" \
-	"" \
+	"" "@host $qmp type 'dossrv -f /dev/sdU*/esp esp; mount -c /srv/esp /n/esp; rc /n/esp/zig/run >/dev/eia0\\n'" \
+	"zig: all the same as stock, libctest ok" \
 	-- "$@" -machine q35,i8042=off -device qemu-xhci \
 	-drive "if=none,id=u0,format=raw,snapshot=on,file=$image" -device usb-storage,drive=u0 \
 	-device usb-kbd -device usb-tablet \

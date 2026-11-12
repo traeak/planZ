@@ -67,11 +67,35 @@ dd -if /dev/random -bs 4096 -count 40 >/dev/audio
 
 Note which pin numbers worked, if any.
 
-## 4. Save everything to the stick
+## 4. Zig programs
+
+planZ's first user programs written in Zig are on the stick: `echo`,
+`cat`, `wc` and `ls`, and `libctest`, which checks the library under
+them. The script copies them to `/tmp/zig` and runs each one beside
+the stock 9front program of the same name:
 
 ```
 dossrv -f /dev/sdU*/esp esp
 mount -c /srv/esp /n/esp
+rc /n/esp/zig/run
+```
+
+- [ ] The last line is `zig: all the same as stock, libctest ok`.
+
+Afterwards they can be run as `/tmp/zig/ls` and so on.
+
+## 5. Save everything to the stick
+
+If step 4 was skipped, mount the stick first:
+
+```
+dossrv -f /dev/sdU*/esp esp
+mount -c /srv/esp /n/esp
+```
+
+Then:
+
+```
 cat /dev/kmesg >/n/esp/kmesg.txt
 pci -v >/n/esp/pci.txt
 cat /dev/usb/ctl >/n/esp/usb.txt
@@ -81,6 +105,7 @@ cp /tmp/ifstat2 /n/esp/ifstat2.txt
 cat /net/ndb >/n/esp/ndb.txt
 cp /tmp/audiostat /n/esp/audiostat.txt
 cp /tmp/volume /n/esp/volume.txt
+cp /tmp/zig.txt /n/esp/zig.txt
 unmount /n/esp
 fshalt
 ```
@@ -89,18 +114,18 @@ Wait for `done halting` before pulling the stick. On Linux the files
 are in partition 1 of the stick. `fsck.fat` may say the free-cluster
 count is wrong; that is harmless.
 
-## 5. Optional
+## 6. Optional
 
 - [ ] `stats -lmc` in a new window: load, memory and context switches
       stay steady while idle.
 - [ ] `cat /dev/sysstat` has one line per processor: 12 for the
       Ryzen 5 3600 with SMT on.
 
-## 6. What to send back
+## 7. What to send back
 
-- The files from step 4. Those are `kmesg.txt`, `pci.txt`, `usb.txt`,
+- The files from step 5. Those are `kmesg.txt`, `pci.txt`, `usb.txt`,
   `sysstat.txt`, `ifstat1.txt`, `ifstat2.txt`, `ndb.txt`,
-  `audiostat.txt` and `volume.txt`.
+  `audiostat.txt`, `volume.txt` and `zig.txt`.
 - A note on what happened in steps 1 to 3, including which pins played
   sound.
 - A photo of the screen if anything panics or hangs.

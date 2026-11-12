@@ -69,9 +69,10 @@ pub fn build(b: *std.Build) void {
     // zig-out/user/bin by `zig build user`.
     const user_step = b.step("user", "Build the user programs written in Zig into zig-out/user/bin");
     const zcmds = [_][]const u8{ "echo", "cat", "ls", "wc", "libctest" };
-    for (zcmds) |name| {
-        const bin = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc);
-        user_step.dependOn(&b.addInstallFile(bin, b.fmt("user/bin/{s}", .{name})).step);
+    var zbins: [zcmds.len]std.Build.LazyPath = undefined;
+    for (zcmds, 0..) |name, i| {
+        zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc);
+        user_step.dependOn(&b.addInstallFile(zbins[i], b.fmt("user/bin/{s}", .{name})).step);
     }
 
     const kernel = b.addExecutable(.{
@@ -277,6 +278,11 @@ pub fn build(b: *std.Build) void {
                 mk.addPrefixedFileArg("boot/bootfs.paq=", b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })));
                 mk.addPrefixedFileArg("boot/paqfs=", b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })));
                 mk.addPrefixedFileArg("boot/factotum=", b.path(b.pathJoin(&.{ dir, "root/amd64/bin/auth/factotum" })));
+                // planZ's Zig programs and the script that installs and
+                // checks them (docs/hardware-checklist.md)
+                for (zcmds, zbins) |name, bin|
+                    mk.addPrefixedFileArg(b.fmt("zig/bin/{s}=", .{name}), bin);
+                mk.addPrefixedFileArg("zig/run=", b.path("tools/usbzig.rc"));
                 mk.has_side_effects = true;
                 if (usb_write) |w| mk.step.dependOn(&w.step);
                 usb_write = usb_write orelse mk;

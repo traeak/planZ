@@ -1,0 +1,55 @@
+#!/bin/rc
+# planZ's Zig programs on the USB stick.  On the stick this is zig/run,
+# beside zig/bin/*.  The FAT file server gives no execute permission,
+# so the programs are copied to /tmp/zig and made executable there.
+# Then each runs beside the stock program of the same name with the
+# same arguments, as `zig build test-zuser` does in QEMU, and libctest
+# checks the rest of the library.  The report is also kept in
+# /tmp/zig.txt.
+#
+# usage, with the stick's FAT partition mounted on /n/esp:
+#	rc /n/esp/zig/run
+
+rfork e
+z=/tmp/zig
+mkdir -p $z
+for(f in /n/esp/zig/bin/*){
+	b=`{basename $f}
+	cp $f $z/$b && chmod +x $z/$b
+}
+
+fn t {
+	if(cmp -s /tmp/zig.a /tmp/zig.b)
+		echo same $1
+	if not {
+		echo DIFF $1
+		nbad=($nbad $1)
+	}
+}
+
+fn checks {
+	nbad=()
+	$z/echo hello 'a b' -x >/tmp/zig.a; echo hello 'a b' -x >/tmp/zig.b; t echo1
+	$z/echo -n x y >/tmp/zig.a; echo -n x y >/tmp/zig.b; t echo2
+	$z/cat /lib/namespace /amd64/bin/rc >/tmp/zig.a; cat /lib/namespace /amd64/bin/rc >/tmp/zig.b; t cat1
+	$z/cat </lib/namespace >/tmp/zig.a; cat </lib/namespace >/tmp/zig.b; t cat2
+	$z/cat /nope >[2]/tmp/zig.a; cat /nope >[2]/tmp/zig.b; t cat3
+	$z/wc /lib/namespace /amd64/bin/rc >/tmp/zig.a; wc /lib/namespace /amd64/bin/rc >/tmp/zig.b; t wc1
+	$z/wc -lwrbc /amd64/bin/rc </lib/namespace >/tmp/zig.a; wc -lwrbc /amd64/bin/rc </lib/namespace >/tmp/zig.b; t wc2
+	$z/ls /dev /env/home /bin/ip /lib/namespace >/tmp/zig.a; ls /dev /env/home /bin/ip /lib/namespace >/tmp/zig.b; t ls1
+	$z/ls -F /amd64/bin >/tmp/zig.a; ls -F /amd64/bin >/tmp/zig.b; t ls2
+	$z/ls -ds /lib /amd64/bin/rc >/tmp/zig.a; ls -ds /lib /amd64/bin/rc >/tmp/zig.b; t ls3
+	$z/ls -tr /lib >/tmp/zig.a; ls -tr /lib >/tmp/zig.b; t ls4
+	$z/ls -pq /lib/ndb >/tmp/zig.a; ls -pq /lib/ndb >/tmp/zig.b; t ls5
+	$z/ls /nope >[2]/tmp/zig.a; ls /nope >[2]/tmp/zig.b; t ls6
+	rm -f /tmp/zig.a /tmp/zig.b
+	if(! $z/libctest)
+		nbad=($nbad libctest)
+	if(~ $#nbad 0)
+		echo 'zig: all the same as stock, libctest ok'
+	if not
+		echo 'zig: failed:' $nbad
+}
+
+checks >[2=1] | tee /tmp/zig.txt
+echo 'the programs are in' $z
