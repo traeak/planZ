@@ -17,13 +17,14 @@ cache.
 - **QEMU and KVM:** stock 9front boots from its own disk image (hjfs,
   on virtio, NVMe or AHCI). It runs on 1 to 8 processors and gets a
   DHCP lease. `hget` works over TLS, and `rio` runs on the UEFI
-  framebuffer with a USB or PS/2 keyboard and mouse.
+  framebuffer with a USB or PS/2 keyboard and mouse. Sound plays
+  through an emulated Intel HD Audio controller.
 - **Real hardware:** a USB stick image has booted to `rio`, with
   working typing, on one machine (Ryzen 5 3600, B550 board). Checking
   the rest of that machine is in progress; see
   [docs/hardware-checklist.md](docs/hardware-checklist.md).
-- **Not yet:** userland programs written in Zig beyond a seed, audio,
-  GPU acceleration, aarch64 and riscv64. The portable kernel already
+- **Not yet:** userland programs written in Zig beyond a seed, sound
+  on real hardware, GPU acceleration, aarch64 and riscv64. The portable kernel already
   compiles for the last two.
 
 [PLAN.md](PLAN.md) has the full plan: decisions, milestones M0 to M9,
@@ -63,6 +64,7 @@ With the reference files (`D="-Dref=ref -Ddisk=ref/disk/9front-11952.amd64.qcow2
 | `zig build test-rio $D` | `rio` with keyboard and mouse, checked by screenshot |
 | `zig build test-usb $D` | The USB stick image booted from a USB disk |
 | `zig build test-usbnet $D` | The network through a USB Ethernet adapter |
+| `zig build test-audio $D` | A tone played through the HD Audio driver, recorded by QEMU and checked |
 
 Useful options include `-Dcpu=` (`SandyBridge` by default, also `max`
 and `Opteron_G4,+xsaveopt`), `-Dsmp=`, `-Dmem=`,

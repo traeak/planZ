@@ -160,7 +160,7 @@ Boot on one physical 2011-or-later machine; add the NIC and quirks it needs; aud
 
 The user's test machine: AMD Ryzen 5 3600 (Zen 2) on a Jingyue B550i mini-ITX board, 32GB RAM, Radeon RX 6500 XT. It has no integrated graphics, so the display is the card's UEFI framebuffer. Assume no serial console. The development machine has the same board (DMI: JGINYUE B550i-GAMING), so its hardware can be read from Linux there: Ethernet is a Realtek RTL8125B (`10ec:8125` rev 05), for which 9front has no driver at this commit; two xHCI controllers (AMD 500-series chipset `1022:43ee`, Matisse `1022:149c`); AMD AHCI `1022:43eb`; no PS/2 controller and no UART; HPET and ACPI PM timer; an IOMMU; the video card's framebuffer BAR near 480GiB. Keyboards and mice there are full-speed devices, some behind high-speed hubs, which needs the transaction-translator path of xHCI that QEMU cannot exercise. `zig build usb-image` makes a stick that boots it to rio with no other disk; `docs/real-hardware.md` has the steps and what to look for.
 
-#### Audio (HDA): plan, not started
+#### Audio (HDA): steps 1–3 done, step 4 waits for the machine
 Port 9front's audio stack as it is configured in `9/pc64/pc64` (`audio` device, `audiohda` driver; `audiosb16` and `audioac97` stay out). Stock `termrc` already binds `#A` onto `/dev` when it exists, so `zuke`, `audio/wavdec`, `audio/mixfs` and the other stock programs need nothing more.
 
 | New file | From | C lines |
@@ -195,6 +195,22 @@ Steps, each one built and tested before the next:
 5. **Documentation.** Update the README status, `docs/hardware-checklist.md`, the M9 status row and the kept-and-dropped lists.
 
 Risks: QEMU emulates only Intel's controller, so AMD controller quirks show up only on the machine. The ALC897's default pin configuration may not score the jack the user expects; `audioctl`'s `pin` command is the fallback. Recording is tested only against silence.
+
+Progress: `port/audioif.zig`, `port/devaudio.zig` and `port/audiohda.zig` are ported, with the DIFFs listed in their headers. `zig build test-audio $D` (`tools/audiotest.sh`, `tools/audiocheck.py`):
+- The guest reads `audiostat` and `volume`, sets `master` and `recgain`, and is refused a second open for writing ("device is busy").
+- It fetches a 2-second 440 Hz tone from the host over HTTP and plays it with `audio/wavdec`.
+- QEMU's wav back end records 1.96 s of it at 439.9 Hz on both channels.
+- It passes with `intel-hda` and `ich9-intel-hda`; with the `hda-duplex`, `hda-output` and `hda-micro` codecs; with 1, 4 and 8 processors; and in a debug build.
+
+Two checks were done by hand:
+- **Graphics-card audio is skipped.** A QEMU VGA adapter at function 0 with an HDA controller at function 1 of the same slot is reported as "graphics card audio, not used", and a second controller elsewhere becomes `#A0`.
+- **The `Agetright` fix.** It is confirmed against the HDA specification. With it, `recgain 30 70` reads back as `29 70`; the 29 is the C's rounding.
+
+Not tested:
+- Reading `/dev/audio`: QEMU's wav back end has no input.
+- What becomes of the last 40 ms of the tone, which could be the driver or QEMU's recording.
+
+Step 4's commands are in `docs/hardware-checklist.md` (section 3).
 
 #### Minimal Zig libc: plan, not started
 The goal is a Zig library for planZ's own user programs that covers what 9front's `libc` gives a simple program, so Zig can replace C for new user programs. It is a Zig API (errors as error unions, slices instead of NUL-terminated strings where the kernel allows it), not a C ABI libc. Stock C programs keep using 9front's own libc.

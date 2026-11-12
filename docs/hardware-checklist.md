@@ -39,7 +39,35 @@ If there is never a link (`ifstat` shows no `link up`), add
 `*rtl8125nophy=1` to `plan9.ini` on the stick, boot again and repeat
 this step. Keep the files from both boots.
 
-## 3. Save everything to the stick
+## 3. Sound (on-board HD Audio)
+
+The driver is 9front's, ported; it has only run in QEMU so far. Plug
+speakers or headphones into the green jack at the back, then:
+
+```
+cat /dev/audiostat >/tmp/audiostat
+cat /dev/volume >/tmp/volume
+grep -e '^codec' -e path /tmp/audiostat
+echo 30 >/dev/volume
+dd -if /dev/random -bs 4096 -count 40 >/dev/audio
+```
+
+- [ ] `grep` shows a `codec` line and an `outpath` line.
+- [ ] The last command plays about a second of soft hiss.
+
+If nothing is heard, look in `/tmp/audiostat` for the `pin` lines
+marked `out`. Each one says where the jack is (`rear`, `front`) and its
+colour. Try each pin number N in turn and play the hiss again. Front
+headphones are worth trying too:
+
+```
+echo pin N >/dev/audioctl
+dd -if /dev/random -bs 4096 -count 40 >/dev/audio
+```
+
+Note which pin numbers worked, if any.
+
+## 4. Save everything to the stick
 
 ```
 dossrv -f /dev/sdU*/esp esp
@@ -51,6 +79,8 @@ cat /dev/sysstat >/n/esp/sysstat.txt
 cp /tmp/ifstat1 /n/esp/ifstat1.txt
 cp /tmp/ifstat2 /n/esp/ifstat2.txt
 cat /net/ndb >/n/esp/ndb.txt
+cp /tmp/audiostat /n/esp/audiostat.txt
+cp /tmp/volume /n/esp/volume.txt
 unmount /n/esp
 fshalt
 ```
@@ -59,16 +89,18 @@ Wait for `done halting` before pulling the stick. On Linux the files
 are in partition 1 of the stick. `fsck.fat` may say the free-cluster
 count is wrong; that is harmless.
 
-## 4. Optional
+## 5. Optional
 
 - [ ] `stats -lmc` in a new window: load, memory and context switches
       stay steady while idle.
 - [ ] `cat /dev/sysstat` has one line per processor: 12 for the
       Ryzen 5 3600 with SMT on.
 
-## 5. What to send back
+## 6. What to send back
 
-- The files from step 3. Those are `kmesg.txt`, `pci.txt`, `usb.txt`,
-  `sysstat.txt`, `ifstat1.txt`, `ifstat2.txt` and `ndb.txt`.
-- A note on what happened in steps 1 and 2.
+- The files from step 4. Those are `kmesg.txt`, `pci.txt`, `usb.txt`,
+  `sysstat.txt`, `ifstat1.txt`, `ifstat2.txt`, `ndb.txt`,
+  `audiostat.txt` and `volume.txt`.
+- A note on what happened in steps 1 to 3, including which pins played
+  sound.
 - A photo of the screen if anything panics or hangs.

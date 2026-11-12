@@ -193,6 +193,14 @@ pub fn build(b: *std.Build) void {
             addEsp(b, nchat, loader, kernel, ini9, dir);
             b.step("test-net", "Boot stock 9front from the disk image and use the network").dependOn(&nchat.step);
 
+            // And sound: a tone played through the HDA driver to a wav
+            // file, which is checked.
+            const achat = b.addSystemCommand(&.{ "sh", "tools/audiotest.sh", "240" });
+            achat.addArgs(qemu_args);
+            achat.addArgs(&.{ "-display", "none" });
+            addEsp(b, achat, loader, kernel, ini9, dir);
+            b.step("test-audio", "Boot stock 9front from the disk image and play a tone through the HDA driver").dependOn(&achat.step);
+
             // The same through a USB Ethernet adapter, which stock
             // nusb/ether drives from user space over the kernel's USB
             // stack.  The virtio card is still there; the test names
