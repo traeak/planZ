@@ -34,6 +34,7 @@ pub fn _start() callconv(.naked) noreturn {
 
 export fn _callmain(sp: [*]usize, tos: *libc.Tos) callconv(.c) noreturn {
     libc.tos = tos;
+    libc.fmt.doquote = @import("string.zig").needsrcquote;
     const argc = sp[0];
     const argvp: [*]const [*]const u8 = @ptrCast(sp + 1);
     // DIFF: the arguments as slices, in memory from the allocator

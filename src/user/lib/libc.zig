@@ -46,6 +46,10 @@ pub const OCEXEC = sys.OCEXEC;
 pub const ORCLOSE = sys.ORCLOSE;
 pub const OEXCL = sys.OEXCL;
 pub const DMDIR = fcall.DMDIR;
+pub const DMAPPEND = fcall.DMAPPEND;
+pub const DMEXCL = fcall.DMEXCL;
+pub const DMTMP = fcall.DMTMP;
+pub const QTDIR = fcall.QTDIR;
 pub const AEXIST = sys.AEXIST;
 pub const AEXEC = sys.AEXEC;
 pub const AWRITE = sys.AWRITE;
@@ -130,7 +134,24 @@ pub const Args = string_.Args;
 pub const qsort = @import("qsort.zig").qsort;
 pub const strtol = string_.strtol;
 pub const strtoul = string_.strtoul;
+pub const strtol32 = string_.strtol32;
+pub const strtoul32 = string_.strtoul32;
 pub const basename = string_.basename;
+
+// Runes
+
+const rune_ = @import("rune.zig");
+pub const Rune = rune_.Rune;
+pub const UTFmax = rune_.UTFmax;
+pub const Runeself = rune_.Runeself;
+pub const Runeerror = rune_.Runeerror;
+pub const Runemax = rune_.Runemax;
+pub const chartorune = rune_.chartorune;
+pub const runetochar = rune_.runetochar;
+pub const runelen = rune_.runelen;
+pub const fullrune = rune_.fullrune;
+pub const utflen = rune_.utflen;
+pub const utfrune = rune_.utfrune;
 
 // Buffered I/O
 

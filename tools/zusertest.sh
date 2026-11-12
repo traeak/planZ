@@ -25,7 +25,9 @@ tmp=$(mktemp -d)
 mkdir "$tmp/tls" "$tmp/www"
 cp "$bindir"/* "$tmp/www/"
 cp "$here/usbzig.rc" "$tmp/www/run"
-progs=$(cd "$bindir" && ls | tr '\n' ' ')
+# the names go in a file the guest fetches, which keeps the typed
+# command short
+(cd "$bindir" && ls) >"$tmp/www/list"
 if ! openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=planz-test \
 	-keyout "$tmp/tls/key" -out "$tmp/tls/crt" >/dev/null 2>&1; then
 	echo "zuser test: openssl could not make a certificate" >&2
@@ -52,7 +54,7 @@ case " $* " in
 esac
 
 url=http://10.0.2.2:$port
-get="mkdir -p /tmp/zsrc; for(p in $progs) hget $url/\$p >/tmp/zsrc/\$p; hget $url/run >/tmp/zrun; echo fetch^ok"
+get="mkdir -p /tmp/zsrc; for(p in \`{hget $url/list}) hget $url/\$p >/tmp/zsrc/\$p; hget $url/run >/tmp/zrun; echo fetch^ok"
 
 sh "$here/bootchat.sh" "$timeout" \
 	"bootargs is" "" \

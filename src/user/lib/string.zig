@@ -358,6 +358,95 @@ pub fn strtol(s: []const u8, base: u32) struct { v: i64, n: usize } {
     return .{ .v = @bitCast(r.v), .n = r.n };
 }
 
+/// libc's strtoul as Plan 9 has it on amd64, where ulong is 32 bits: a
+/// value that does not fit is ULONG_MAX.
+pub fn strtoul32(s: []const u8, base: u32) struct { v: u32, n: usize } {
+    const r = strtou(u32, s, base);
+    return .{ .v = r.v, .n = r.n };
+}
+
+/// libc's strtol as Plan 9 has it on amd64, where long is 32 bits: a
+/// value that does not fit is LONG_MAX or LONG_MIN.
+/// from libc/port/strtol.c
+pub fn strtol32(s: []const u8, base_: u32) struct { v: i32, n: usize } {
+    const S = struct {
+        fn at(str: []const u8, i: usize) u8 {
+            return if (i < str.len) str[i] else 0;
+        }
+    };
+    const at = S.at;
+    var base = base_;
+    var p: usize = 0;
+    var neg = false;
+    var n: i32 = 0;
+    var ndig: usize = 0;
+    var ovfl = false;
+
+    // White space
+    while (true) : (p += 1) {
+        switch (at(s, p)) {
+            ' ', '\t', '\n', 0x0c, '\r', 0x0b => continue,
+            else => {},
+        }
+        break;
+    }
+
+    // Sign
+    if (at(s, p) == '-' or at(s, p) == '+') {
+        neg = at(s, p) == '-';
+        p += 1;
+    }
+
+    // Base
+    var ok = true;
+    if (base == 0) {
+        base = 10;
+        if (at(s, p) == '0') {
+            base = 8;
+            if (at(s, p + 1) == 'x' or at(s, p + 1) == 'X') {
+                p += 2;
+                base = 16;
+            }
+        }
+    } else if (base == 16 and at(s, p) == '0') {
+        if (at(s, p + 1) == 'x' or at(s, p + 1) == 'X')
+            p += 2;
+    } else if (base > 36)
+        ok = false;
+
+    // Non-empty sequence of digits
+    if (ok) {
+        const m = @divTrunc(std.math.maxInt(i32), @as(i32, @intCast(base)));
+        while (true) : ({
+            p += 1;
+            ndig += 1;
+        }) {
+            const c = at(s, p);
+            var v: u32 = base;
+            if ('0' <= c and c <= '9')
+                v = c - '0'
+            else if ('a' <= c and c <= 'z')
+                v = c - 'a' + 10
+            else if ('A' <= c and c <= 'Z')
+                v = c - 'A' + 10;
+            if (v >= base)
+                break;
+            if (n > m)
+                ovfl = true;
+            const nn = n *% @as(i32, @intCast(base)) +% @as(i32, @intCast(v));
+            if (nn < n)
+                ovfl = true;
+            n = nn;
+        }
+    }
+
+    if (ndig == 0)
+        p = 0;
+    if (ovfl)
+        return .{ .v = if (neg) std.math.minInt(i32) else std.math.maxInt(i32), .n = p };
+    return .{ .v = if (neg) 0 -% n else n, .n = p };
+}
+
 /// The last element of a path: what follows the last '/'.
 pub fn basename(s: []const u8) []const u8 {
     return if (std.mem.findScalarLast(u8, s, '/')) |i| s[i + 1 ..] else s;

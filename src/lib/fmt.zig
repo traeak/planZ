@@ -90,6 +90,11 @@ pub const Fmt = struct {
 /// Source of the text for %r; the kernel points it at up->errstr.
 pub var errstr: ?*const fn () []const u8 = null;
 
+/// The C's doquote: besides white space and ', the characters %q
+/// quotes.  The kernel leaves it null; user programs' start-up sets it
+/// to needsrcquote, as libc/port/quote.c does.
+pub var doquote: ?*const fn (u8) bool = null;
+
 fn runelen(s: []const u8) usize {
     var n: usize = 0;
     for (s) |c| {
@@ -250,17 +255,52 @@ fn verb(f: *Fmt, comptime r: u8, arg: anytype) void {
         },
         'c', 'C' => {
             var buf: [4]u8 = undefined;
-            const c: u21 = @intCast(arg);
-            const n = std.unicode.utf8Encode(c, &buf) catch blk: {
-                buf[0..3].* = "\xef\xbf\xbd".*; // Runeerror
-                break :blk 3;
-            };
-            f.pad(buf[0..n]);
+            f.pad(buf[0..runetochar(&buf, runearg(arg))]);
         },
         's' => sfmt(f, str(arg)),
         'q' => qfmt(f, str(arg)),
         else => @compileError("fmt: unknown verb %" ++ [1]u8{r} ++ " for " ++ @typeName(T)),
     }
+}
+
+/// libc's runetochar: as Zig's encoder, but surrogates are encoded like
+/// any other rune, and a value past Runemax (0x10FFFF) is Runeerror.
+/// DIFF: the C's %C takes the int argument as a Rune (32 bits); so does
+/// this.
+fn runetochar(buf: *[4]u8, r: u32) usize {
+    const c: u32 = if (r > 0x10FFFF) 0xFFFD else r;
+    if (c <= 0x7F) {
+        buf[0] = @intCast(c);
+        return 1;
+    }
+    if (c <= 0x7FF) {
+        buf[0] = @intCast(0xC0 | (c >> 6));
+        buf[1] = @intCast(0x80 | (c & 0x3F));
+        return 2;
+    }
+    if (c <= 0xFFFF) {
+        buf[0] = @intCast(0xE0 | (c >> 12));
+        buf[1] = @intCast(0x80 | ((c >> 6) & 0x3F));
+        buf[2] = @intCast(0x80 | (c & 0x3F));
+        return 3;
+    }
+    buf[0] = @intCast(0xF0 | (c >> 18));
+    buf[1] = @intCast(0x80 | ((c >> 12) & 0x3F));
+    buf[2] = @intCast(0x80 | ((c >> 6) & 0x3F));
+    buf[3] = @intCast(0x80 | (c & 0x3F));
+    return 4;
+}
+
+/// An integer argument of %c or %C as the C's 32-bit Rune.
+fn runearg(arg: anytype) u32 {
+    return switch (@typeInfo(@TypeOf(arg))) {
+        .comptime_int => arg,
+        .int => |i| if (i.signedness == .signed)
+            @truncate(@as(u64, @bitCast(@as(i64, arg))))
+        else
+            @truncate(@as(u64, arg)),
+        else => @compileError("fmt: %C needs an integer, got " ++ @typeName(@TypeOf(arg))),
+    };
 }
 
 /// Any of the ways Zig spells a string, as a slice; null prints as <nil>.
@@ -291,6 +331,9 @@ fn qfmt(f: *Fmt, full: []const u8) void {
     var nq: usize = 0;
     for (s) |c| {
         if (c <= ' ' or c == '\'') quote = true;
+        if (doquote) |dq| {
+            if (dq(c)) quote = true;
+        }
         if (c == '\'') nq += 1;
     }
     if (!quote) return f.pad(s);

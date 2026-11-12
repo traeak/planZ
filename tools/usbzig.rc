@@ -28,7 +28,7 @@ for(f in $src/*){
 
 fn t {
 	if(cmp -s /tmp/zig.a /tmp/zig.b)
-		echo same $1
+		echo same $1 `{wc -c </tmp/zig.a} bytes
 	if not {
 		echo DIFF $1 '(< planZ, > stock)'
 		diff /tmp/zig.a /tmp/zig.b | sed 20q
@@ -78,6 +78,12 @@ fn ops {
 	$p^cmp ns2 /lib/namespace; s
 	{echo one; echo two} | $p^tee -a log x/log >tee.out; s
 	{echo three} | $p^tee -a log; s
+	$p^split -n 20 /lib/namespace; s
+	$p^split -f pre -l 50 /lib/namespace; s
+	$p^split -f sp -n 7 /lib/ndb/common; s
+	# from standard input: the first output file closes it (as the C does)
+	cat /lib/namespace | $p^split -f in -n 30; s
+	$p^split /nope; s
 }
 
 # Each of these runs a command's cases with the programs $1 names
@@ -133,6 +139,147 @@ fn tails {
 	cat /lib/namespace | $p^tail -c 7; $p^tail -n; s
 }
 
+# the inputs the commands below read; made once, used by both sides
+fn inputs {
+	echo 'héllo wörld ☺ 日本語 and plain ascii text' >/tmp/zig.utf
+	echo 'tab	here	cr and ☺☺☺☺ smileys' >>/tmp/zig.utf
+	ls /bin | sed 60q >/tmp/zig.c1
+	ls /bin | sed -n '30,90p' >/tmp/zig.c2
+	{echo 0123456789abcdef; echo 0123456789abcdef; echo 0123456789abcdef; echo -n tail} >/tmp/zig.x
+	mkdir -p /tmp/zig.qd/sub
+	touch '/tmp/zig.qd/a b' '/tmp/zig.qd/x$y' '/tmp/zig.qd/it''s' /tmp/zig.qd/sub/plain
+	cp /lib/namespace /tmp/zig.qd/sub/ns
+}
+
+fn mtimes {
+	p=$1
+	$p^mtime /lib/namespace /lib/ndb /nope; s
+	$p^mtime; s
+}
+
+fn stringss {
+	p=$1
+	$p^strings /amd64/bin/rc | sed 60q
+	$p^strings -m 3 /amd64/bin/echo
+	$p^strings /tmp/zig.x /amd64/bin/echo | sed 30q
+	$p^strings -m 4 /tmp/zig.utf
+	$p^strings -m 4 </tmp/zig.utf
+	$p^strings /nope; s
+	$p^strings -m 0; s
+}
+
+fn freqs {
+	p=$1
+	$p^freq /lib/namespace
+	$p^freq -c /amd64/bin/echo
+	$p^freq -r /tmp/zig.utf
+	$p^freq -rcx /tmp/zig.utf
+	$p^freq -dx </lib/namespace
+	$p^freq -o /nope /tmp/zig.x; s
+	$p^freq -z; s
+}
+
+fn comms {
+	p=$1
+	c1=/tmp/zig.c1; c2=/tmp/zig.c2
+	$p^comm $c1 $c2; $p^comm -1 $c1 $c2; $p^comm -2 $c1 $c2
+	$p^comm -3 $c1 $c2; $p^comm -12 $c1 $c2; $p^comm -21 $c1 $c2
+	$p^comm -13 $c1 $c2; $p^comm -23 $c1 $c2; $p^comm -123 $c1 $c2
+	$p^comm - $c2 <$c1; $p^comm $c2 $c1; $p^comm $c1 $c1
+	$p^comm $c1 /dev/null; $p^comm /dev/null $c2
+	$p^comm $c1; s
+	$p^comm $c1 /nope; s
+}
+
+fn reads {
+	p=$1
+	$p^read /lib/namespace; $p^read -n 3 /lib/namespace
+	$p^read -m /lib/namespace /tmp/zig.x
+	$p^read -c 50 /lib/namespace; echo
+	$p^read -r 10 /tmp/zig.utf; echo
+	$p^read -r 1000 /tmp/zig.utf
+	# one line at a time from the same input, as rc scripts use it
+	{$p^read; $p^read; $p^read -c 5; echo} </lib/namespace
+	$p^read </dev/null; s
+	$p^read /nope; s
+	$p^read -c; s
+}
+
+fn unicodes {
+	p=$1
+	$p^unicode 41-4f 3b1-3c9; s
+	$p^unicode 263a 41; $p^unicode -t 48 69 21; echo
+	$p^unicode -n 'héllo ☺'; $p^unicode zz
+	$p^unicode d800 10ffff | xd -c
+	$p^unicode 110000; s
+	$p^unicode 1-; s
+	$p^unicode 50-40; s
+	$p^unicode 4g; s
+	$p^unicode; s
+}
+
+fn trs {
+	p=$1
+	f=/tmp/zig.utf
+	$p^tr a-z A-Z <$f; $p^tr -d aeiou <$f; $p^tr -s l <$f
+	$p^tr -c 'a-z\n' X <$f; $p^tr -cd 'a-z\n' <$f; $p^tr -cs 'a-z' '\n' <$f
+	$p^tr -ds l o <$f; $p^tr '\x41-\x43' xyz </lib/namespace | sed 5q
+	$p^tr '\101\102' 'qr' </lib/namespace | sed 5q; $p^tr 'éö☺' 'eo:' <$f
+	$p^tr 'a-z' 'b' <$f; $p^tr '\t' '_' <$f
+	$p^tr a; s
+	$p^tr -d; s
+	$p^tr aa xy <$f; s
+	$p^tr z-a q <$f; s
+}
+
+fn xds {
+	p=$1
+	x=/tmp/zig.x
+	$p^xd $x; $p^xd -c $x; $p^xd -b -c $x; $p^xd -1x -2o -4d -8x $x
+	$p^xd -s -2x -8o $x; $p^xd -ad -1o $x; $p^xd -ao -c -4x $x
+	$p^xd -r $x; $p^xd -r /tmp/zig.x /tmp/zig.utf
+	$p^xd -u <$x; $p^xd /amd64/bin/echo | sed 20q
+	$p^xd -c /amd64/bin/echo | sed 10q
+	$p^xd </dev/null
+	$p^xd /nope; s
+	$p^xd -q $x; s
+	$p^xd -cx $x; s
+	$p^xd -x -x -x -x -x -x -x -x -x -x $x; s
+}
+
+fn dus {
+	p=$1
+	$p^du /lib/ndb; $p^du -a /lib/ndb; $p^du -s /lib
+	$p^du -n /lib/ndb; $p^du -q /lib/ndb; $p^du -t /lib/ndb
+	$p^du -tu /lib/ndb; $p^du -b 4k /lib/ndb; $p^du -b 3 -a /lib/ndb
+	$p^du -p M /lib; $p^du -p k -a /lib/ndb
+	$p^du -a /tmp/zig.qd; $p^du -an /tmp/zig.qd
+	$p^du -r /lib/ndb; s
+	$p^du /nope; s
+	$p^du -f /nope; s
+	$p^du -p q /lib; s
+}
+
+fn tests {
+	p=$1
+	$p^test -f /lib/namespace; s; $p^test -d /lib; s; $p^test -d /lib/namespace; s
+	$p^test -e /nope; s; $p^test -r /lib/namespace; s; $p^test -w /dev/null; s
+	$p^test -x /bin/rc; s; $p^test -x /lib/namespace; s; $p^test -s /dev/null; s
+	$p^test -s /lib/namespace; s; $p^test -z ''; s; $p^test -n x; s
+	$p^test a '=' a; s; $p^test a '!=' a; s; $p^test 3 -lt 10; s
+	$p^test 010 -eq 8; s; $p^test 0x10 -eq 16; s; $p^test 99999999999 -eq 2147483647; s
+	$p^test -5 -le -5; s; $p^test 7 -ge 8; s; $p^test 1 -gt 0 -a 2 -ne 2; s
+	$p^test '!' -f /nope; s; $p^test '!' '!' x; s
+	$p^test '(' -f /lib/namespace -a -d /lib ')' -o x '=' y; s
+	$p^test -f /nope -o -d /lib; s; $p^test -A /lib/namespace; s; $p^test -L /lib; s
+	$p^test /lib/namespace -nt /lib/ndb; s; $p^test /lib/namespace -ot /lib/ndb; s
+	$p^test /lib/namespace -older 1h; s; $p^test /lib/namespace -older 100y; s
+	$p^test /lib/namespace -older 3600; s
+	$p^test -t 7; s; $p^test x; s; $p^test ''; s; $p^test -c x; s
+	$p^test '('; s; $p^test -f; s; $p^test a b; s; $p^test a '=' b c; s
+	$p^test /lib/namespace -older 1q; s; $p^test -t x; s; $p^test; s
+}
+
 fn checks {
 	nbad=()
 	Z=$z/
@@ -157,6 +304,16 @@ fn checks {
 		$c^s '' >/tmp/zig.b >[2=1]
 		t $c
 	}
+
+	# sysfatal and some usage messages print argv0, which is /tmp/zig/x
+	# for planZ's programs: it is cut on both sides
+	inputs
+	for(c in mtime strings freq comm read unicode tr xd du test){
+		$c^s $Z >[2=1] | sed 's;/tmp/zig/;;g' >/tmp/zig.a
+		$c^s '' >[2=1] | sed 's;/tmp/zig/;;g' >/tmp/zig.b
+		t $c
+	}
+	rm -rf /tmp/zig.utf /tmp/zig.c1 /tmp/zig.c2 /tmp/zig.x /tmp/zig.qd
 
 	rm -rf /tmp/zig.zd /tmp/zig.sd
 	mkdir /tmp/zig.zd /tmp/zig.sd

@@ -1,6 +1,7 @@
 //! Buffered input and output.
 //! from libbio: binit.c, bflush.c, bgetc.c, bputc.c, bread.c, bwrite.c,
-//! brdline.c, bprint.c (bvprint.c) and bio.h
+//! brdline.c, bprint.c (bvprint.c), bgetrune.c, bputrune.c, boffset.c,
+//! bseek.c and bio.h
 //!
 //! The buffer works as in C: icount and ocount are negative counts of
 //! the bytes between a position and the end of the buffer (ebuf); here
@@ -16,8 +17,10 @@
 //!     keeps the C's rule that an interrupted write does not make the
 //!     buffer inactive.
 //!   - No Berror hook (the C's errorf is nil by default), no Bstr, no
-//!     Bopen/Bfdopen (open the file and init a Biobuf), no runes, no
-//!     Bseek or Boffset yet.
+//!     Bfdopen.  Bopen is `open` on a Biobuf the caller provides; term
+//!     closes the file it opened, as Bterm does for a Bopen'd one.
+//!   - Bgetrune returns null where the C returns Beof or Bbad.
+//!   - Biofn sets `iofn`, which then does the reads and writes.
 //!   - print formats with src/lib/fmt.zig through a small buffer that is
 //!     written with Bwrite; the C formats straight into the Biobuf.
 //!   - A writer is flushed at exit through libc.atexit, as in C.
@@ -26,6 +29,7 @@ const std = @import("std");
 const fmt = @import("fmt");
 const sys = @import("sys.zig");
 const libc = @import("libc.zig");
+const rune = @import("rune.zig");
 
 const Error = libc.Error;
 
@@ -79,6 +83,9 @@ pub const Biobuf = struct {
     bbuf: usize = 0, // pointer to beginning of buffer
     ebuf: usize = 0, // pointer to end of buffer
     gbuf: usize = 0, // pointer to good data in buf
+    runesize: i32 = 0, // num of bytes in last getrune
+    opened: bool = false, // DIFF: the C's flag == Bmagic: open made it
+    iofn: ?*const fn (*Biobuf, []u8) isize = null, // DIFF: the C's iof, when set by Biofn
     b: [Bungetsize + Bsize]u8 = undefined,
 
     /// Binit: set bp up to read (OREAD) or write (OWRITE) fd.
@@ -111,13 +118,41 @@ pub const Biobuf = struct {
         bp.offset = 0;
     }
 
-    /// Bterm: flush and forget; the file is the caller's to close.
+    /// Bopen: open (OREAD) or create (OWRITE) name and set bp up for it.
+    pub fn open(bp: *Biobuf, name: []const u8, mode: u32) Error!void {
+        const f = switch (mode & ~@as(u32, sys.OCEXEC | sys.ORCLOSE | sys.OTRUNC)) {
+            sys.OREAD => try libc.open(name, mode),
+            sys.OWRITE => try libc.create(name, mode, 0o666),
+            else => {
+                libc.fprint(2, "Bopen: unknown mode %#x\n", .{mode});
+                return error.Plan9;
+            },
+        };
+        bp.init(f, mode);
+        bp.opened = true;
+    }
+
+    /// Bterm: flush and forget; a file that open opened is closed, any
+    /// other is the caller's to close.
     pub fn term(bp: *Biobuf) Error!void {
         deinstall(bp);
-        return bp.flush();
+        const r = bp.flush();
+        if (bp.opened) {
+            bp.opened = false;
+            if (bp.fid >= 0)
+                libc.close(bp.fid) catch {};
+        }
+        return r;
+    }
+
+    /// Biofn: do the reads and writes with f.
+    pub fn setiofn(bp: *Biobuf, f: ?*const fn (*Biobuf, []u8) isize) void {
+        bp.iofn = f;
     }
 
     fn iof(bp: *Biobuf, at: usize, n: usize) isize {
+        if (bp.iofn) |f|
+            return f(bp, bp.b[at..][0..n]);
         return switch (bp.state) {
             .wactive => sys.write(bp.fid, bp.b[at..][0..n]),
             else => sys.read(bp.fid, bp.b[at..][0..n]),
@@ -187,6 +222,112 @@ pub const Biobuf = struct {
             bp.icount = -@as(i32, @intCast(n));
             bp.offset += @intCast(n);
         }
+    }
+
+    /// Bgetrune: the next rune, or null at end of file or on error.
+    pub fn getrune(bp: *Biobuf) ?rune.Rune {
+        const c = bp.getc() orelse return null;
+        if (c < rune.Runeself) { // one char
+            bp.runesize = 1;
+            return c;
+        }
+        var str: [rune.UTFmax]u8 = undefined;
+        str[0] = c;
+        var i: usize = 1;
+        while (true) {
+            str[i] = bp.getc() orelse return null;
+            i += 1;
+            if (rune.fullrune(str[0..i])) {
+                const d = rune.chartorune(str[0..i]);
+                bp.runesize = @intCast(d.n);
+                while (i > d.n) {
+                    _ = bp.ungetc();
+                    i -= 1;
+                }
+                return d.r;
+            }
+        }
+    }
+
+    /// Bungetrune: give back the last rune Bgetrune returned.
+    pub fn ungetrune(bp: *Biobuf) bool {
+        if (bp.state == .racteof)
+            bp.state = .ractive;
+        if (bp.state != .ractive)
+            return false;
+        bp.icount -= bp.runesize;
+        bp.runesize = 0;
+        return true;
+    }
+
+    /// Bputrune: the bytes written.
+    pub fn putrune(bp: *Biobuf, c: u32) Error!usize {
+        if (c < rune.Runeself) {
+            try bp.putc(@intCast(c));
+            return 1;
+        }
+        var str: [rune.UTFmax]u8 = undefined;
+        const n = rune.runetochar(&str, c);
+        if (try bp.write(str[0..n]) != n)
+            return error.Plan9;
+        return n;
+    }
+
+    /// Boffset: the position in the file of the next byte read or
+    /// written.
+    pub fn offset_(bp: *Biobuf) i64 {
+        return switch (bp.state) {
+            .racteof, .ractive => bp.offset + bp.icount,
+            .wactive => bp.offset + (bp.bsize + bp.ocount),
+            .inactive => blk: {
+                libc.fprint(2, "Boffset: unknown state %d\n", .{@intFromEnum(bp.state)});
+                break :blk -1;
+            },
+        };
+    }
+
+    /// Bseek
+    pub fn seek(bp: *Biobuf, off: i64, base_: u32) i64 {
+        var base = base_;
+        var n: i64 = undefined;
+        switch (bp.state) {
+            .inactive => @panic("Bseek: inactive"),
+            .racteof, .ractive => {
+                if (bp.state == .racteof) {
+                    bp.state = .ractive;
+                    bp.icount = 0;
+                    bp.gbuf = bp.ebuf;
+                }
+                n = off;
+                if (base == 1) {
+                    n += bp.offset_();
+                    base = 0;
+                }
+
+                // try to seek within buffer
+                if (base == 0) {
+                    // if d is too large for an int, icount may wrap,
+                    // so we need to ensure that icount hasn't wrapped
+                    // and points within the buffer's valid data.
+                    const d = n - bp.offset_();
+                    bp.icount +%= @truncate(d);
+                    if (d <= bp.bsize and bp.icount <= 0 and
+                        @as(i64, @intCast(bp.ebuf - bp.gbuf)) >= -@as(i64, bp.icount))
+                        return n;
+                }
+
+                // reset the buffer
+                n = sys.seek(bp.fid, n, base);
+                bp.icount = 0;
+                bp.gbuf = bp.ebuf;
+            },
+            .wactive => {
+                bp.flush() catch {};
+                n = sys.seek(bp.fid, off, base);
+            },
+        }
+        bp.offset = n;
+        return n;
     }
 
     /// Bungetc: give back the last byte Bgetc returned.
