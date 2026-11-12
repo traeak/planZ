@@ -1038,10 +1038,12 @@ pub fn sysexits(a: *Sargs) Error!usize {
 
 /// DIFF (new): planZ's exits(msg, msglen).  A null address is no
 /// message, as in exits(nil); the message is cut at ERRMAX-1 bytes or
-/// at a 0 byte, as 9front's exits reads it.
+/// at a 0 byte, as 9front's exits reads it.  It stays in user memory:
+/// pexit copies it into the wait message before freeing the process's
+/// memory, as sysexits relies on too, and a change by another process
+/// meanwhile can only garble the text.
 pub fn sysexitsn(a: *Sargs) Error!usize {
     const inval = "invalid exit string";
-    var buf: [ERRMAX]u8 = undefined;
 
     const ustatus = a.next(usize);
     const ulen = @min(a.next(usize), ERRMAX - 1);
@@ -1049,10 +1051,7 @@ pub fn sysexitsn(a: *Sargs) Error!usize {
     if (ustatus != 0) {
         status = blk: {
             const u = userstrn(ustatus, ulen) catch break :blk inval;
-            // copied, so it cannot change under pexit
-            @memcpy(buf[0..u.len], u);
-            const m = buf[0..u.len];
-            break :blk m[0 .. std.mem.findScalar(u8, m, 0) orelse m.len];
+            break :blk u[0 .. std.mem.findScalar(u8, u, 0) orelse u.len];
         };
     }
     proc.pexit(status, true);

@@ -147,6 +147,20 @@ pub fn main() !void {
         if (libc.open(huge, libc.OREAD)) |_| fail("huge name") else |_| {}
         if (std.mem.indexOf(u8, libc.rerrstr(&eb), "too long") == null) fail("huge name: error");
     }
+    // a rename to a name of 64 bytes or more is checked too: the kernel
+    // checks the name in its copy of the stat buffer, whatever its length
+    {
+        const wf = try libc.create("/tmp/libctest.w", libc.OREAD, 0o666);
+        try libc.close(wf);
+        var bad: [80]u8 = undefined;
+        @memset(&bad, 'y');
+        bad[70] = 1;
+        var nd = libc.nulldir();
+        nd.name = &bad;
+        if (libc.dirwstat("/tmp/libctest.w", &nd)) |_| fail("long bad rename") else |_| {}
+        if (std.mem.indexOf(u8, libc.rerrstr(&eb), "bad character") == null) fail("long bad rename: error");
+        try libc.remove("/tmp/libctest.w");
+    }
     ok("names");
 
     // exec: a child runs the stock echo with arguments, into a pipe

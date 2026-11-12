@@ -1353,22 +1353,35 @@ fn isfrog(c: u8) bool {
 /// or a valid character.
 ///
 /// With `dup`, returns a copy of the name for the caller to free.
+///
+/// Fixed from C: with `dup` the name is copied first and the copy is
+/// checked.  The C checks the name and then copies it, and the name is
+/// often in user memory, where another process sharing it can change it
+/// between the two: a control character could then reach the copy that
+/// the kernel goes on to use.
 fn validname0(aname: []const u8, slashok: bool, dup: bool) Error!?[]u8 {
     if (aname.len >= 1 << 16)
         return error.Etoolong;
 
-    for (aname) |c| {
+    var copy: ?[]u8 = null;
+    errdefer if (copy) |s| alloc.free(s.ptr);
+    var name = aname;
+    if (dup) {
+        const s = alloc.snewslice(u8, aname.len + 1);
+        @memcpy(s[0..aname.len], aname);
+        copy = s[0..aname.len];
+        name = copy.?;
+    }
+
+    for (name) |c| {
         // all characters above '~' are ok
         if (c < lib.Runeself and isfrog(c) and (!slashok or c != '/')) {
             const p = up();
-            const s = fmt.snprint(p.genbuf[0 .. p.genbuf.len - 1], "%s: %q", .{ proc.errtext(error.Ebadchar), aname });
+            const s = fmt.snprint(p.genbuf[0 .. p.genbuf.len - 1], "%s: %q", .{ proc.errtext(error.Ebadchar), name });
             return proc.errorf("%s", .{s});
         }
     }
-    if (!dup) return null;
-    const s = alloc.snewslice(u8, aname.len + 1);
-    @memcpy(s[0..aname.len], aname);
-    return s[0..aname.len];
+    return copy;
 }
 
 pub fn validname(aname: []const u8, slashok: bool) Error!void {

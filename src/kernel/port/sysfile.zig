@@ -917,24 +917,23 @@ pub fn sysoseek(_: *Sargs) Error!usize {
 }
 
 /// Check that s is one well-formed stat buffer with an acceptable name.
+/// s must be kernel memory (the wstat calls copy the user's buffer with
+/// kstat), so nothing can change it between this check and its use.
+///
+/// DIFF: the name is checked in place, whatever its length.  The C
+/// copies it into a 64-byte buffer to make a string of it and lets a
+/// longer one through unchecked ("let the server decide").
 pub fn validstat(s: []const u8) Error!void {
-    var buf: [64]u8 = undefined;
-
     if (fcall.statcheck(s) < 0)
         return error.Ebadstat;
     // verify that name entry is acceptable
     var p: usize = STATFIXLEN - 4 * BIT16SZ; // location of first string
-    // s now points at count for first string.
-    // if it's too long, let the server decide; this is
-    // only for his protection anyway. otherwise
-    // we'd have to allocate and waserror.
+    // s now points at count for first string; statcheck has checked
+    // that the string fits.
     const m: usize = GBIT16(s, p);
     p += BIT16SZ;
-    if (m + 1 > buf.len)
-        return;
-    @memcpy(buf[0..m], s[p..][0..m]);
     // the C makes a string of it, so it ends at the first NUL
-    const name = std.mem.sliceTo(buf[0..m], 0);
+    const name = std.mem.sliceTo(s[p..][0..m], 0);
     // name could be '/'
     if (!std.mem.eql(u8, name, "/"))
         try chan.validname(name, false);
@@ -1190,11 +1189,25 @@ fn wstat(c: *Chan, d: []const u8) Error!usize {
     return dev(c).wstat(c, d);
 }
 
+/// Fixed from C: a copy of the user's stat buffer, which the wstat calls
+/// check and then hand to the device.  The C checks the buffer in user
+/// memory and lets the device read it there again, so another process
+/// sharing the memory can change the name between the check and the
+/// use.
+fn kstat(us: usize, l: u32) Error![]u8 {
+    const u = try userslice(us, l, false);
+    // at least a byte, so a 0-length buffer gets validstat's error
+    const s = (alloc.newslice(u8, @max(l, 1)) orelse return error.Enomem)[0..l];
+    @memcpy(s, u);
+    return s;
+}
+
 pub fn syswstat(a: *Sargs) Error!usize {
     const uname = a.next(usize);
     const us = a.next(usize);
     const l = a.next(u32);
-    const s = try userslice(us, l, false);
+    const s = try kstat(us, l);
+    defer alloc.free(s.ptr);
     try validstat(s);
     const c = try namec(try userstr(uname), portdat.Aaccess, 0, 0);
     return wstat(c, s);
@@ -1206,7 +1219,8 @@ pub fn syswstatn(a: *Sargs) Error!usize {
     const unamelen = a.next(usize);
     const us = a.next(usize);
     const l = a.next(u32);
-    const s = try userslice(us, l, false);
+    const s = try kstat(us, l);
+    defer alloc.free(s.ptr);
     try validstat(s);
     const c = try namec(try userstrn(uname, unamelen), portdat.Aaccess, 0, 0);
     return wstat(c, s);
@@ -1216,7 +1230,8 @@ pub fn sysfwstat(a: *Sargs) Error!usize {
     const fd = a.next(i32);
     const us = a.next(usize);
     const l = a.next(u32);
-    const s = try userslice(us, l, false);
+    const s = try kstat(us, l);
+    defer alloc.free(s.ptr);
     try validstat(s);
     const c = try fdtochan(fd, -1, true, true);
     return wstat(c, s);
