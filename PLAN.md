@@ -323,6 +323,37 @@ Progress: done, with one call more than the table: `fauth` also takes a name, so
 - **Tests.** `libctest`: a 0 byte in a name ("bad character"), an empty name ("empty file name"), a name passed as a slice of a longer string, a 3009-byte name that opens `/dev/cons`, a 2^16-byte name ("name too long"), an `exec` argument with a 0 byte ("bad arg"), and an `exec` with a bad address in its pairs, which kills the child with "sys: bad address in syscall" as any bad address in a system call does. `test-boot`, `test-9front`, `test-zuser`, `test-usb`, `test` and `check-ports` pass.
 - **Copy, then check (fixed from C).** `validname` with a copy now copies the name first and checks the copy; the C checks user memory and copies after, so a process sharing the memory could slip a control character into the kernel's copy. The `wstat` calls copy the stat buffer into the kernel (`kstat`) and both `validstat` and the device use that copy, where the C checks user memory and lets the device read it again. `validstat` now checks the name in place at any length (the C copied it into 64 bytes and let longer names through unchecked); `libctest` renames to an 80-byte name with a control character, which the kernel refuses ("bad character"; with the old check the file server answered "invalid operation"). `sysexitsn` no longer copies the message, since `pexit` copies it before freeing memory.
 
+#### libregexp port: planned
+9front's `libregexp` (1,247 lines: `regcomp.c` 568, `regexec.c`/`rregexec.c` 189/185, `regsub.c`/`rregsub.c` 66/66, `regerror.c` 15, `regprint.c` 66) is a lexer, a recursive-descent parser, a class builder, a compiler to instructions and a Pike VM matcher (all threads in step, one rune at a time). It needs nothing beyond libc. Its users: `sed`, `ed`, `split -e`, `calendar`, `awk`'s regular expressions and plumbing (9front's `grep` has its own compiler and does not use it). `sed` and `ed` supply their own `regerror`.
+
+**Interface: slices and offsets.**
+- `Resub` is two offsets into the subject, `sp: ?usize, ep: ?usize`, not pointers.
+- `regexec(prog, str: []const u8, sem: ?[]Resub) bool` never writes to the subject. The C bounds a search by writing a 0 at `sem[0].ep` and putting the byte back; the port bounds it by the offset and keeps the C's rule that `$` matches only at the real end, not at that bound.
+- **Open decision, recommended yes:** a 0 byte inside the subject ends it, as in C, so results match stock on binary input (a DIFF).
+- The byte and rune matchers (`regexec`, `rregexec`) are one function generic over `u8` and `Rune`; so are `regsub` and `rregsub`. `regsub` takes the subject too, since `Resub` holds offsets, writes into a `dst` slice and returns the part used, cutting where the C does.
+- `regcomp(allocator, str)`, `regcomplit`, `regcompnl` return a `*Reprog` owning its instructions and threads, freed with `deinit`.
+- Errors: `regcomp` returns `error.Regexp` with the C's message (`regexp %s: syntax error: %C`, `Malformed class`, `Class too big`, …) in a buffer. `regerror(msg)` keeps the default: print "regerror: …" and exit "regerr". Programs with their own handling (sed, ed) do it themselves.
+- Limits kept: 32 subexpressions, 200 ranges in a class, threads sized to the pattern's length plus one (running out panics, as the C asserts).
+- `src/user/lib/regexp.zig`, a module `regexp` of its own as the C is a library of its own. It uses only `rune.zig`, `qsort.zig` and an allocator, so it also runs as host unit tests.
+
+**Inside: Zig's types in place of the C's codes, unions and gotos.** Behaviour, messages and results stay the C's; only the representation changes.
+- **Tokens are a tagged union**, `union(enum) { any, bol, eol, end, lpar, rpar, alt, rep: enum { star, plus, ques }, rune: Rune, class: Class }`. The C's `lex()` returns an int and leaves the rune, the negation flag and a 402-entry pair buffer in side fields; its peek flag becomes a one-token lookahead.
+- **Parse nodes are a tagged union** (`cat`, `alt`, `star`, `plus`, `ques`, `sub`, `class`, `rune`, `any`, `notnl`, `bol`, `eol`), each with only its own fields, in a slice sized as the C sizes its node pool.
+- **Instructions are a tagged union**, `union(enum) { rune: Rune, any, notnl, bol, eol, class: struct { lo: Rune, hi: Rune, next: u32 }, split: struct { a: u32, b: u32 }, jmp: u32, save: u8, unsave: u8 }`, with jumps as indices. Switches over them are exhaustive, where the C has `default: abort()`.
+- **The matcher uses labeled `switch` with `continue`**: the C's `Again`, `Switch`, `Done` and `Class` labels become states and each `goto` a `continue :vm .state`, so the port reads line for line against `regexec.c`. Thread lists are indices into the thread array.
+- **Errors propagate as Zig errors** where the C `longjmp`s out of the parser.
+- **Compile-time patterns.** The same compiler code runs at comptime for a literal pattern, `comptime regexp.compile("^[a-z_][a-z0-9_]*$")`: a program in read-only data with no allocation, and a bad pattern fails the build with the C's message. For that the compiler fills buffers the caller provides; the C already counts instructions while parsing, which becomes a sizing pass. The runtime `regcomp` sizes the buffers from the allocator. Long patterns may need `@setEvalBranchQuota`.
+- `regprint`'s listing becomes the program's `fmt9`, as `reprogfmt` is a format in C.
+- **Later, not in this plan:** a matcher specialized per comptime pattern (the instruction list unrolled into code with `inline`), much faster; the plain matcher, which must match the C, comes first.
+
+Steps:
+1. **The library and host unit tests**: literals, `.`, `^`, `$`, classes and negated classes (with their newline rule), `* + ?`, alternation, groups and submatches, start and end offsets in `sem[0]`, every compile error, `regsub` truncation, the rune versions, and the comptime path on the same patterns.
+2. **Differential test against stock libregexp in the guest.** The 9front image has `6c`/`6l` (to be checked, with `/sys/include`), so `tools/retest.c` is compiled there against the real library, and a Zig `retest` reads the same table, `tools/retest.txt` (a few hundred `pattern<TAB>subject` lines, bad patterns included). Each prints, per line, the result, the submatch offsets, a `regsub` result and any compile error; the outputs must match byte for byte. It runs from `usbzig.rc` like the command comparisons. Without a compiler in the image, this falls back to comparing `sed` with stock.
+3. **`split -e`, `-i`, `-x`**, compared with stock in the file-operations sequence.
+4. **`sed`** (1,473 lines) as the real user of the library, compared with stock over a set of scripts: a batch of its own.
+
+Estimate: about 900 lines of Zig with tests for steps 1–3.
+
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
 - Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail. The first step, a minimal libc, is planned above under M9; the rest is still to be examined as a topic of its own. `src/user` already shows that Zig can produce Plan 9 a.out binaries without a host tool.
