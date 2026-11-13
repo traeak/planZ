@@ -496,6 +496,51 @@ Progress:
   - **`fpstress`** (`src/user/cmd/fpstress.zig`): loads xmm0–15 and r12–r15 with values made from its pid, spins in one asm block long enough to be preempted, and checks them. Before the fix, eight copies beside a fork and exec loop caught one process with five registers holding `seq`'s doubles; after it, none, with no TS report, and 480 `primes` runs (stock and planZ's) all right. `usbzig.rc` runs eight of them as a standing check.
   - Read, not tested: `fpinit` (from the C) clears the x87 state and loads MXCSR but leaves the xmm and ymm registers as the last process left them, so a process's first floating point instruction can see another's vector registers. The same in 9front.
 
+#### Virtual terminals: planned
+Several full-screen consoles switched with keys, as Linux's virtual terminals, in place of rio or beside it. Not in 9front.
+
+**What there is.** The keyboard path is in user space: `bootrc` starts `aux/kbdfs`, which reads `/dev/scancode` (or `/dev/kbd`), serves `kbd`, `cons` and `consctl`, cooks lines, handles Ctl-Alt-Del, and writes console output to its standard output, the kernel's `#c/cons`, which `screen.zig` draws on the framebuffer with no copy of the text. rio takes over the screen through `/dev/draw` and reads `/dev/kbd` and `/dev/mouse`; each window is a set of files it serves (`cons`, `consctl`, `kbd`, `mouse`, `winname`, `text`, `wctl` …), mounted over `/dev` for the window's processes. The user's profile starts rio when `$service` is `terminal`; with `con` it only sets a prompt. Without rio the screen is the one kernel console.
+
+**Approach: a user-level file server, `vtfs`, like rio with full-screen windows.** Neither the kernel nor kbdfs changes. vtfs opens the display, makes a public screen on it and one full-screen window per console, and keeps the active one on top; devdraw keeps the covered ones' pixels, so switching redraws nothing. It reads `/dev/kbd`: Ctl-Alt-Left and Ctl-Alt-Right step to the previous and next console (wrapping round), Ctl-Alt-1 … Ctl-Alt-4 go to that console (the other digits do nothing), anything else goes to the active console's input. kbdfs leaves keys with Ctl held out of its compose sequences (`runeproc`), so these reach vtfs whole, where Alt-F1 … (Linux's) would start one. There are 4 consoles; the kernel's messages are on the last. Each console is served as rio serves a window, mounted over `/dev` for an `rc` started on it.
+- Rejected: virtual terminals in the kernel. `screen.zig` would need a text copy per console and a redraw, kbdfs (a stock binary) would need a `cons` per console and the switch keys, and they would fight devdraw and rio for the screen. More kernel, and a change to 9front's programs.
+- Rejected: switching the one kernel console. It keeps no text, so it cannot repaint a console it switches back to.
+
+**Text consoles.** Cooked input as rio's text windows have it (echo, backspace, ^U, ^W, ^D, Delete as an `interrupt` note to the console's process group, `rawon`/`rawoff` through `consctl`), output with a scrollback (Shift-PgUp and Shift-PgDn), the font from `$font` or `/lib/font/bit/vga/unicode.font`, and `text` as in rio, which the tests read. A console whose `rc` exits gets a new one. One console shows the kernel's messages from `/dev/kprint`; while vtfs holds `kprint`, the kernel stops drawing them over the screen (`screenputs` already does this).
+
+**A graphics console (later step).** One console can hold rio or any program that draws: vtfs gives it `winname` (its window), and `mouse`, `cursor` and `kbd` that only deliver while it is active. rio runs in a window this way already.
+
+**What the Zig userland lacks.** All three are needed first:
+- **9P messages.** libc's `convM2S.c`, `convS2M.c` and `fcallfmt.c`, with the message as a tagged union.
+- **libdraw, the parts vtfs needs.** `init.c` (the display, without libthread), `alloc.c`, `draw.c`, `chan.c`, `bytesperline.c`, `defont.c`, `font.c` (`cachechars`), `openfont.c`, `buildfont.c`, `readsubfont.c`, `readimage.c`, `creadimage.c`, `string.c`, `stringwidth.c`, `subfont.c`, `subfontcache.c` and `window.c` (screens and windows): about 3,000 lines of C.
+- **Waiting on several inputs at once without libthread.** Small reader processes for `/dev/kbd`, `/dev/mouse`, `/dev/kprint` and the 9P channel each forward what they read into one pipe. One main loop handles everything and answers 9P requests, holding a `cons` read until a line is ready. No memory is shared, so no locks are needed (they are not in the libc yet).
+
+**Starting it.** A plan9.ini setting, `ui=`:
+- `ui=vt`, the default once step 4 is done: vtfs.
+- `ui=rio`: as today (the default until then).
+- `ui=text`: no rio; one `rc` on the kernel console, the profile run with `service=con`.
+
+vtfs being the default changes the tests that drive rio's window (`test-rio`, `test-zuser`, `test-usb`, `test-audio` through `riofocus.sh`): they set `ui=rio`, or move to a vtfs console where rio is not the point.
+
+It reuses `-Dzigrc`'s `init` hook (`tools/rcinit`), which runs `termrc` and the profile itself. The loader takes the script from the boot volume, as it does `rcinit`.
+
+**Tests.**
+- **Host:**
+  - 9P messages packed and unpacked, against messages taken from stock 9front;
+  - the line discipline, the scrollback and the key decoding, run on byte streams.
+- **Guest:**
+  - libdraw against stock libdraw, as `fltest` against stock libc: one drawing, made by a Zig program and by `tools/*.c` built with `6c` in the guest, compared byte for byte.
+  - vtfs with keys typed through QEMU's monitor, comparing each console's `text` file read from the serial shell, and screenshots. A console switched away from and back must give the same screenshot as before.
+
+**Steps**, each tested before the next:
+1. `ui=text`: boot to the text console without rio (the `init` hook, the loader's name list, the profile with `service=con`). Small. Test: a command typed on the screen keyboard runs, and no rio is running.
+2. 9P messages in the libc, and a small Zig file server mounted and read in the guest.
+3. The libdraw parts, compared with stock libdraw in the guest.
+4. vtfs with text consoles, the kernel-message console and the switch keys; `ui=vt`, made the default, with the rio tests set to `ui=rio`; `test-vt`.
+5. The graphics console: rio on one of them.
+6. The USB image, booting to vtfs as the default does, and the real machine.
+
+**Decided:** Ctl-Alt-Left and Ctl-Alt-Right switch, and Ctl-Alt-1 … Ctl-Alt-4 go straight to a console; 4 consoles; `ui=vt` replaces rio as the default. QEMU's own window takes Ctl-Alt-1, -2 … for its consoles, so there the digits reach the guest only through the monitor's `send-key` (as the tests send them); a real machine is unaffected.
+
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
 - Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail. The first step, a minimal libc, is planned above under M9; the rest is still to be examined as a topic of its own. `src/user` already shows that Zig can produce Plan 9 a.out binaries without a host tool.
