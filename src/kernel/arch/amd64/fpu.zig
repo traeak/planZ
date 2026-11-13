@@ -214,6 +214,9 @@ fn fpalloc(link: ?*FPalloc) *FPalloc {
     while (true) {
         if (alloc.mallocalign(@sizeOf(FPalloc), mem.FPalign, 0, 0)) |p| {
             const a: *FPalloc = @ptrCast(@alignCast(p));
+            // DIFF: cleared.  XSAVE writes only XSTATE_BV of the header,
+            // and XRSTOR faults on anything else there but zeros.
+            @memset(&a.save, 0);
             a.link = link;
             return a;
         }
@@ -232,7 +235,22 @@ pub fn fpuprocnew(p: *Proc) void {
     p.fpu.fpstate = FPinit;
 }
 
+/// exec: the new program starts with no floating point state.
+/// Fixed from C: the C sets FPinit and leaves the registers live and
+/// CR0.TS clear if the old program had the FPU and the exec never slept
+/// (a program from the kernel's own /boot: planZ's initcode, in Zig,
+/// uses SSE and then execs /boot/boot).  Nothing then traps on that
+/// processor, and procsave saves and sets TS only for an FPactive
+/// process, so from then on every process run there shares one set of
+/// registers.  Here the old state is dropped and TS set, as for an
+/// exiting process.
 pub fn fpuprocsetup(p: *Proc) void {
+    const s = l.splhi();
+    if (p.fpu.fpstate & ~@as(i32, FPnotify) == FPactive) {
+        _fnclex();
+        _stts();
+    }
+    l.splx(s);
     p.fpu.fpstate = FPinit;
     while (p.fpu.fpsave) |a| {
         p.fpu.fpsave = a.link;

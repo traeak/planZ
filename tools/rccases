@@ -201,7 +201,7 @@ echo a b c | wc -w
 false | true; echo $status
 true | false; echo $status
 ls /nope | cat; echo $status
-ls /nope | ls /nope2; echo $status
+ls /nope >[2]/dev/null | ls /nope2; echo $status
 ls /nope >[2=1] | sed 's/^/>/'
 cat /lib/namespace | grep -c bind | sed 's/^/count /'
 #### backquote

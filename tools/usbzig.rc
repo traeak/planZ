@@ -598,6 +598,23 @@ fn checks {
 	t mk
 	rm -f /tmp/zig.a /tmp/zig.b
 
+	# the kernel keeps each process's registers across context switches:
+	# eight fpstress, more than the processors, with forks and execs
+	# beside them (see src/user/cmd/fpstress.zig)
+	{
+		{for(i in `{seq 200}) echo x | cat >/dev/null} &
+		for(i in 1 2 3 4 5 6 7 8) $Z^fpstress 40 &
+		wait
+	} >/tmp/zig.fp >[2=1]
+	if(grep -s ' bad [1-9]' /tmp/zig.fp || ! ~ `{grep -c ' bad 0$' /tmp/zig.fp} 8){
+		echo DIFF fpstress
+		cat /tmp/zig.fp
+		nbad=($nbad fpstress)
+	}
+	if not
+		echo same fpstress: registers kept
+	rm -f /tmp/zig.fp
+
 	if(! $Z^libctest)
 		nbad=($nbad libctest)
 	if(~ $#nbad 0)
