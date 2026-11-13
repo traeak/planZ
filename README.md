@@ -70,7 +70,8 @@ With the reference files (`D="-Dref=ref -Ddisk=ref/disk/9front-11952.amd64.qcow2
 Useful options include `-Dcpu=` (`SandyBridge` by default, also `max`
 and `Opteron_G4,+xsaveopt`), `-Dsmp=`, `-Dmem=`,
 `-Ddiskbus=virtio|nvme|ahci` and `-Doptimize=debug`. `-Dzigrc` boots
-9front's user programs with planZ's rc as `/bin/rc` (see `tools/rcinit`).
+9front's user programs with planZ's rc as `/bin/rc`, and `-Dsession=text`
+boots to a plain text console instead of rio (see `tools/session`).
 
 ## Booting a real machine
 

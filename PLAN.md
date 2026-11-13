@@ -487,7 +487,7 @@ Progress:
 - **Step 7, integration.**
   - `test-zuser` runs `usbzig.rc` twice in one boot: under stock rc, then under planZ's rc (`/tmp/zig/rc`, left there by the first run). Both runs: all the same as stock, libctest ok. Its timeout and `test-usb`'s are now 900 seconds: `zig/run` now takes several minutes (fltest alone is about 2½ under TCG).
   - **mk** (`mks` in `usbzig.rc`): 9front's `rc`, `grep`, `hoc`, `awk` and `mk` built by stock `mk` with planZ's rc bound over `/bin/rc`, and again with stock rc, each in the same directory (6c records the source's path): mk's output, its status and the SHA-1 of every file made are the same. A directory's sum is left out, since it holds its entries' times (`awk/test` differed for that alone).
-  - **`-Dzigrc`** boots 9front's user programs with planZ's rc as `/bin/rc`. The loader also takes `boot/rc` and `boot/rcinit` from the boot volume (DIFF: the names past 9front's bootdir list), and plan9.ini gets `init=/boot/rcinit`. 9front's boot program binds `/boot` into `/bin` ahead of the boot file system, so `bootrc` already runs under `/boot/rc`; `bootrc` ends with `exec $init`, and `tools/rcinit` runs `init -t` with a command that binds `/boot/rc` over `/bin/rc` in the name space `init` builds from `/lib/namespace`, then runs `termrc` and the profile with it, and so `riostart`, rio and every window. A terminal only. In the window, `/bin/rc` and `/amd64/bin/rc` are planZ's (228,676 bytes). The USB image takes the same with `-Dzigrc`.
+  - **`-Dzigrc`** boots 9front's user programs with planZ's rc as `/bin/rc`. The loader also takes `boot/rc` and `boot/rcinit` from the boot volume (DIFF: the names past 9front's bootdir list), and plan9.ini gets `init=/boot/rcinit`. 9front's boot program binds `/boot` into `/bin` ahead of the boot file system, so `bootrc` already runs under `/boot/rc`; `bootrc` ends with `exec $init`, and `tools/rcinit` runs `init -t` with a command that binds `/boot/rc` over `/bin/rc` in the name space `init` builds from `/lib/namespace`, then runs `termrc` and the profile with it, and so `riostart`, rio and every window. A terminal only. In the window, `/bin/rc` and `/amd64/bin/rc` are planZ's (228,676 bytes). The USB image takes the same with `-Dzigrc`. (`tools/rcinit` is now `tools/session`, on every boot volume; see the virtual terminals' step 1.)
   - With `-Dzigrc`: `test-9front`, `test-disk`, `test-net`, `test-rio`, `test-audio` and `test-zuser` pass; `test-usb` passed once in three runs before the floating point fix below, the other two failing on it. Under `-Dzigrc` the "stock" rc of the rc cases is planZ's too, so those compare it with itself; the other programs' cases all run under it.
   - `libctest` checks that an exec'd program starts with 9front's initial floating point state (mxcsr 0x1900, fcw 0x232) whatever the old program left in the registers. It passes.
 - **Fixed: floating point registers went wrong in user processes, now and then (kernel).** Seen while testing step 7, and not from rc. Under load a process computing with doubles sometimes got wrong values partway through: planZ's `primes` printed `nn + j` with `nn` gone to 0, planZ's `fltest` panicked or ran on for 19 minutes, and 9front's own `primes`, under stock rc in a normal boot, gave a wrong list once in 240 runs and died once with `sys: trap: fault read addr=0xfffffffff0401b2b`.
@@ -496,7 +496,7 @@ Progress:
   - **`fpstress`** (`src/user/cmd/fpstress.zig`): loads xmm0–15 and r12–r15 with values made from its pid, spins in one asm block long enough to be preempted, and checks them. Before the fix, eight copies beside a fork and exec loop caught one process with five registers holding `seq`'s doubles; after it, none, with no TS report, and 480 `primes` runs (stock and planZ's) all right. `usbzig.rc` runs eight of them as a standing check.
   - Read, not tested: `fpinit` (from the C) clears the x87 state and loads MXCSR but leaves the xmm and ymm registers as the last process left them, so a process's first floating point instruction can see another's vector registers. The same in 9front.
 
-#### Virtual terminals: planned
+#### Virtual terminals: step 1 done
 Several full-screen consoles switched with keys, as Linux's virtual terminals, in place of rio or beside it. Not in 9front.
 
 **What there is.** The keyboard path is in user space: `bootrc` starts `aux/kbdfs`, which reads `/dev/scancode` (or `/dev/kbd`), serves `kbd`, `cons` and `consctl`, cooks lines, handles Ctl-Alt-Del, and writes console output to its standard output, the kernel's `#c/cons`, which `screen.zig` draws on the framebuffer with no copy of the text. rio takes over the screen through `/dev/draw` and reads `/dev/kbd` and `/dev/mouse`; each window is a set of files it serves (`cons`, `consctl`, `kbd`, `mouse`, `winname`, `text`, `wctl` …), mounted over `/dev` for the window's processes. The user's profile starts rio when `$service` is `terminal`; with `con` it only sets a prompt. Without rio the screen is the one kernel console.
@@ -514,14 +514,14 @@ Several full-screen consoles switched with keys, as Linux's virtual terminals, i
 - **libdraw, the parts vtfs needs.** `init.c` (the display, without libthread), `alloc.c`, `draw.c`, `chan.c`, `bytesperline.c`, `defont.c`, `font.c` (`cachechars`), `openfont.c`, `buildfont.c`, `readsubfont.c`, `readimage.c`, `creadimage.c`, `string.c`, `stringwidth.c`, `subfont.c`, `subfontcache.c` and `window.c` (screens and windows): about 3,000 lines of C.
 - **Waiting on several inputs at once without libthread.** Small reader processes for `/dev/kbd`, `/dev/mouse`, `/dev/kprint` and the 9P channel each forward what they read into one pipe. One main loop handles everything and answers 9P requests, holding a `cons` read until a line is ready. No memory is shared, so no locks are needed (they are not in the libc yet).
 
-**Starting it.** A plan9.ini setting, `ui=`:
-- `ui=vt`, the default once step 4 is done: vtfs.
-- `ui=rio`: as today (the default until then).
-- `ui=text`: no rio; one `rc` on the kernel console, the profile run with `service=con`.
+**Starting it.** A plan9.ini setting, `session=` (`ui=` would not do: bootrc removes every one- and two-letter environment variable before it runs `init`):
+- `session=vt`, the default once step 4 is done: vtfs.
+- `session=rio`: as today (the default until then).
+- `session=text`: no rio; one `rc` on the kernel console, the profile run with `service=con`.
 
-vtfs being the default changes the tests that drive rio's window (`test-rio`, `test-zuser`, `test-usb`, `test-audio` through `riofocus.sh`): they set `ui=rio`, or move to a vtfs console where rio is not the point.
+vtfs being the default changes the tests that drive rio's window (`test-rio`, `test-zuser`, `test-usb`, `test-audio` through `riofocus.sh`): they set `session=rio`, or move to a vtfs console where rio is not the point.
 
-It reuses `-Dzigrc`'s `init` hook (`tools/rcinit`), which runs `termrc` and the profile itself. The loader takes the script from the boot volume, as it does `rcinit`.
+It is `-Dzigrc`'s `init` hook (`tools/rcinit`, now `tools/session`), which runs `termrc` and then the profile itself, on every boot volume.
 
 **Tests.**
 - **Host:**
@@ -532,14 +532,17 @@ It reuses `-Dzigrc`'s `init` hook (`tools/rcinit`), which runs `termrc` and the 
   - vtfs with keys typed through QEMU's monitor, comparing each console's `text` file read from the serial shell, and screenshots. A console switched away from and back must give the same screenshot as before.
 
 **Steps**, each tested before the next:
-1. `ui=text`: boot to the text console without rio (the `init` hook, the loader's name list, the profile with `service=con`). Small. Test: a command typed on the screen keyboard runs, and no rio is running.
+1. `session=text`: boot to the text console without rio (the `init` hook, the loader's name list, the profile with `service=con`). Small. Test: a command typed on the screen keyboard runs, and no rio is running.
 2. 9P messages in the libc, and a small Zig file server mounted and read in the guest.
 3. The libdraw parts, compared with stock libdraw in the guest.
-4. vtfs with text consoles, the kernel-message console and the switch keys; `ui=vt`, made the default, with the rio tests set to `ui=rio`; `test-vt`.
+4. vtfs with text consoles, the kernel-message console and the switch keys; `session=vt`, made the default, with the rio tests set to `session=rio`; `test-vt`.
 5. The graphics console: rio on one of them.
 6. The USB image, booting to vtfs as the default does, and the real machine.
 
-**Decided:** Ctl-Alt-Left and Ctl-Alt-Right switch, and Ctl-Alt-1 … Ctl-Alt-4 go straight to a console; 4 consoles; `ui=vt` replaces rio as the default. QEMU's own window takes Ctl-Alt-1, -2 … for its consoles, so there the digits reach the guest only through the monitor's `send-key` (as the tests send them); a real machine is unaffected.
+Progress:
+- **Step 1.** `tools/session` replaces `tools/rcinit` and is on every boot volume with 9front's boot (the loader takes `boot/session`; plan9.ini gets `init=/boot/session`, and `-Dsession=` adds `session=` to the test volumes'). It runs `init -t` with `termrc` and then, for `session=rio` (the default), the profile, which is the command 9front's `init` runs when given none; for `session=text`, `rc -li` with `service=con`, so the profile runs without starting rio. With `/boot/rc` (`-Dzigrc`) the command binds it over `/bin/rc` first, as before. By the time bootrc runs it, `/bin` holds only the kernel's `/boot`, so the script names `/amd64/bin/rc` and `/$cputype/bin/test` (`#!/bin/rc` worked only while `-Dzigrc` put an `rc` in `/boot`). `test-text` (`tools/texttest.sh`): the profile's `cpu% ` prompt, no rio, and a command typed on the emulated keyboard runs in that shell.
+
+**Decided:** Ctl-Alt-Left and Ctl-Alt-Right switch, and Ctl-Alt-1 … Ctl-Alt-4 go straight to a console; 4 consoles; `session=vt` replaces rio as the default. QEMU's own window takes Ctl-Alt-1, -2 … for its consoles, so there the digits reach the guest only through the monitor's `send-key` (as the tests send them); a real machine is unaffected.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).

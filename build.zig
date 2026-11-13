@@ -25,7 +25,8 @@ pub fn build(b: *std.Build) void {
     disk_image = b.option([]const u8, "disk", "Disk image to attach as a virtio disk, e.g. ref/disk/9front-11952.amd64.qcow2 (never written: changes are discarded)");
     disk_bus = b.option([]const u8, "diskbus", "How the disk image is attached: virtio (default), nvme or ahci") orelse "virtio";
     const ref = b.option([]const u8, "ref", "Directory of 9front reference files, e.g. ref");
-    const zigrc = b.option(bool, "zigrc", "Boot 9front's user programs with planZ's rc as /bin/rc (see tools/rcinit)") orelse false;
+    const zigrc = b.option(bool, "zigrc", "Boot 9front's user programs with planZ's rc as /bin/rc (see tools/session)") orelse false;
+    session = b.option([]const u8, "session", "session= for the test boot volumes' plan9.ini: what runs after boot, rio or text (see tools/session)");
     const usb_esp_mb = b.option(u32, "usbesp", "Size in MiB of the boot volume of the USB image (default 40)") orelse 40;
 
     const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
@@ -275,6 +276,13 @@ pub fn build(b: *std.Build) void {
             zchat.step.dependOn(user_step);
             b.step("test-zuser", "Boot stock 9front and compare planZ's Zig programs with the stock ones").dependOn(&zchat.step);
 
+            // session=text: a shell on the screen with no rio.
+            const tchat = b.addSystemCommand(&.{ "sh", "tools/texttest.sh", "240" });
+            tchat.addArgs(qemu_args);
+            tchat.addArgs(&.{ "-display", "none" });
+            addEsp(b, tchat, loader, kernel, ini9 ++ "session=text\n", dir);
+            b.step("test-text", "Boot stock 9front with session=text: a shell on the screen, no rio").dependOn(&tchat.step);
+
             // The same through a USB Ethernet adapter, which stock
             // nusb/ether drives from user space over the kernel's USB
             // stack.  The virtio card is still there; the test names
@@ -315,12 +323,10 @@ pub fn build(b: *std.Build) void {
                 mk.addPrefixedFileArg("--disk=", b.path(disk_image.?));
                 mk.addPrefixedFileArg("EFI/BOOT/BOOTX64.EFI=", loader.getEmittedBin());
                 mk.addPrefixedFileArg("planz=", kernel.getEmittedBin());
-                if (zigrc_bin) |rc| {
-                    const ini = b.addWriteFiles().add("plan9.ini", @embedFile("tools/usb.ini") ++ zigrc_ini);
-                    mk.addPrefixedFileArg("plan9.ini=", ini);
-                    mk.addPrefixedFileArg("boot/rc=", rc);
-                    mk.addPrefixedFileArg("boot/rcinit=", b.path("tools/rcinit"));
-                } else mk.addPrefixedFileArg("plan9.ini=", b.path("tools/usb.ini"));
+                const ini = b.addWriteFiles().add("plan9.ini", b.fmt("{s}{s}", .{ @embedFile("tools/usb.ini"), sessionIni(b, @embedFile("tools/usb.ini")) }));
+                mk.addPrefixedFileArg("plan9.ini=", ini);
+                mk.addPrefixedFileArg("boot/session=", b.path("tools/session"));
+                if (zigrc_bin) |rc| mk.addPrefixedFileArg("boot/rc=", rc);
                 mk.addPrefixedFileArg("boot/boot=", b.path(b.pathJoin(&.{ dir, "boot/boot" })));
                 mk.addPrefixedFileArg("boot/bootfs.paq=", b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })));
                 mk.addPrefixedFileArg("boot/paqfs=", b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })));
@@ -491,18 +497,16 @@ fn addEsp(
     const esp = b.addWriteFiles();
     _ = esp.addCopyFile(loader.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
     _ = esp.addCopyFile(kernel.getEmittedBin(), "planz");
-    // With -Dzigrc, 9front's boot runs planZ's rc as /bin/rc
-    const rcini = if (ref != null and zigrc_bin != null) zigrc_ini else "";
-    if (ini) |text| _ = esp.add("plan9.ini", b.fmt("{s}{s}", .{ text, rcini }));
+    // With 9front's boot: what runs after it (tools/session)
+    if (ini) |text|
+        _ = esp.add("plan9.ini", b.fmt("{s}{s}", .{ text, if (ref != null) sessionIni(b, text) else "" }));
     if (ref) |dir| {
         _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "boot/boot" })), "boot/boot");
         _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })), "boot/bootfs.paq");
         _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })), "boot/paqfs");
         _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "root/amd64/bin/auth/factotum" })), "boot/factotum");
-        if (zigrc_bin) |rc| {
-            _ = esp.addCopyFile(rc, "boot/rc");
-            _ = esp.addCopyFile(b.path("tools/rcinit"), "boot/rcinit");
-        }
+        _ = esp.addCopyFile(b.path("tools/session"), "boot/session");
+        if (zigrc_bin) |rc| _ = esp.addCopyFile(rc, "boot/rc");
     }
     run.addArg("-drive");
     run.addPrefixedDirectoryArg("format=raw,file=fat:rw:", esp.getDirectory());
@@ -524,7 +528,19 @@ fn addEsp(
 var disk_image: ?[]const u8 = null;
 /// planZ's rc, for the boot volumes, when -Dzigrc is given.
 var zigrc_bin: ?std.Build.LazyPath = null;
-const zigrc_ini = "init=/boot/rcinit\n";
+/// -Dsession: session= for the boot volumes' plan9.ini.
+var session: ?[]const u8 = null;
+
+/// The plan9.ini lines that hand what runs after 9front's boot to
+/// tools/session, which the loader puts in /boot.
+/// A plan9.ini that already says session= keeps its own.
+fn sessionIni(b: *std.Build, ini: []const u8) []const u8 {
+    if (session) |s| {
+        if (std.mem.indexOf(u8, ini, "session=") == null)
+            return b.fmt("init=/boot/session\nsession={s}\n", .{s});
+    }
+    return "init=/boot/session\n";
+}
 var disk_bus: []const u8 = "virtio";
 
 /// The QEMU device that presents drive d0 on the given bus.

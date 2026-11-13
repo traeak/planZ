@@ -1,0 +1,34 @@
+#!/amd64/bin/rc
+# What runs after boot.  The loader puts this script in the kernel's
+# /boot and the boot volume's plan9.ini says init=/boot/session, so
+# bootrc ends with exec /boot/session; it runs init as bootrc would,
+# with the command init gives rc after making the name space from
+# /lib/namespace.  session= in plan9.ini picks what follows termrc:
+#	rio	the profile, which starts rio (the default)
+#	text	no rio: an rc on the screen, the profile read as for
+#		service=con (rc -l)
+# The name has three letters or more: bootrc removes /env/? and /env/??
+# before it runs init.
+#
+# By the time bootrc runs it, the boot file system is unmounted and /bin
+# holds only the kernel's /boot, so this script names the root's own rc
+# and test, for amd64.
+#
+# With zig build -Dzigrc the loader also brings planZ's rc as /boot/rc.
+# 9front's boot program binds /boot into /bin ahead of the boot file
+# system, so bootrc already runs under it; the command binds it over the
+# root's /bin/rc too, in init's name space, and every rc after that is
+# planZ's.
+#
+# A terminal only.
+
+zigrc=''
+if(/$cputype/bin/test -x /boot/rc)
+	zigrc='bind /boot/rc /bin/rc && '
+switch($session){
+case text
+	then='service=con exec /bin/rc -li'
+case *
+	then='. ./lib/profile'
+}
+exec /$cputype/init -t $zigrc^'exec /bin/rc -c ''. /rc/bin/termrc; home=/usr/$user; cd && '^$then^''''
