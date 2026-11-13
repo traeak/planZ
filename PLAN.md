@@ -438,7 +438,7 @@ Progress, steps 1–5 (step 6, timing, not done):
 - Kept from the C and tested: `[^ab]` matches a raw 0xff byte where `[^a]` does not; `.` and classes never match bytes that are not UTF-8; `x^` matches a line after one ending in x; `-f` before `-e` makes the `-e` read the (finished) file, so it fails with "empty pattern".
 - Seen while testing, not from grep: during `usbzig.rc`'s sed cases the guest prints `rc: can't open: file does not exist: '/env//tmp'` outside every compared output; the committed script does it too.
 
-#### rc: steps 1–2 done
+#### rc: steps 1–3 done
 9front's `rc` (`cmd/rc`) is 5,939 lines; without `unix.c` (420) and the Unix `#ifdef`s, about 5,500. The lexer, grammar and syntax tree are `lex.c`, `syn.y` (yacc, with precedence) and `tree.c` (720 lines). The compiler to threaded code is `code.c` and `pfnc.c` (625). `pcmd.c` (169) prints a tree back as rc text. The interpreter is `exec.c`, `simple.c` (the builtins `cd`, `whatis`, `eval`, `exec`, `exit`, `shift`, `wait`, `.`, `flag`), `var.c`, `subr.c` and `trap.c` (1,940). Globbing, here documents and rc's own buffered I/O and `pfmt` are `glob.c`, `here.c` and `io.c` (700); `getflags.c` (234) parses its flags; `plan9.c` and `havefork.c` (735) are the system interface, with the builtins `rfork` and `finit`.
 
 What constrains the port:
@@ -474,6 +474,7 @@ Progress:
 - **Against stock, once** (a guest run, not yet in `usbzig.rc`): each test case and each rc script of `/rc/bin` wrapped as `fn x {…}`, sourced, and printed by `whatis x` in stock rc, against the same through the port's parser and printer: all 170 the same (6,030 lines), and the one case stock rejects (``echo `` a``) the port rejects too. Step 6 makes this a standing check, stock rc against the Zig rc.
 - **Kept from C:** the first digit of a redirection's fd goes into the token twice, so messages show `token '>[22=': redirection syntax` for `>[2=`; `if(c)cmd`, `for(i)cmd` and `while (c){` print without the spaces one might expect; a simple command's redirections print before it (` <a  >b cat`).
 - **Fixed from C:** the fd digits of a redirection are copied into the 8,192-byte token with no bound in the C; the Zig stops with the C's "token buffer too short".
+- **Step 3, the compiler** (`code.zig`, with `deglob` in `glob.zig` and the builtins' names in `simple.zig`). An instruction is a tagged union holding its operands (`pipe: struct { fd0, fd1, right, end }`, `fn: struct { end, str }`, `word: []u8` …); a pc counts instructions, and `Code.wordpc` gives the C's word pc for the `-r` trace, so traces can be compared with stock's in step 6. The `rfork s` that `&` inserts is `.builtin = .rfork`, an enum, not a function pointer. Host tests: listings derived from `code.c` by hand for simple commands, assignments with and without a command, `if`, pipes, `for`, `switch`, `&` and backquotes, all as the port compiles them; the `if not` and `case missing in switch` errors; all 126 9front scripts compile without errors; and `wordpc` against the C's layout.
 - **To confirm in step 6:** rc is built with 6c, whose `char` the port takes as signed: a 0xff byte then ends a here document (it equals `EOF`), and `pwrd` never quotes bytes from 0x80 up.
 
 ### Later

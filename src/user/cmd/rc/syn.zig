@@ -8,7 +8,7 @@
 //!     gotos are a labeled switch; the stack holds indices.
 //!   - yydebug, never on in rc, is left out.
 //!   - The action of the rule `rc: line '\n'` calls compile through
-//!     `compile`, which code.zig sets (the host tests set their own).
+//!     `compile`, code.zig's (the host tests set their own).
 
 const std = @import("std");
 const rc = @import("rc.zig");
@@ -25,11 +25,7 @@ pub var yynerrs: i32 = 0; // number of errors
 pub var yyerrflag: i32 = 0; // error recovery flag
 
 /// Compile a command's tree; false if it had errors.
-pub var compile: *const fn (?*Tree) bool = &notYet;
-
-fn notYet(_: ?*Tree) bool {
-    @panic("rc: compile is not ported yet");
-}
+pub var compile: *const fn (?*Tree) bool = &@import("code.zig").compile;
 
 fn yylex1() i32 {
     var c: i32 = undefined;
