@@ -365,7 +365,7 @@ Progress, steps 1–3:
 
 Step 4, `sed` (`src/user/cmd/sed.zig`, 1,370 lines from 1,473): the pattern space, hold space, work buffer and text pool are rune arrays with lengths; commands, labels and pending appends are indices; a script line is read through an accessor that gives 0 past its end, where the C reads its terminator. Kept from the C: `c` prints on a range's first line only (never with no address), `N` at the end of the input deletes the pattern space unprinted, `P` and `s///P` write each rune's low byte, `s///P` with a w file skips the file, w files are appended to, an empty w name is standard output, labels are at most 7 runes (b/t labels run to `;`). DIFFs: a w file name is cut at 39 bytes (the C overruns `fname[40]`), a y whose source has an escape other than `\n` past the table is "garbled" (the C writes past it), and a pattern stops 4 bytes short of the C's 512-byte limit. `usbzig.rc` compares about 90 sed runs with stock (addresses and ranges, every command, substitution flags and groups, empty matches, labels, `a`/`i`/`c` text, `-n`/`-g`/`-e`/`-f`, standard input, several files, and 21 error cases) and, in the file-operations sequence, the files `w` and `s///w` write: all the same.
 
-#### Floating-point formatting: planned
+#### Floating-point formatting: done
 9front formats `%e %f %g %E %G` with `xdtoa` in `libc/fmt/fltfmt.c` (323 lines). It guesses 17 significant digits from `frexp` and a 160-entry `pow10` table, tries rounding away trailing 9s, then converts the digits back with `strtod` and steps the last digit up or down until the result equals the number; then it pads, rounds and strips per verb (`NaN`, `Inf`, precision at most 30, and only width and `-` kept from the flags, so `%05.2f` pads with spaces). Which 17 digits it settles on depends on the guess and on `strtod`, so matching it byte for byte means porting `xdtoa`, `pow10`, `frexp` and `strtod` exactly, not using Zig's float printing or parsing.
 
 Steps:
@@ -377,6 +377,13 @@ Steps:
 6. **The commands**: `du -e`/`-h`, `seq`, `factor` and `primes`, compared with stock in `usbzig.rc` (including `seq -w`, `seq -f` with several formats, and `factor` on large numbers).
 
 Estimate: about 1,100 lines of Zig with tests, `strtod` the largest part, plus the four commands.
+
+Progress, all six steps:
+- **`src/lib/flt.zig`**: `strtod`, `ldexp`, `frexp`, `modf`, `pow10`, `floor`/`ceil`, `fmod`, `fabs`, `sqrt` and the NaN/Inf functions, reached as `fmt.flt` and from libc. The digit routines work from lengths; the digit buffer is 4096 bytes where the C's 1500 can overflow. On 10,000 random inputs the ported `strtod` agrees with Zig's correctly rounded parser everywhere.
+- **`fmt.zig`**: `%e %f %g %E %G` from `fltfmt.c`, and `runprint`/`runsnprint` for formats known only at run time (one parser for both). Kept from the C: halves round up on the decimal digits (`%.1f` of 2.25 is `2.3`), the 9s step prints `%.17g` of 0.1 as `0.1`, and only width and `-` survive (`%05.1f` pads with spaces).
+- **Differential test.** `tools/fltest.c` (built in the guest against stock libc) and `src/user/cmd/fltest.zig` print 38 edge values, 10,000 random bit patterns and 2,000 halfway cases through 16 formats, and `strtod` over 10,046 strings: all 7.7MB the same.
+- **Found in the C.** (1) `_floatfmt`'s buffer is `1+308+1+30+1` bytes, but numbers of 1e308 and up have 309 integer digits: `%.30f` of one at or below -1e308 writes its 0 a byte past the end, and stock `fltest` faulted there (nil read), on the stock kernel too. The Zig buffer needs no 0, so it prints the whole 341 characters: Fixed from C. Both `fltest`s skip that one field. (2) 6c's code takes `NaN <= x` as true; `fltest.c` tests `isNaN` first. (3) Not explained yet: the first version of `fltest.c` printed each line with one `Bprint` of 17 values, and stock faulted (nil read, pc 0x202c03) while printing line 2619 (-1.04e49), on both kernels, 42 lines before the first value the overflow above touches. Formatting each field with `snprint` and writing it avoids it; the cause, in stock libbio or libc's fmt, is still to be found.
+- **Commands.** `seq` (its format built or given at run time, through `runsnprint`), `factor`, `primes`, and `du -e`/`-h` (kept: a value past the "Y" prefix prints `<nil>`, as the C's nil-ended table does). All compared with stock in `usbzig.rc`.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).

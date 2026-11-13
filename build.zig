@@ -76,16 +76,18 @@ pub fn build(b: *std.Build) void {
         "mtime", "strings",  "freq",      "comm",
         "read",  "unicode",  "tr",        "xd",
         "split", "du",       "test",      "retest",
-        "sed",
+        "sed",   "fltest",   "seq",       "factor",
+        "primes",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
         zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc);
         user_step.dependOn(&b.addInstallFile(zbins[i], b.fmt("user/bin/{s}", .{name})).step);
     }
-    // retest's other half, built in the guest against stock libregexp,
-    // and the table both read (see tools/retest.c)
-    const zdata = [_][]const u8{ "retest.c", "retest.txt" };
+    // retest's and fltest's other halves, built in the guest against
+    // stock libregexp and libc, and the table retest reads (see
+    // tools/retest.c and tools/fltest.c)
+    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c" };
     for (zdata) |name|
         user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
 
@@ -340,7 +342,7 @@ pub fn build(b: *std.Build) void {
 
     // Unit tests of the parts that do not need the machine, run on the host.
     const test_step = b.step("test", "Run host unit tests");
-    for ([_][]const u8{ "src/lib/fmt.zig", "src/lib/fcall.zig", "src/kernel/port/lib.zig" }) |file| {
+    for ([_][]const u8{ "src/lib/fmt.zig", "src/lib/fcall.zig", "src/lib/flt.zig", "src/kernel/port/lib.zig" }) |file| {
         const unit = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path(file),
             .target = b.graph.host,

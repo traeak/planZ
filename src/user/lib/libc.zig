@@ -138,6 +138,38 @@ pub const strtol32 = string_.strtol32;
 pub const strtoul32 = string_.strtoul32;
 pub const basename = string_.basename;
 
+// Floating point (src/lib/flt.zig, which fmt's %e %f %g use too)
+
+const flt_ = fmt.flt;
+/// strtod: the value and how many bytes it used.
+pub const strtod = flt_.strtod;
+pub const frexp = flt_.frexp;
+pub const ldexp = flt_.ldexp;
+pub const modf = flt_.modf;
+pub const pow10 = flt_.pow10;
+pub const floor = flt_.floor;
+pub const ceil = flt_.ceil;
+pub const fmod = flt_.fmod;
+pub const fabs = flt_.fabs;
+pub const sqrt = flt_.sqrt;
+pub const NaN = flt_.NaN;
+pub const Inf = flt_.Inf;
+pub const isNaN = flt_.isNaN;
+pub const isInf = flt_.isInf;
+
+/// atof: strtod's value.
+pub fn atof(s: []const u8) f64 {
+    return flt_.strtod(s).v;
+}
+
+/// Format at run time (a format a program builds or is given): the
+/// same verbs as print, with the values tagged.
+pub const Value = fmt.Value;
+
+pub fn runsnprint(buf: []u8, format: []const u8, args: []const Value) []u8 {
+    return fmt.runsnprint(buf, format, args);
+}
+
 // Runes
 
 const rune_ = @import("rune.zig");

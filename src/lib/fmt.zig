@@ -12,6 +12,7 @@
 //! the value prints as the unsigned number of the same width.
 //!
 //! Verbs: d x X o b (integers), c and C (rune), s (string), q (quoted string),
+//! e f g E G (floating point, from fltfmt.c),
 //! p (address), r (current error string), % (literal).
 //! Flags: - + # space , 0, width and .precision, either may be `*`.
 //!
@@ -20,6 +21,7 @@
 //! which is what fmtinstall does in C (%E, %I, %V ... in the kernel).
 
 const std = @import("std");
+pub const flt = @import("flt.zig");
 
 pub const Flags = packed struct {
     width: bool = false, // FmtWidth
@@ -139,12 +141,21 @@ const Spec = struct {
 /// Parse the verb whose '%' is at format[start-1].
 fn parseSpec(comptime format: []const u8, comptime start: usize) Spec {
     comptime {
+        return parseSpecAt(format, start) orelse
+            @compileError("fmt: incomplete verb in \"" ++ format ++ "\"");
+    }
+}
+
+/// Parse the verb whose '%' is at format[start-1], at compile time or
+/// at run time; null if the format ends first.
+fn parseSpecAt(format: []const u8, start: usize) ?Spec {
+    {
         var sp: Spec = .{};
         var i = start;
         var dot = false;
         // Flags, width, precision and size modifiers, in any order.
         while (true) : (i += 1) {
-            if (i >= format.len) @compileError("fmt: incomplete verb in \"" ++ format ++ "\"");
+            if (i >= format.len) return null;
             switch (format[i]) {
                 '-' => sp.flags.left = true,
                 '+' => sp.flags.sign = true,
@@ -248,6 +259,7 @@ fn verb(f: *Fmt, comptime r: u8, arg: anytype) void {
     if (comptime hasFmt9(T)) return arg.fmt9(f);
     switch (r) {
         'd', 'x', 'X', 'o', 'b' => ifmt(f, r, arg),
+        'e', 'f', 'g', 'E', 'G' => floatfmt(f, r, floatarg(arg)),
         'p' => {
             f.flags.unsigned = true;
             f.r = 'x';
@@ -647,3 +659,484 @@ test "%s re-encodes as Plan 9 does" {
     // surrogates pass through
     try std.testing.expectEqualStrings("\xed\xa0\x80", snprint(&buf, "%s", .{"\xed\xa0\x80"}));
 }
+
+// --------------------------------------------------------- fltfmt.c
+
+/// A %e %f %g argument as the C's double.
+fn floatarg(arg: anytype) f64 {
+    return switch (@typeInfo(@TypeOf(arg))) {
+        .float, .comptime_float => @floatCast(arg),
+        else => @compileError("fmt: %e %f %g need a float, got " ++ @typeName(@TypeOf(arg))),
+    };
+}
+
+const FDIGIT = 30;
+const FDEFLT = 6;
+const NSIGNIF = 17;
+const NEXP10 = 308;
+
+/// Add v at digit n of a, carrying; true if it carried out of a[0].
+fn xadd(a: []u8, n: i32, v: u8) bool {
+    if (n < 0 or n >= NSIGNIF)
+        return false;
+    var b: usize = @intCast(n);
+    var vv = v;
+    while (true) : (b -= 1) {
+        const c = a[b] + vv;
+        if (c <= '9') {
+            a[b] = c;
+            return false;
+        }
+        a[b] = '0';
+        vv = 1;
+        if (b == 0) break;
+    }
+    a[0] = '1'; // overflow adding
+    return true;
+}
+
+/// Subtract v at digit n of a, borrowing; true if it borrowed past a[0].
+fn xsub(a: []u8, n: i32, v: u8) bool {
+    var b: usize = @intCast(n);
+    var vv = v;
+    while (true) : (b -= 1) {
+        const c = @as(i32, a[b]) - vv;
+        if (c >= '0') {
+            a[b] = @intCast(c);
+            return false;
+        }
+        a[b] = '9';
+        vv = 1;
+        if (b == 0) break;
+    }
+    a[0] = '9'; // underflow subtracting
+    return true;
+}
+
+/// The C's sprint(s1+NSIGNIF, "e%d", x); returns s1's new length.
+fn setexp(s1: []u8, x: i32) usize {
+    return NSIGNIF + snprint(s1[NSIGNIF..], "e%d", .{x}).len;
+}
+
+/// Format f into s2 as fmt's verb chr (e f g E G) asks; returns the part
+/// of s2 used.  The C's xdtoa, step for step: 17 digits from a first
+/// guess, corrected against strtod until they convert back to f, then
+/// rounded and laid out for the verb.
+fn xdtoa(fmt: *const Fmt, chr0: u8, f_: f64, s2: []u8) []u8 {
+    var s1: [NSIGNIF + 10]u8 = undefined;
+    var save: [NSIGNIF + 10]u8 = undefined;
+    var f = f_;
+    var prec: i32 = FDEFLT;
+    if (fmt.flags.prec)
+        prec = @intCast(@min(fmt.prec, std.math.maxInt(i32)));
+    if (prec > FDIGIT)
+        prec = FDIGIT;
+    const sign = @as(u64, @bitCast(f)) >> 63 != 0;
+    var ucase = false;
+    var chr = chr0;
+    const isnan = flt.isNaN(f);
+    const isinf = flt.isInf(f, 0);
+    var e: i32 = 0;
+    var n1: usize = NSIGNIF; // s1's length with its exponent
+
+    found: {
+        if (isnan or isinf)
+            break :found;
+        if (sign)
+            f = -f;
+        if (std.ascii.isUpper(chr)) {
+            ucase = true;
+            chr = std.ascii.toLower(chr);
+        }
+
+        var g = f;
+        if (g != 0) {
+            e = flt.frexp(f).e;
+            e = @intFromFloat(@as(f64, @floatFromInt(e)) * 0.301029995664);
+            var d: i32 = undefined;
+            var h: f64 = undefined;
+            if (e >= -150 and e <= 150) {
+                d = 0;
+                h = f;
+            } else {
+                d = @divTrunc(e, 2);
+                h = f * flt.pow10(-d);
+            }
+            g = h * flt.pow10(d - e);
+            while (g < 1) {
+                e -= 1;
+                g = h * flt.pow10(d - e);
+            }
+            while (g >= 10) {
+                e += 1;
+                g = h * flt.pow10(d - e);
+            }
+        }
+
+        // convert NSIGNIF digits and convert
+        // back to get accuracy.
+        for (0..NSIGNIF) |i| {
+            const d: i32 = @intFromFloat(g);
+            s1[i] = @intCast(d + '0');
+            g = (g - @as(f64, @floatFromInt(d))) * 10;
+        }
+
+        // try decimal rounding to eliminate 9s
+        var c2 = prec + 1;
+        if (chr == 'f')
+            c2 += e;
+        if (c2 >= NSIGNIF - 2) {
+            save = s1;
+            const d = e;
+            s1[NSIGNIF - 2] = '0';
+            s1[NSIGNIF - 1] = '0';
+            n1 = setexp(&s1, e - NSIGNIF + 1);
+            g = flt.strtod(s1[0..n1]).v;
+            if (g == f)
+                break :found;
+            if (xadd(&s1, NSIGNIF - 3, 1)) {
+                e += 1;
+                n1 = setexp(&s1, e - NSIGNIF + 1);
+            }
+            g = flt.strtod(s1[0..n1]).v;
+            if (g == f)
+                break :found;
+            s1 = save;
+            e = d;
+        }
+
+        // convert back so s1 gets exact answer
+        while (true) {
+            n1 = setexp(&s1, e - NSIGNIF + 1);
+            g = flt.strtod(s1[0..n1]).v;
+            if (f > g) {
+                if (xadd(&s1, NSIGNIF - 1, 1))
+                    e -= 1;
+                continue;
+            }
+            if (f < g) {
+                if (xsub(&s1, NSIGNIF - 1, 1))
+                    e += 1;
+                continue;
+            }
+            break;
+        }
+    }
+
+    // sign
+    var d: usize = 0;
+    if (sign) {
+        s2[d] = '-';
+        d += 1;
+    } else if (fmt.flags.sign) {
+        s2[d] = '+';
+        d += 1;
+    } else if (fmt.flags.space) {
+        s2[d] = ' ';
+        d += 1;
+    }
+
+    if (isnan) {
+        @memcpy(s2[d..][0..3], "NaN");
+        return s2[0 .. d + 3];
+    }
+    if (isinf) {
+        @memcpy(s2[d..][0..3], "Inf");
+        return s2[0 .. d + 3];
+    }
+
+    // copy into final place
+    // c1 digits of leading '0'
+    // c2 digits from conversion
+    // c3 digits of trailing '0'
+    // c4 digits after '.'
+    if (chr == 'g' and prec > 0) // Significant figures.
+        prec -= 1;
+    var c1: i32 = 0;
+    var c2: i32 = prec + 1;
+    var c3: i32 = 0;
+    var c4: i32 = prec;
+    switch (chr) {
+        'g' => {
+            // decide on 'e' of 'f' style convers
+            if (xadd(&s1, c2, 5))
+                e += 1;
+            if (e >= -4 and e <= prec) {
+                c1 = -e;
+                c4 = prec - e;
+                chr = 'h'; // flag for 'f' style
+            }
+        },
+        'f' => {
+            if (xadd(&s1, c2 + e, 5))
+                e += 1;
+            c1 = -e;
+            if (c1 > prec)
+                c1 = c2;
+            c2 += e;
+        },
+        else => {
+            if (xadd(&s1, c2, 5))
+                e += 1;
+        },
+    }
+
+    // clean up c1 c2 and c3
+    if (c1 < 0)
+        c1 = 0;
+    if (c2 < 0)
+        c2 = 0;
+    if (c2 > NSIGNIF) {
+        c3 = c2 - NSIGNIF;
+        c2 = NSIGNIF;
+    }
+
+    // copy digits
+    var i: usize = 0;
+    while (c1 > 0) : (c1 -= 1) {
+        if (c1 + c2 + c3 == c4) {
+            s2[d] = '.';
+            d += 1;
+        }
+        s2[d] = '0';
+        d += 1;
+    }
+    while (c2 > 0) : (c2 -= 1) {
+        if (c2 + c3 == c4) {
+            s2[d] = '.';
+            d += 1;
+        }
+        s2[d] = s1[i];
+        d += 1;
+        i += 1;
+    }
+    while (c3 > 0) : (c3 -= 1) {
+        if (c3 == c4) {
+            s2[d] = '.';
+            d += 1;
+        }
+        s2[d] = '0';
+        d += 1;
+    }
+
+    // strip trailing '0' on g conv
+    if (fmt.flags.sharp) {
+        if (c4 == 0) {
+            s2[d] = '.';
+            d += 1;
+        }
+    } else if (chr == 'g' or chr == 'h') {
+        var n: isize = @as(isize, @intCast(d)) - 1;
+        while (n >= 0) : (n -= 1) {
+            if (s2[@intCast(n)] != '0')
+                break;
+        }
+        var k = n;
+        while (k >= 0) : (k -= 1) {
+            if (s2[@intCast(k)] == '.') {
+                d = @intCast(n);
+                if (k != n)
+                    d += 1;
+                break;
+            }
+        }
+    }
+    if (chr == 'e' or chr == 'g') {
+        s2[d] = if (ucase) 'E' else 'e';
+        d += 1;
+        var x = e;
+        if (x < 0) {
+            s2[d] = '-';
+            x = -x;
+        } else s2[d] = '+';
+        d += 1;
+        if (x >= 100) {
+            s2[d] = @intCast(@divTrunc(x, 100) + '0');
+            d += 1;
+            x = @mod(x, 100);
+        }
+        s2[d] = @intCast(@divTrunc(x, 10) + '0');
+        s2[d + 1] = @intCast(@mod(x, 10) + '0');
+        d += 2;
+    }
+    return s2[0..d];
+}
+
+/// _floatfmt: the number, then only width and '-' of the flags.
+fn floatfmt(f: *Fmt, comptime r: u8, v: f64) void {
+    var s: [1 + NEXP10 + 1 + FDIGIT + 1]u8 = undefined;
+    const out = xdtoa(f, r, v, &s);
+    const keep: Flags = .{ .width = f.flags.width, .left = f.flags.left };
+    f.flags = keep;
+    sfmt(f, out);
+}
+
+test "%e %f %g as 9front prints them" {
+    var buf: [400]u8 = undefined;
+    const T = struct {
+        fn check(b: []u8, comptime format: []const u8, v: anytype, want: []const u8) !void {
+            try std.testing.expectEqualStrings(want, snprint(b, format, .{v}));
+        }
+    };
+    try T.check(&buf, "%g", 0.1, "0.1");
+    try T.check(&buf, "%g", 100000.0, "100000");
+    try T.check(&buf, "%g", 1000000.0, "1e+06");
+    try T.check(&buf, "%g", 1.0e-5, "1e-05");
+    try T.check(&buf, "%g", 0.0001, "0.0001");
+    try T.check(&buf, "%f", 3.14159, "3.141590");
+    try T.check(&buf, "%.2f", 2.675, "2.67");
+    try T.check(&buf, "%.0f", 0.5, "1");
+    try T.check(&buf, "%e", 12345.678, "1.234568e+04");
+    try T.check(&buf, "%E", 1.0e-300, "1.000000E-300");
+    try T.check(&buf, "%G", 1.5e300, "1.5E+300");
+    try T.check(&buf, "%g", -0.0, "-0");
+    try T.check(&buf, "%+g", 2.0, "+2");
+    try T.check(&buf, "% g", 2.0, " 2");
+    try T.check(&buf, "%#g", 2.0, "2.00000");
+    try T.check(&buf, "%#.0f", 2.0, "2.");
+    try T.check(&buf, "%05.1f", 2.25, "  2.3"); // half up on the decimal digits; 0 flag dropped
+    try T.check(&buf, "%-8.3e|", 1.0, "1.000e+00|");
+    try T.check(&buf, "%g", flt.NaN(), "NaN");
+    try T.check(&buf, "%g", flt.Inf(-1), "-Inf");
+    try T.check(&buf, "%.17g", 0.1, "0.1"); // the 9s step finds 0.1 reads back exactly
+    try T.check(&buf, "%g", @as(f32, 0.5), "0.5");
+}
+
+test "%.17g reads back" {
+    var prng = std.Random.DefaultPrng.init(1);
+    const rnd = prng.random();
+    var buf: [400]u8 = undefined;
+    for (0..5000) |_| {
+        const v: f64 = @bitCast(rnd.int(u64) & 0x7fef_ffff_ffff_ffff);
+        const s = snprint(&buf, "%.17g", .{v});
+        try std.testing.expectEqual(v, flt.strtod(s).v);
+    }
+}
+
+// ------------------------------------------------- formats at run time
+
+/// A value for runprint: the C's varargs, typed at run time.
+pub const Value = union(enum) {
+    int: i64,
+    uint: u64,
+    float: f64,
+    str: []const u8,
+
+    fn kind(v: Value) []const u8 {
+        return @tagName(v);
+    }
+};
+
+/// fmtprint with a format known only at run time (seq -f, say): the same
+/// verbs, flags, width and precision, parsed as it goes.  A verb that does
+/// not fit its value, undefined in C, prints %!v(kind); an unknown verb
+/// prints %v% as the C's badfmt does; a value missing prints %!v(missing).
+pub fn runprint(f: *Fmt, format: []const u8, args: []const Value) void {
+    var i: usize = 0;
+    var argi: usize = 0;
+    while (i < format.len) {
+        const lit = std.mem.findScalarPos(u8, format, i, '%') orelse format.len;
+        if (lit > i) f.puts(format[i..lit]);
+        if (lit >= format.len) break;
+
+        const sp = parseSpecAt(format, lit + 1) orelse break; // a '%' at the end prints nothing
+        i = sp.end;
+        f.flags = sp.flags;
+        f.width = sp.width;
+        f.prec = sp.prec;
+        f.r = sp.r;
+
+        if (sp.wstar) {
+            const v = starval(args, &argi);
+            f.flags.width = true;
+            f.flags.left = f.flags.left or v < 0;
+            f.width = @abs(v);
+        }
+        if (sp.pstar) {
+            const v = starval(args, &argi);
+            if (v < 0) f.flags.prec = false else f.prec = @intCast(v);
+        }
+
+        switch (sp.r) {
+            '%' => f.putc('%'),
+            'r' => f.pad(if (errstr) |e| e() else "no error"),
+            'd', 'x', 'X', 'o', 'b', 'c', 'C', 'p', 's', 'q', 'e', 'f', 'g', 'E', 'G' => {
+                if (argi >= args.len) {
+                    badval(f, sp.r, "missing");
+                    continue;
+                }
+                runverb(f, sp.r, args[argi]);
+                argi += 1;
+            },
+            else => badfmt(f, sp.r),
+        }
+    }
+}
+
+/// Format into buf at run time; returns the part of buf written.
+pub fn runsnprint(buf: []u8, format: []const u8, args: []const Value) []u8 {
+    var f: Fmt = .{ .buf = buf };
+    runprint(&f, format, args);
+    return buf[0..f.n];
+}
+
+fn starval(args: []const Value, argi: *usize) i64 {
+    if (argi.* >= args.len) return 0;
+    const v = args[argi.*];
+    argi.* += 1;
+    return switch (v) {
+        .int => |x| x,
+        .uint => |x| @bitCast(x),
+        else => 0,
+    };
+}
+
+fn badval(f: *Fmt, r: u8, what: []const u8) void {
+    f.flags = .{};
+    f.puts("%!");
+    f.putc(r);
+    f.putc('(');
+    f.puts(what);
+    f.putc(')');
+}
+
+fn runverb(f: *Fmt, r: u8, v: Value) void {
+    switch (r) {
+        inline 'd', 'x', 'X', 'o', 'b', 'c', 'C', 'p' => |c| switch (v) {
+            .int => |x| verb(f, c, x),
+            .uint => |x| verb(f, c, x),
+            else => badval(f, r, v.kind()),
+        },
+        's' => switch (v) {
+            .str => |x| sfmt(f, x),
+            else => badval(f, r, v.kind()),
+        },
+        'q' => switch (v) {
+            .str => |x| qfmt(f, x),
+            else => badval(f, r, v.kind()),
+        },
+        inline 'e', 'f', 'g', 'E', 'G' => |c| switch (v) {
+            .float => |x| floatfmt(f, c, x),
+            else => badval(f, r, v.kind()),
+        },
+        else => badfmt(f, r),
+    }
+}
+
+/// _badfmt: "%" r "%", copied as a string of that precision; it takes
+/// no argument.
+fn badfmt(f: *Fmt, r: u8) void {
+    var x: [3]u8 = .{ '%', r, '%' };
+    f.flags.prec = true;
+    f.prec = 3;
+    sfmt(f, &x);
+}
+
+test "formats at run time" {
+    var buf: [128]u8 = undefined;
+    try std.testing.expectEqualStrings("x=  42 0x1f 2.50 'a b' %", runsnprint(&buf, "x=%4d %#x %.2f %q %%", &.{ .{ .int = 42 }, .{ .uint = 31 }, .{ .float = 2.5 }, .{ .str = "a b" } }));
+    try std.testing.expectEqualStrings("[  1.5]", runsnprint(&buf, "[%*.*f]", &.{ .{ .int = 5 }, .{ .int = 1 }, .{ .float = 1.5 } }));
+    try std.testing.expectEqualStrings("%!f(str) %!d(missing) %z%", runsnprint(&buf, "%f %d %z", &.{.{ .str = "x" }}));
+    try std.testing.expectEqualStrings("ab", runsnprint(&buf, "ab%", &.{}));
+}
+

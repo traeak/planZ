@@ -1,9 +1,7 @@
 //! du - print disk usage
 //! from cmd/du.c
 //!
-//! DIFF: -e and -h print floating point (%g), which the library's
-//! formatting does not have yet: they print that and exit.  Names are
-//! built with the allocator where the C uses String.  The seen cache is
+//! DIFF: names are built with the allocator where the C uses String.  The seen cache is
 //! a list per bucket, as the C's, holding the Dir fields it compares.
 
 const std = @import("std");
@@ -52,10 +50,21 @@ fn usage() noreturn {
 fn printamt(amt: i64, name: []const u8) void {
     if (readflg)
         return;
-    if (autoscale or fltflag) {
-        // DIFF: see the head of the file
-        libc.fprint(2, "du: -e and -h are not ported yet: they need %%g\n", .{});
-        libc.exits("not ported");
+    if (autoscale) {
+        var scale: usize = 0;
+        var val = @as(f64, @floatFromInt(amt)) / @as(f64, @floatFromInt(unit));
+
+        // the C's table ends with nil, which %s prints as <nil>
+        while (libc.fabs(val) >= 1024 and scale < pfxes.len) {
+            scale += 1;
+            val /= 1024;
+        }
+        const pfx: ?[]const u8 = if (scale < pfxes.len) pfxes[scale] else null;
+        libc.print("%.6g%s\t%q\n", .{ val, pfx, name });
+        return;
+    } else if (fltflag) {
+        libc.print("%.6g\t%q\n", .{ @as(f64, @floatFromInt(amt)) / @as(f64, @floatFromInt(unit)), name });
+        return;
     }
     const v: u64 = @bitCast(howmany(amt, unit));
     if (qflag)
