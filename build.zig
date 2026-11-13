@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) void {
     disk_image = b.option([]const u8, "disk", "Disk image to attach as a virtio disk, e.g. ref/disk/9front-11952.amd64.qcow2 (never written: changes are discarded)");
     disk_bus = b.option([]const u8, "diskbus", "How the disk image is attached: virtio (default), nvme or ahci") orelse "virtio";
     const ref = b.option([]const u8, "ref", "Directory of 9front reference files, e.g. ref");
+    const zigrc = b.option(bool, "zigrc", "Boot 9front's user programs with planZ's rc as /bin/rc (see tools/rcinit)") orelse false;
     const usb_esp_mb = b.option(u32, "usbesp", "Size in MiB of the boot volume of the USB image (default 40)") orelse 40;
 
     const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
@@ -83,6 +84,7 @@ pub fn build(b: *std.Build) void {
     for (zcmds, 0..) |name, i| {
         zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc);
         user_step.dependOn(&b.addInstallFile(zbins[i], b.fmt("user/bin/{s}", .{name})).step);
+        if (zigrc and std.mem.eql(u8, name, "rc")) zigrc_bin = zbins[i];
     }
     // retest's and fltest's other halves, built in the guest against
     // stock libregexp and libc, and the table retest reads (see
@@ -266,7 +268,7 @@ pub fn build(b: *std.Build) void {
             b.step("test-audio", "Boot stock 9front from the disk image and play a tone through the HDA driver").dependOn(&achat.step);
 
             // planZ's Zig programs beside the stock ones they copy.
-            const zchat = b.addSystemCommand(&.{ "sh", "tools/zusertest.sh", "300", "zig-out/user/bin" });
+            const zchat = b.addSystemCommand(&.{ "sh", "tools/zusertest.sh", "900", "zig-out/user/bin" });
             zchat.addArgs(qemu_args);
             zchat.addArgs(&.{ "-display", "none" });
             addEsp(b, zchat, loader, kernel, ini9, dir);
@@ -313,7 +315,12 @@ pub fn build(b: *std.Build) void {
                 mk.addPrefixedFileArg("--disk=", b.path(disk_image.?));
                 mk.addPrefixedFileArg("EFI/BOOT/BOOTX64.EFI=", loader.getEmittedBin());
                 mk.addPrefixedFileArg("planz=", kernel.getEmittedBin());
-                mk.addPrefixedFileArg("plan9.ini=", b.path("tools/usb.ini"));
+                if (zigrc_bin) |rc| {
+                    const ini = b.addWriteFiles().add("plan9.ini", @embedFile("tools/usb.ini") ++ zigrc_ini);
+                    mk.addPrefixedFileArg("plan9.ini=", ini);
+                    mk.addPrefixedFileArg("boot/rc=", rc);
+                    mk.addPrefixedFileArg("boot/rcinit=", b.path("tools/rcinit"));
+                } else mk.addPrefixedFileArg("plan9.ini=", b.path("tools/usb.ini"));
                 mk.addPrefixedFileArg("boot/boot=", b.path(b.pathJoin(&.{ dir, "boot/boot" })));
                 mk.addPrefixedFileArg("boot/bootfs.paq=", b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })));
                 mk.addPrefixedFileArg("boot/paqfs=", b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })));
@@ -336,7 +343,7 @@ pub fn build(b: *std.Build) void {
 
             // Boot that image in QEMU as the only disk, on USB, with a
             // USB keyboard and pointer and no PS/2 controller.
-            const utest = b.addSystemCommand(&.{ "sh", "tools/usbtest.sh", "240", usb_image });
+            const utest = b.addSystemCommand(&.{ "sh", "tools/usbtest.sh", "900", usb_image });
             utest.addArgs(qemu_args);
             utest.addArgs(&.{ "-display", "none" });
             utest.step.dependOn(&usb_check.step);
@@ -484,12 +491,18 @@ fn addEsp(
     const esp = b.addWriteFiles();
     _ = esp.addCopyFile(loader.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
     _ = esp.addCopyFile(kernel.getEmittedBin(), "planz");
-    if (ini) |text| _ = esp.add("plan9.ini", text);
+    // With -Dzigrc, 9front's boot runs planZ's rc as /bin/rc
+    const rcini = if (ref != null and zigrc_bin != null) zigrc_ini else "";
+    if (ini) |text| _ = esp.add("plan9.ini", b.fmt("{s}{s}", .{ text, rcini }));
     if (ref) |dir| {
         _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "boot/boot" })), "boot/boot");
         _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })), "boot/bootfs.paq");
         _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })), "boot/paqfs");
         _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "root/amd64/bin/auth/factotum" })), "boot/factotum");
+        if (zigrc_bin) |rc| {
+            _ = esp.addCopyFile(rc, "boot/rc");
+            _ = esp.addCopyFile(b.path("tools/rcinit"), "boot/rcinit");
+        }
     }
     run.addArg("-drive");
     run.addPrefixedDirectoryArg("format=raw,file=fat:rw:", esp.getDirectory());
@@ -509,6 +522,9 @@ fn addEsp(
 }
 
 var disk_image: ?[]const u8 = null;
+/// planZ's rc, for the boot volumes, when -Dzigrc is given.
+var zigrc_bin: ?std.Build.LazyPath = null;
+const zigrc_ini = "init=/boot/rcinit\n";
 var disk_bus: []const u8 = "virtio";
 
 /// The QEMU device that presents drive d0 on the given bus.

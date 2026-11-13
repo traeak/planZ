@@ -3,7 +3,8 @@
 //! file descriptor, dirstat and dirfstat, the environment, fork and
 //! wait with an exit message, notes through atnotify, %r, seek, names
 //! as (address, length) pairs (a 0 byte, empty, long, too long), and
-//! exec, including a bad address among its arguments.
+//! exec, including a bad address among its arguments and a fresh
+//! floating point state for the new program.
 //! Prints one line per check and "libctest ok" at the end; exits with
 //! the name of the first check that fails.
 //!
@@ -33,7 +34,30 @@ fn onnote(_: *anyopaque, msg: []const u8) bool {
     return false;
 }
 
+fn getmxcsr() u32 {
+    var v: u32 = undefined;
+    asm volatile ("stmxcsr %[v]"
+        : [v] "=m" (v),
+    );
+    return v;
+}
+
+fn getfcw() u16 {
+    var v: u16 = undefined;
+    asm volatile ("fnstcw %[v]"
+        : [v] "=m" (v),
+    );
+    return v;
+}
+
 pub fn main() !void {
+    // libctest fpu: the floating point control words this process
+    // started with (see the exec checks)
+    if (libc.argv.len == 2 and std.mem.eql(u8, libc.argv[1], "fpu")) {
+        libc.print("mxcsr %#ux fcw %#ux\n", .{ getmxcsr(), getfcw() });
+        libc.exits(null);
+    }
+
     // memory: a list, a map, and a block bigger than an arena
     var l: std.ArrayList(u64) = .empty;
     for (0..10000) |i| try l.append(a, i * i);
@@ -198,6 +222,34 @@ pub fn main() !void {
     if (std.mem.indexOf(u8, bw.msg(), "bad address") == null) {
         libc.werrstr("msg '%s'", .{bw.msg()});
         fail("exec bad address");
+    }
+
+    // exec: the new program starts with the floating point state of a
+    // new process, 9front's fpinit (mxcsr 0x1900, fcw 0x232), not with
+    // what the old one left in the registers: here, after rounding
+    // toward zero and a single-precision x87
+    const fp = try libc.pipe();
+    const fpid = try libc.fork();
+    if (fpid == 0) {
+        _ = try libc.dup(fp[1], 1);
+        const mx: u32 = 0x7f80;
+        const cw: u16 = 0x0c7f;
+        asm volatile ("ldmxcsr %[m]; fldcw %[c]"
+            :
+            : [m] "m" (mx),
+              [c] "m" (cw),
+        );
+        libc.exec(libc.argv0, &.{ libc.argv0, "fpu" }) catch {};
+        libc.exits("exec failed");
+    }
+    try libc.close(fp[1]);
+    var fbuf: [64]u8 = undefined;
+    const fn_ = try libc.readn(fp[0], &fbuf);
+    _ = try libc.wait();
+    try libc.close(fp[0]);
+    if (!std.mem.eql(u8, fbuf[0..fn_], "mxcsr 0x1900 fcw 0x232\n")) {
+        libc.werrstr("got '%s'", .{fbuf[0..fn_]});
+        fail("exec fpu");
     }
     ok("exec");
 

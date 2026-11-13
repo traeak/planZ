@@ -1,0 +1,12 @@
+#!/bin/rc
+# planZ's rc as /bin/rc from boot on (zig build -Dzigrc).
+#
+# The loader puts planZ's rc and this script in the kernel's /boot, and
+# plan9.ini says init=/boot/rcinit.  9front's boot program binds /boot
+# into /bin ahead of the boot file system, so bootrc, and this script,
+# already run under /boot/rc.  bootrc ends with exec $init.  init makes
+# a new name space from /lib/namespace, where /bin/rc is the root's;
+# the command it is given here binds /boot/rc over that and goes on
+# with planZ's rc, which runs termrc and the profile, and from there
+# rio and its windows.  A terminal only.
+exec /$cputype/init -t 'bind /boot/rc /bin/rc && exec /bin/rc -c ''. /rc/bin/termrc; home=/usr/$user; cd && . ./lib/profile'''

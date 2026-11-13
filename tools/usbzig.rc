@@ -329,7 +329,7 @@ fn seds {
 	$p^sed -n '/bind/,/mount/p' $n; $p^sed -n '/^mount/,$p' $n; $p^sed -n '4,/bind/p' $n
 	$p^sed 's/bind/BIND/' $n; $p^sed 's/a/A/g' $n; $p^sed 's/(b)(i)nd/\2\1/g' $n
 	$p^sed 's/x*/-/g' $u; $p^sed 's/$/ END/' $u; $p^sed 's/^/> /' $u
-	$p^sed -n '$p' $n; $p^sed -n '$=' $n /tmp/zig.x; $p^sed = $u; $p^sed '2,4!d' $n
+	$p^sed -n '$p' $n; $p^sed -n '$=' $n /tmp/zig.x; $p^sed '=' $u; $p^sed '2,4!d' $n
 	$p^sed 'y/abcé/xyzE/' $u; $p^sed -n l $u; $p^sed -n l /tmp/zig.x
 	$p^sed 'n;d' $n; $p^sed 'N;P;D' $n | sed 8q; $p^sed '$!N;s/\n/ | /' $n
 	$p^sed G $u; $p^sed '1!G;h;$!d' $n; $p^sed ':a;N;$!ba;s/\n/,/g' $u
@@ -460,6 +460,33 @@ fn rcrun {
 	rm -rf /tmp/zig.rcd
 }
 
+# mk, whose recipes and backquotes are rc: some of 9front's programs
+# built with $1 as /bin/rc (planZ's rc or, given nothing, stock rc).
+# Each is built in the same directory with either rc, since 6c records
+# the source's path, and the output of mk and a sum of every file made
+# are kept (of files only: a directory's sum holds its entries' times).
+fn mks {
+	@{
+		rfork n
+		if(! ~ $#* 0)
+			bind $1 /bin/rc
+		for(d in rc grep hoc awk mk){
+			echo '=== '^$d
+			rm -rf /tmp/zig.mk
+			mkdir /tmp/zig.mk
+			dircp /sys/src/cmd/$d /tmp/zig.mk
+			@{
+				cd /tmp/zig.mk
+				mk >[2=1]; s
+				for(f in `{ls})
+					if(test -f $f)
+						sha1sum $f
+			}
+		}
+		rm -rf /tmp/zig.mk
+	}
+}
+
 fn checks {
 	nbad=()
 	Z=$z/
@@ -565,6 +592,11 @@ fn checks {
 		nbad=($nbad float)
 	}
 	rm -f /tmp/zig.cc
+
+	mks $z/rc >/tmp/zig.a >[2=1]
+	mks >/tmp/zig.b >[2=1]
+	t mk
+	rm -f /tmp/zig.a /tmp/zig.b
 
 	if(! $Z^libctest)
 		nbad=($nbad libctest)

@@ -114,11 +114,12 @@ fn boot() !noreturn {
 
     // Optional: the files of the kernel's /boot, from the directory
     // "boot" of the volume.  The names are what a 9front kernel
-    // configuration lists under bootdir.
+    // configuration lists under bootdir, and planZ's rc with the script
+    // that makes it /bin/rc (zig build -Dzigrc; see tools/rcinit).
     const boot_pages = try allocPages(1);
     const boot_files: [*]bootinfo.BootFile = @ptrCast(@alignCast(boot_pages.ptr));
     var nboot: usize = 0;
-    inline for (.{ "boot", "paqfs", "factotum", "bootfs.paq" }) |name| {
+    inline for (.{ "boot", "paqfs", "factotum", "bootfs.paq", "rc", "rcinit" }) |name| {
         const path = std.unicode.utf8ToUtf16LeStringLiteral("boot\\" ++ name);
         if (try readFile(root, path)) |data| {
             var f: bootinfo.BootFile = .{ .name = @splat(0), .base = @intFromPtr(data.ptr), .len = data.len };

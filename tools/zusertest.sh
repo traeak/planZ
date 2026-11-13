@@ -4,7 +4,8 @@
 # web server on the host's loopback address (see nettest.sh), and run
 # the script, which compares each program with the stock one of the
 # same name and runs libctest.  It is the script the USB stick carries
-# as zig/run.
+# as zig/run.  The script runs twice: under stock rc, then under
+# planZ's rc, which the first run left in /tmp/zig.
 #
 # usage: zusertest.sh timeout-seconds bindir qemu-command...
 #
@@ -64,5 +65,6 @@ sh "$here/bootchat.sh" "$timeout" \
 	"" "ip/ipconfig && webfs && echo net^ok" \
 	"netok" "$get" \
 	"fetchok" "rc /tmp/zrun /tmp/zsrc" \
+	"zig: all the same as stock, libctest ok" "/tmp/zig/rc /tmp/zrun /tmp/zsrc" \
 	"zig: all the same as stock, libctest ok" \
 	-- "$@" $tablet -qmp "unix:$tmp/qmp,server=on,wait=off"

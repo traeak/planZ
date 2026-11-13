@@ -85,7 +85,9 @@ rc /n/esp/zig/run
 
 - [ ] The last line is `zig: all the same as stock, libctest ok`.
 
-Afterwards they can be run as `/tmp/zig/ls` and so on.
+It takes several minutes, much of it in the float comparison. Afterwards
+they can be run as `/tmp/zig/ls` and so on, and the whole check again
+under planZ's rc with `/tmp/zig/rc /n/esp/zig/run`.
 
 ## 5. Save everything to the stick
 
