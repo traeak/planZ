@@ -398,6 +398,17 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(unit).step);
     }
     {
+        // rc's lexer, parser and printer, which the tests run with
+        // hostlibc.zig as their libc
+        const unit = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path("src/user/cmd/rc/test.zig"),
+            .target = b.graph.host,
+            .optimize = .safe,
+            .imports = &.{.{ .name = "libc", .module = b.createModule(.{ .root_source_file = b.path("src/user/cmd/rc/hostlibc.zig") }) }},
+        }) });
+        test_step.dependOn(&b.addRunArtifact(unit).step);
+    }
+    {
         // grep's pattern compiler and DFA (grepre, above)
         const unit = b.addTest(.{ .root_module = grepre });
         test_step.dependOn(&b.addRunArtifact(unit).step);

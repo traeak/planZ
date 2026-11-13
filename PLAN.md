@@ -438,7 +438,7 @@ Progress, steps 1–5 (step 6, timing, not done):
 - Kept from the C and tested: `[^ab]` matches a raw 0xff byte where `[^a]` does not; `.` and classes never match bytes that are not UTF-8; `x^` matches a line after one ending in x; `-f` before `-e` makes the `-e` read the (finished) file, so it fails with "empty pattern".
 - Seen while testing, not from grep: during `usbzig.rc`'s sed cases the guest prints `rc: can't open: file does not exist: '/env//tmp'` outside every compared output; the committed script does it too.
 
-#### rc: planned
+#### rc: steps 1–2 done
 9front's `rc` (`cmd/rc`) is 5,939 lines; without `unix.c` (420) and the Unix `#ifdef`s, about 5,500. The lexer, grammar and syntax tree are `lex.c`, `syn.y` (yacc, with precedence) and `tree.c` (720 lines). The compiler to threaded code is `code.c` and `pfnc.c` (625). `pcmd.c` (169) prints a tree back as rc text. The interpreter is `exec.c`, `simple.c` (the builtins `cd`, `whatis`, `eval`, `exec`, `exit`, `shift`, `wait`, `.`, `flag`), `var.c`, `subr.c` and `trap.c` (1,940). Globbing, here documents and rc's own buffered I/O and `pfmt` are `glob.c`, `here.c` and `io.c` (700); `getflags.c` (234) parses its flags; `plan9.c` and `havefork.c` (735) are the system interface, with the builtins `rfork` and `finit`.
 
 What constrains the port:
@@ -465,6 +465,16 @@ Steps, each tested before the next:
 7. **Integration**: `usbzig.rc` itself run by the Zig rc; the Zig rc bound over `/bin/rc` to build programs with `mk`, whose recipes are rc, comparing the results; then planZ booted with the Zig rc as `/bin/rc` for `bootrc`, `rcmain`, `termrc` and `riostart` (`test-boot`, `test-usb`; a `-Dzigrc` option).
 
 Estimate: about 5,000 lines of Zig with tests, about four times grep and sed together. Booting to rio on a Zig shell is the milestone.
+
+Progress:
+- **Sources.** 9front 11952's rc (from the ISO, unpacked in the gitignored `ref/src/`) is the same as the 9front checkout file for file, `yaccpar` too, so the port follows the release the tests compare against.
+- **The tables.** `tools/yacctab.sh` boots stock 9front, runs its `yacc -d /sys/src/cmd/rc/syn.y`, prints `y.tab.c` and `y.tab.h` on the serial console with their SHA-1s, cuts them out and checks them, and `tools/yacc2zig.py` copies the tables and token numbers into `src/user/cmd/rc/syn_tab.zig` (the header records both SHA-1s). The stack is rc's `YYMAXDEPTH` of 500, not yacc's 150.
+- **Steps 1 and 2** (`src/user/cmd/rc/`): `io.zig` (with `pfmt`'s verbs checked against their arguments at compile time), `lex.zig`, `tree.zig`, `var.zig` (keywords and variables), `here.zig` (reading here documents), `pcmd.zig`, `syn.zig` (yaccpar's driver as a labeled switch, and syn.y's actions), with the parts of `exec.zig`, `plan9.zig`, `trap.zig` and `getflags.zig` they use.
+- **Host tests** (`zig build test`, with `hostlibc.zig` as libc): tokens (free carets, `SUB`, redirections, `$#`, `$"`), parsing and printing of the constructs, syntax errors and their messages, and all 126 rc scripts of 9front's `rc/bin` (1,778 commands) parse and what they print parses again. Printing need not be a fixed point, in stock rc either: whether two commands print on one line with `; ` depends on their line numbers, which printing a block over several lines changes.
+- **Against stock, once** (a guest run, not yet in `usbzig.rc`): each test case and each rc script of `/rc/bin` wrapped as `fn x {…}`, sourced, and printed by `whatis x` in stock rc, against the same through the port's parser and printer: all 170 the same (6,030 lines), and the one case stock rejects (``echo `` a``) the port rejects too. Step 6 makes this a standing check, stock rc against the Zig rc.
+- **Kept from C:** the first digit of a redirection's fd goes into the token twice, so messages show `token '>[22=': redirection syntax` for `>[2=`; `if(c)cmd`, `for(i)cmd` and `while (c){` print without the spaces one might expect; a simple command's redirections print before it (` <a  >b cat`).
+- **Fixed from C:** the fd digits of a redirection are copied into the 8,192-byte token with no bound in the C; the Zig stops with the C's "token buffer too short".
+- **To confirm in step 6:** rc is built with 6c, whose `char` the port takes as signed: a 0xff byte then ends a here document (it equals `EOF`), and `pwrd` never quotes bytes from 0x80 up.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
