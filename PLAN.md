@@ -160,6 +160,14 @@ Boot on one physical 2011-or-later machine; add the NIC and quirks it needs; aud
 
 The user's test machine: AMD Ryzen 5 3600 (Zen 2) on a Jingyue B550i mini-ITX board, 32GB RAM, Radeon RX 6500 XT. It has no integrated graphics, so the display is the card's UEFI framebuffer. Assume no serial console. The development machine has the same board (DMI: JGINYUE B550i-GAMING), so its hardware can be read from Linux there: Ethernet is a Realtek RTL8125B (`10ec:8125` rev 05), for which 9front has no driver at this commit; two xHCI controllers (AMD 500-series chipset `1022:43ee`, Matisse `1022:149c`); AMD AHCI `1022:43eb`; no PS/2 controller and no UART; HPET and ACPI PM timer; an IOMMU; the video card's framebuffer BAR near 480GiB. Keyboards and mice there are full-speed devices, some behind high-speed hubs, which needs the transaction-translator path of xHCI that QEMU cannot exercise. `zig build usb-image` makes a stick that boots it to rio with no other disk; `docs/real-hardware.md` has the steps and what to look for.
 
+**First boot on the machine, 2026-11-12: rio, with the network.** A stick written with `dd` from `967a959` booted to rio with nothing typed. (A first try through Ventoy reached the kernel, but Ventoy serves the image as a file, so once planZ drives USB itself it finds no Plan 9 partition; see `docs/real-hardware.md`.) The user's files from the checklist (`kmesg`, `pci -v`, `/dev/usb/ctl`, `sysstat`, `ndb`, one `ifstat`) show:
+- 12 processors up (family 23 model 113, TSC 3594MHz by HPET), the self-test passed; 32696M of memory; both IOAPICs (gsi 0-23 and 24-55); the IOMMU's IVRS table present and untouched.
+- The screen is the 800x600 mode the firmware left; `*gopmode=` was not set.
+- USB, never run before on real controllers: both xHCI controllers (`1022:43ee`, 32-byte contexts, 31 scratchpad buffers; `1022:149c`, 64-byte contexts, 2), the root from a SuperSpeed stick (`usbroot: hjfs on /dev/sdUd301d/fs`), and a high-speed hub with transaction translators (`0424:2514`) with a full-speed Logitech receiver and a low-speed keyboard behind it. Keyboard and mouse work: rio's menu made a second window (checklist step 1).
+- `ether8125` on the RTL8125B (macv `0x64100000`, rev 5), its first run on the chip: link at 1000Mbps, a DHCP lease, and `ip/ping` answered (step 2); 9 frames out and 230 in with no errors, interrupts arriving and none lost. Open: its `ifstat` shows `rcr 0x41020c0e` where the driver wants `0x41000c0e` (bit 17).
+- Seen, not worked on: Intel 7265 Wi-Fi (`8086:095b`, no driver), the HDA controller `1022:1487` attached as `#A0` with a Realtek `10ec0897` codec, an Intel 760p NVMe drive (12 submit queues), AHCI.
+- Still to do on the machine: sound (step 3, the audio plan's step 4: waits for a wired speaker), the Zig programs (step 4), a second `ifstat`, and the RTL8153 USB Ethernet adapter.
+
 #### Audio (HDA): steps 1–3 done, step 4 waits for the machine
 Port 9front's audio stack as it is configured in `9/pc64/pc64` (`audio` device, `audiohda` driver; `audiosb16` and `audioac97` stay out). Stock `termrc` already binds `#A` onto `/dev` when it exists, so `zuke`, `audio/wavdec`, `audio/mixfs` and the other stock programs need nothing more.
 
@@ -430,6 +438,34 @@ Progress, steps 1–5 (step 6, timing, not done):
 - Kept from the C and tested: `[^ab]` matches a raw 0xff byte where `[^a]` does not; `.` and classes never match bytes that are not UTF-8; `x^` matches a line after one ending in x; `-f` before `-e` makes the `-e` read the (finished) file, so it fails with "empty pattern".
 - Seen while testing, not from grep: during `usbzig.rc`'s sed cases the guest prints `rc: can't open: file does not exist: '/env//tmp'` outside every compared output; the committed script does it too.
 
+#### rc: planned
+9front's `rc` (`cmd/rc`) is 5,939 lines; without `unix.c` (420) and the Unix `#ifdef`s, about 5,500. The lexer, grammar and syntax tree are `lex.c`, `syn.y` (yacc, with precedence) and `tree.c` (720 lines). The compiler to threaded code is `code.c` and `pfnc.c` (625). `pcmd.c` (169) prints a tree back as rc text. The interpreter is `exec.c`, `simple.c` (the builtins `cd`, `whatis`, `eval`, `exec`, `exit`, `shift`, `wait`, `.`, `flag`), `var.c`, `subr.c` and `trap.c` (1,940). Globbing, here documents and rc's own buffered I/O and `pfmt` are `glob.c`, `here.c` and `io.c` (700); `getflags.c` (234) parses its flags; `plan9.c` and `havefork.c` (735) are the system interface, with the builtins `rfork` and `finit`.
+
+What constrains the port:
+- **Functions travel as text.** A function is printed back as rc source (`fnstr`, through `pcmd`) and written to `/env/fn#name`; every child rc, stock or Zig, reads it there, and `whatis` prints the same text. The printer must match stock byte for byte.
+- **The parser and the lexer feed each other.** Grammar actions change lexer state: `skipnl()` in the middle of rules, `lex->lastword=1` on keywords, `readhere()` after each newline. When the parser reads its next token therefore matters.
+- **libc has what rc needs:** `fork`/`rfork`, `wait`, slice `exec`, `pipe`, `dup`, `notify`/`noted`/`atnotify`, `dirread`, `fd2path`, `access`, `rerrstr`; `/env` is read and written as files. Anything missing turns up while porting `plan9.c`.
+
+**The parser: stock yacc's tables and yacc's driver in Zig.** A hand-written parser would have to call the lexer exactly when yacc does, for every `skipnl`, `lastword`, here document and `if not`; for this grammar that is too risky. Instead, 9front's own `yacc -d syn.y` is run once in the guest, a small host tool converts the arrays of `y.tab.c` into a Zig file, committed with a header saying how it was made, and `yaccpar` (about 150 lines) is ported to Zig with the grammar's actions as a `switch` on the rule number. Behaviour is the same by construction: the same lookahead and the same syntax errors. The same driver later serves `awk`, `hoc`, `bc` and `units`. Not chosen: porting yacc itself to Zig (about 2,900 lines of C) as a host tool; worth doing for `awk`, when these tables become its check.
+
+Design:
+- **Instructions** are a tagged union with their operands inside (`jump: u32`, `word: []const u8`, `mark`, `pipe: struct { fd0, fd1, jump }` …) where the C's code vectors mix function pointers, integers and strings in one union. Code vectors keep the C's reference counts. The interpreter is a switch over the instruction.
+- **Strings** are slices. rc's glob marker, the byte 0x01, stays in them as in C, and so does `/env`'s list format of words ended by 0 bytes.
+- **I/O.** rc's `io` buffers and `pfmt` are ported with their verbs (`%q`/`%Q` quoting, `%t` trees, `%v`, `%r`, `%p`); output must match stock exactly.
+- **Memory.** Explicit frees with the C's reference counts on libc's allocator, since an interactive shell runs indefinitely; a debug count of live allocations after each command catches leaks.
+- Left out: `unix.c` and the `#ifdef` branches. As usual, `// from` headers, `DIFF:` notes, and bugs found in the C are "Fixed from C".
+
+Steps, each tested before the next:
+1. **I/O, `pfmt`, the lexer and the tree.** Host tests on tokens: free carets, quoting, `$#`, `$"`, comments, the token-length limit.
+2. **The parser** (the tables, the driver and the actions) and the printer (`pcmd`, `fnstr`). Host test: parse the 135 scripts in 9front's `rc/bin` and `rcmain`, print each function back, and check that print, parse, print gives the same text. In the guest: define functions in both shells and compare `/env/fn#…` and `whatis` byte for byte.
+3. **The compiler** to the instruction union, with `-x` tracing.
+4. **The interpreter, builtins, variables, globbing and here documents.**
+5. **The system interface**, `plan9.c` and `havefork.c` on libc: fork and exec, `Waitfor` and `$apid`, notes and interrupted reads, `/env`, `/fd`, `Isatty`, `rfork`.
+6. **Comparison with stock in `usbzig.rc`**: small scripts run by both shells, comparing output, errors and `$status`, covering quoting, `^` and free carets, lists, `$#`, `$"`, subscripts, globbing, `switch` and `~`, `if not`, `while`, `for`, functions (exported from a stock rc to a Zig rc and back), local assignments, every redirection, here documents quoted and not, `|[2]`, `` `{} `` with `$ifs`, `<{}` and `>{}`, `&`, `$apid` and `wait`, `!`, `@{}`, `eval`, `.`, `exec`, `exit`, `shift`, `flag`, `rfork`, `whatis`, syntax errors with line numbers, `-c`, `-e`, `-x`, `-i`, `-n`, and an interrupt sent as a note.
+7. **Integration**: `usbzig.rc` itself run by the Zig rc; the Zig rc bound over `/bin/rc` to build programs with `mk`, whose recipes are rc, comparing the results; then planZ booted with the Zig rc as `/bin/rc` for `bootrc`, `rcmain`, `termrc` and `riostart` (`test-boot`, `test-usb`; a `-Dzigrc` option).
+
+Estimate: about 5,000 lines of Zig with tests, about four times grep and sed together. Booting to rio on a Zig shell is the milestone.
+
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
 - Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail. The first step, a minimal libc, is planned above under M9; the rest is still to be examined as a topic of its own. `src/user` already shows that Zig can produce Plan 9 a.out binaries without a host tool.
@@ -465,7 +501,7 @@ Progress, steps 1–5 (step 6, timing, not done):
 
 | Milestone | State |
 |---|---|
-| M9 | in progress: prepared in QEMU and KVM, not yet tried on the machine. `usb-image` builds a stick that boots to rio from USB alone (`test-usb`); the boot path was audited for what only works in QEMU; `#$` gives `pci -v`. Open: the first real boot, and a driver for the board's network chip, which is not yet identified |
+| M9 | in progress: booted on the machine 2026-11-12 (see "First boot on the machine"): rio from a USB stick, keyboard and mouse through a high-speed hub, the on-board RTL8125B on DHCP with `ip/ping` answered. `usb-image` builds the stick (`test-usb`); `#$` gives `pci -v`. Open: sound, the Zig programs and the USB Ethernet adapter on the machine, `ether8125`'s `rcr` bit 17 |
 | M8 | done: stock `rio` runs on the UEFI framebuffer with keyboard and mouse, through the PS/2 controller or through xHCI with no PS/2 at all; `test-rio` checks a screenshot, a typed command and a moved mouse; all test steps pass on the three CPU models, the three disk buses, with 1, 4 and 8 processors, and in a debug build. All of it on QEMU only |
 | M7 | done: stock 9front boots from its disk image (hjfs root) on virtio-blk, NVMe and AHCI; `ip/ipconfig` gets a DHCP lease; `hget` works over HTTP and over TLS; `test-boot`, `test-9front`, `test-disk` and `test-net` pass on all three CPU models, with 1, 4 and 8 processors, and in a debug build. All of it on QEMU only |
 | M6 | done: all processors start and schedule; `test-boot` and `test-9front` pass with 1, 4 and 8 processors on all three CPU models; the one-hour parallel run on four processors passed (98M processes created, 164M pipe round trips, 472M lock acquisitions, no panic) |

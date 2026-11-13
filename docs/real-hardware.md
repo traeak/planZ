@@ -28,6 +28,8 @@ sudo dd if=zig-out/planz-usb.img of=/dev/sdX bs=4M conv=fsync status=progress
 
 All 3.8GB are written, which takes a few minutes on a USB 2 stick.
 
+**Ventoy does not work.** Ventoy starts the loader and the kernel from its own copy of the image, but once planZ takes over the USB controller it sees only the real stick: Ventoy's exFAT and `VTOYEFI` partitions, with no Plan 9 `fs` partition. The kernel then comes up, but `usbroot` finds no root and bootrc lists the disks. Write the image straight to a stick with `dd` as shown above. This erases Ventoy, so use a separate stick.
+
 ### What is on it
 
 | Partition | MBR type | Sectors | Contents |
