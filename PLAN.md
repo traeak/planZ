@@ -496,7 +496,7 @@ Progress:
   - **`fpstress`** (`src/user/cmd/fpstress.zig`): loads xmm0–15 and r12–r15 with values made from its pid, spins in one asm block long enough to be preempted, and checks them. Before the fix, eight copies beside a fork and exec loop caught one process with five registers holding `seq`'s doubles; after it, none, with no TS report, and 480 `primes` runs (stock and planZ's) all right. `usbzig.rc` runs eight of them as a standing check.
   - Read, not tested: `fpinit` (from the C) clears the x87 state and loads MXCSR but leaves the xmm and ymm registers as the last process left them, so a process's first floating point instruction can see another's vector registers. The same in 9front.
 
-#### Virtual terminals: step 1 done
+#### Virtual terminals: steps 1–2 done
 Several full-screen consoles switched with keys, as Linux's virtual terminals, in place of rio or beside it. Not in 9front.
 
 **What there is.** The keyboard path is in user space: `bootrc` starts `aux/kbdfs`, which reads `/dev/scancode` (or `/dev/kbd`), serves `kbd`, `cons` and `consctl`, cooks lines, handles Ctl-Alt-Del, and writes console output to its standard output, the kernel's `#c/cons`, which `screen.zig` draws on the framebuffer with no copy of the text. rio takes over the screen through `/dev/draw` and reads `/dev/kbd` and `/dev/mouse`; each window is a set of files it serves (`cons`, `consctl`, `kbd`, `mouse`, `winname`, `text`, `wctl` …), mounted over `/dev` for the window's processes. The user's profile starts rio when `$service` is `terminal`; with `con` it only sets a prompt. Without rio the screen is the one kernel console.
@@ -510,7 +510,7 @@ Several full-screen consoles switched with keys, as Linux's virtual terminals, i
 **A graphics console (later step).** One console can hold rio or any program that draws: vtfs gives it `winname` (its window), and `mouse`, `cursor` and `kbd` that only deliver while it is active. rio runs in a window this way already.
 
 **What the Zig userland lacks.** All three are needed first:
-- **9P messages.** libc's `convM2S.c`, `convS2M.c` and `fcallfmt.c`, with the message as a tagged union.
+- **9P.** The messages are already ported (`src/lib/fcall.zig`, all of libc's `conv*.c`, shared with the kernel's mount driver, with host tests). What is missing is a server: lib9p runs on libthread.
 - **libdraw, the parts vtfs needs.** `init.c` (the display, without libthread), `alloc.c`, `draw.c`, `chan.c`, `bytesperline.c`, `defont.c`, `font.c` (`cachechars`), `openfont.c`, `buildfont.c`, `readsubfont.c`, `readimage.c`, `creadimage.c`, `string.c`, `stringwidth.c`, `subfont.c`, `subfontcache.c` and `window.c` (screens and windows): about 3,000 lines of C.
 - **Waiting on several inputs at once without libthread.** Small reader processes for `/dev/kbd`, `/dev/mouse`, `/dev/kprint` and the 9P channel each forward what they read into one pipe. One main loop handles everything and answers 9P requests, holding a `cons` read until a line is ready. No memory is shared, so no locks are needed (they are not in the libc yet).
 
@@ -533,7 +533,7 @@ It is `-Dzigrc`'s `init` hook (`tools/rcinit`, now `tools/session`), which runs 
 
 **Steps**, each tested before the next:
 1. `session=text`: boot to the text console without rio (the `init` hook, the loader's name list, the profile with `service=con`). Small. Test: a command typed on the screen keyboard runs, and no rio is running.
-2. 9P messages in the libc, and a small Zig file server mounted and read in the guest.
+2. A 9P server library in Zig, and a small file server on it mounted and used in the guest.
 3. The libdraw parts, compared with stock libdraw in the guest.
 4. vtfs with text consoles, the kernel-message console and the switch keys; `session=vt`, made the default, with the rio tests set to `session=rio`; `test-vt`.
 5. The graphics console: rio on one of them.
@@ -541,6 +541,8 @@ It is `-Dzigrc`'s `init` hook (`tools/rcinit`, now `tools/session`), which runs 
 
 Progress:
 - **Step 1.** `tools/session` replaces `tools/rcinit` and is on every boot volume with 9front's boot (the loader takes `boot/session`; plan9.ini gets `init=/boot/session`, and `-Dsession=` adds `session=` to the test volumes'). It runs `init -t` with `termrc` and then, for `session=rio` (the default), the profile, which is the command 9front's `init` runs when given none; for `session=text`, `rc -li` with `service=con`, so the profile runs without starting rio. With `/boot/rc` (`-Dzigrc`) the command binds it over `/bin/rc` first, as before. By the time bootrc runs it, `/bin` holds only the kernel's `/boot`, so the script names `/amd64/bin/rc` and `/$cputype/bin/test` (`#!/bin/rc` worked only while `-Dzigrc` put an `rc` in `/boot`). `test-text` (`tools/texttest.sh`): the profile's `cpu% ` prompt, no rio, and a command typed on the emulated keyboard runs in that shell.
+
+- **Step 2.** `fcall.zig` needed nothing. Added: `libc.read9pmsg` (from `read9pmsg.c`), and `src/user/lib/srv.zig`, a server that takes one message at a time (not a port; lib9p needs libthread). `Server(T)` is comptime-generic over the file tree `T`, which supplies `root`, `walk1`, `stat`, `dirent`, `open`, `read` and `write` (a missing one is a compile error) and may have `Aux`, kept in each fid, `clunk` and `flush`. The server keeps the fids and answers version (a new one drops every fid and waiting request), auth (not required), attach, walk (partial walks, clones, `newfid` in use), open, directory reads in pieces with the offset checked, stat and clunk; create, remove and wstat are refused. `read` and `write` answer with a tagged union, `.data`/`.count`, `.err`, or `.later`: the request is then kept by its tag until `respondRead`/`respondWrite`/`respondError`, or dropped by a Tflush. Host tests (5) drive it with messages made by `fcall`. `srvtest` (`src/user/cmd/srvtest.zig`) serves `hello`, `note`, `wait` (a read at offset 0 waits for a write to `go`), `go` and `ctl`; `usbzig.rc` mounts it and checks the listing, reads, writes, three errors, a read answered later, a waiting reader killed (the kernel flushes its read, and the server goes on), a bad control message and `exit` (the `/srv` entry goes with it), against the expected text. Found on the way: 9front's `read` reads a byte at a time, so a file that answers a held read once must end there; `wait` gives end of file past offset 0.
 
 **Decided:** Ctl-Alt-Left and Ctl-Alt-Right switch, and Ctl-Alt-1 … Ctl-Alt-4 go straight to a console; 4 consoles; `session=vt` replaces rio as the default. QEMU's own window takes Ctl-Alt-1, -2 … for its consoles, so there the digits reach the guest only through the monitor's `send-key` (as the tests send them); a real machine is unaffected.
 

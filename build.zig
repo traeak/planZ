@@ -79,7 +79,7 @@ pub fn build(b: *std.Build) void {
         "read",  "unicode",  "tr",        "xd",
         "split", "du",       "test",      "retest",
         "sed",   "fltest",   "seq",       "factor",
-        "primes", "grep",     "rc",    "fpstress",
+        "primes", "grep",     "rc",    "fpstress", "srvtest",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
@@ -385,6 +385,16 @@ pub fn build(b: *std.Build) void {
         const unit = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path(file),
             .target = b.graph.host,
+        }) });
+        test_step.dependOn(&b.addRunArtifact(unit).step);
+    }
+    {
+        // the 9P server of src/user/lib, driven in memory
+        const unit = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path("src/user/lib/srv.zig"),
+            .target = b.graph.host,
+            .optimize = .safe,
+            .imports = &.{.{ .name = "fcall", .module = fcall }},
         }) });
         test_step.dependOn(&b.addRunArtifact(unit).step);
     }

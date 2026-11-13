@@ -33,6 +33,7 @@ const string_ = @import("string.zig");
 
 /// The start-up code; root.zig exports it.
 pub const start = @import("start.zig");
+pub const srv = @import("srv.zig");
 
 pub const Error = error{Plan9};
 
@@ -289,6 +290,30 @@ pub fn readn(fd: i32, buf: []u8) Error!usize {
         t += m;
     }
     return t;
+}
+
+/// Read one 9P message from fd into buf: its length, or 0 at the end of
+/// the file (or a message cut short).
+/// from libc/9sys/read9pmsg.c
+/// DIFF: an error union for the C's -1.
+pub fn read9pmsg(fd: i32, buf: []u8) Error!usize {
+    const sz = fcall.BIT32SZ;
+    if (buf.len < sz) {
+        werrstr("bad length in 9P2000 message header", .{});
+        return error.Plan9;
+    }
+    // read count
+    if (try readn(fd, buf[0..sz]) != sz)
+        return 0;
+    const len = fcall.GBIT32(buf, 0);
+    if (len <= sz or len > buf.len) {
+        werrstr("bad length in 9P2000 message header", .{});
+        return error.Plan9;
+    }
+    const m = try readn(fd, buf[sz..len]);
+    if (m < len - sz)
+        return 0;
+    return len;
 }
 
 /// Write all of buf.

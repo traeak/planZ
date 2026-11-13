@@ -487,6 +487,44 @@ fn mks {
 	}
 }
 
+# srvtest, a file server on the library's srv.zig, mounted and used:
+# the listing, reads and writes, errors, a read answered later, and one
+# whose reader is killed, which the kernel flushes
+fn srvs {
+	n=zig.srv.$pid
+	m=/tmp/zig.srvmnt
+	$Z^srvtest $n &
+	sp=$apid
+	for(i in `{seq 50})
+		if(! test -e /srv/$n)
+			sleep 0.1
+	mkdir -p $m
+	mount -c /srv/$n $m; s
+	ls -l $m | awk '{print $1, $4, $5, $6, $10}'
+	cat $m/hello
+	echo one two >$m/note; cat $m/note
+	@{echo x >$m/hello}; s
+	cat $m/nothere; s
+	cat $m/go; s
+	cat $m/wait &
+	sleep 0.5
+	echo went >$m/go
+	wait $apid
+	cat $m/wait &
+	cw=$apid
+	sleep 0.5
+	echo kill >/proc/$cw/ctl
+	wait $cw
+	echo nobody >$m/go
+	cat $m/hello
+	echo junk >$m/ctl; s
+	echo exit >$m/ctl; s
+	wait $sp; s
+	unmount $m
+	rm -rf $m
+	test -e /srv/$n; s
+}
+
 fn checks {
 	nbad=()
 	Z=$z/
@@ -614,6 +652,35 @@ fn checks {
 	if not
 		echo same fpstress: registers kept
 	rm -f /tmp/zig.fp
+
+	# the 9P server library, against what it should do (rc's own
+	# message for the failed redirection goes to its standard error,
+	# outside the comparison)
+	srvs >/tmp/zig.a >[2=1]
+	cat >/tmp/zig.b <<'EOF'
+status
+---w--w--w- zig zig 0 /tmp/zig.srvmnt/ctl
+---w--w--w- zig zig 0 /tmp/zig.srvmnt/go
+--r--r--r-- zig zig 13 /tmp/zig.srvmnt/hello
+--rw-rw-rw- zig zig 0 /tmp/zig.srvmnt/note
+--rw-rw-rw- zig zig 0 /tmp/zig.srvmnt/wait
+hello, world
+one two
+status permission denied: '/tmp/zig.srvmnt/hello'
+cat: can't open /tmp/zig.srvmnt/nothere: file does not exist: '/tmp/zig.srvmnt/nothere'
+status can't open /tmp/zig.srvmnt/nothere: file does not exist: '/tmp/zig.srvmnt/nothere'
+cat: can't open /tmp/zig.srvmnt/go: permission denied: '/tmp/zig.srvmnt/go'
+status can't open /tmp/zig.srvmnt/go: permission denied: '/tmp/zig.srvmnt/go'
+went
+hello, world
+echo: write error: bad control message
+status write error
+status
+status
+status false
+EOF
+	t srv
+	rm -f /tmp/zig.a /tmp/zig.b
 
 	if(! $Z^libctest)
 		nbad=($nbad libctest)
