@@ -385,6 +385,40 @@ Progress, all six steps:
 - **Found in the C.** (1) `_floatfmt`'s buffer is `1+308+1+30+1` bytes, but numbers of 1e308 and up have 309 integer digits: `%.30f` of one at or below -1e308 writes its 0 a byte past the end, and stock `fltest` faulted there (nil read), on the stock kernel too. The Zig buffer needs no 0, so it prints the whole 341 characters: Fixed from C. Both `fltest`s skip that one field. (2) 6c's code takes `NaN <= x` as true; `fltest.c` tests `isNaN` first. (3) Not explained yet: the first version of `fltest.c` printed each line with one `Bprint` of 17 values, and stock faulted (nil read, pc 0x202c03) while printing line 2619 (-1.04e49), on both kernels, 42 lines before the first value the overflow above touches. Formatting each field with `snprint` and writing it avoids it; the cause, in stock libbio or libc's fmt, is still to be found.
 - **Commands.** `seq` (its format built or given at run time, through `runsnprint`), `factor`, `primes`, and `du -e`/`-h` (kept: a value past the "Y" prefix prints `<nil>`, as the C's nil-ended table does). All compared with stock in `usbzig.rc`.
 
+#### grep: planned
+9front's `grep` (`cmd/grep`, 1,250 lines) does not use libregexp. `grep.y` (236 lines) is a yacc grammar and lexer: `* + ? | ( ) ^ $ .`, classes, and a newline as an alternative with the lowest precedence. `sub.c` (325) allocates nodes from `sbrk`, builds the graph, and has `addcase`, which turns an alternation of 7 or more characters into a 256-way table. `comp.c` (287) turns classes into UTF-8 byte ranges and builds a DFA lazily: `increment` makes a state the first time a byte reaches it. `main.c` (260) holds the flags and a byte loop over a 16K+16K buffer, written twice (plain and `-i`). It matches bytes, not runes, through one `next[256]` per state; that is why it is fast, and why it differs from libregexp on bytes that are not UTF-8.
+
+Kept from the C, so the output matches:
+- **Patterns.** A leading `*` makes the rest of that pattern line literal. A newline in a pattern, or between the lines of a `-f` file, is an alternative. `-e` may repeat and combine with `-f`; all are or-ed. A multibyte character outside a class is matched as its bytes.
+- **`-i`** folds ASCII only, in the pattern (classes too: `[A-Z]` becomes `[a-z]`) and in the input.
+- **Output.** `-n` prints `N: ` (a space after the colon). File names are printed with more than one file (`/dev/null` forces it); `-h` stops them. Output is flushed every 512 lines, and every line with `-b` or on standard input.
+- **Input.** A last line without a newline still matches and prints without one, unless file names are shown. A line longer than 16K prints only its last 16–32K.
+- **Exit statuses and messages:** `no matches`, `syntax`, `usage`, `open`; `grep: internal error: class too big` past 100 ranges in a class.
+- **Class quirks, to confirm against stock.** The C uses the byte range `0xff`–`0xff` as "matches nothing", made when a negated class has adjacent ranges (`[^ab]`) or contains the largest rune, so `[^ab]` matches a raw `0xff` byte where `[^a]` does not. Bytes that are not UTF-8 never match `.` or a class.
+
+Suspected in the C, to confirm in the guest:
+1. A pattern ending in `\` (`grep 'a\'`): `getrec` has already stepped past the string's 0, so lexing continues in whatever memory follows (probably the next argument). If stock shows it, the Zig stops at the end: Fixed from C.
+2. `follow` is sized from the node count before `addcase` adds nodes, but `fol1`'s bound uses the grown count. Possibly safe (each visit adds at most one entry); the port either shows it is or sizes `follow` after `addcase`.
+
+Design:
+- **Tokens** are a tagged union, `union(enum) { char: u8, class: []const u8, lparen, rparen, alt, star, plus, ques, begin, end, dot, newline, bad, eof }`. The lexer is a struct with the literal mode and reads the pattern through an accessor that gives 0 past its end: a slice, no sentinel.
+- **Parser.** Recursive descent instead of yacc, one function per grammar level (`expr`, `expr0` … `expr4`). It must accept and reject exactly what stock's yacc parser does, including when the literal mode of a leading `*` begins; the error cases in the tests check this.
+- **Nodes** are a tagged union, `union(enum) { alt, or_, begin, end, class: struct { lo, hi }, case: *[256]?u32 }`, with `next` as a `u32` index. Switches are exhaustive.
+- **States** hold `next: [256]?u32`, the match flag and a sorted slice of node indices, found through the C's binary tree ordered by index instead of by pointer.
+- **Memory.** An arena replaces `mal`/`sbrk`; as in C nothing is freed.
+- **The search loop** is one `inline fn` with a `comptime fold: bool`, called twice, in place of the C's two copies.
+- Left out: the `-1` graph dump (`reprint`), which stock cannot reach because `1` is not in its valid flags.
+
+Steps, each tested before the next:
+1. **Lexer, parser, nodes.** Host tests: accepted patterns, `syntax`, `empty pattern`, unterminated classes, a leading `*`, newlines.
+2. **Classes to byte ranges** (`rclass`, `re2class`). Host test: for random rune ranges, the byte sequences accept exactly the encodings of those runes (against `rune.zig`), and the `0xff` quirk.
+3. **`addcase`, `fol1`, `increment`: the DFA.** Host differential test: random patterns over a small alphabet and random lines, match or not, against the libregexp port (allowing for `.` not matching newline and for `^`/`$`).
+4. **`main` and the search loop**: flags, buffering, a missing last newline, long lines.
+5. **Comparison with stock in `usbzig.rc`**, output and exit status: every flag and mixes; one file, several, standard input, `/dev/null`; repeated `-e`, multi-line `-f`, `-e` with `-f`; newline alternatives and a leading `*`; classes with 2-, 3- and 4-byte runes, negated classes and ranges; `-i`; an empty file and one without a last newline; lines just under and over 16K and 32K; binary input with 0 and `0xff` bytes and bad UTF-8; errors (empty pattern, syntax, unterminated class, class too big, unopenable file, missing arguments, the trailing `\`); and stock's `g` script running the Zig `grep`.
+6. Optional: timing over a large file, stock against Zig, as in `kbench`.
+
+Estimate: about 900 lines of Zig with tests.
+
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
 - Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail. The first step, a minimal libc, is planned above under M9; the rest is still to be examined as a topic of its own. `src/user` already shows that Zig can produce Plan 9 a.out binaries without a host tool.
