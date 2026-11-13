@@ -438,6 +438,28 @@ fn tests {
 	$p^test /lib/namespace -older 1q; s; $p^test -t x; s; $p^test; s
 }
 
+# rc case $2 of rccases, run by the rc $1 in a directory of its own and
+# an environment with only true, false (9front has no such programs) and
+# $RC; pids, addresses and planZ's path are masked
+fn rcrun {
+	rm -rf /tmp/zig.rcd
+	mkdir /tmp/zig.rcd
+	@{
+		rfork E
+		cd /tmp/zig.rcd
+		fn true { status='' }
+		fn false { status=false }
+		RC=$1
+		$1 /tmp/zig.rcc/$2 </dev/null
+		s
+	} >[2=1] |
+		sed 's;/tmp/zig/;;g
+			s/ pid [0-9]+ cycle [0-9A-Fa-fx]+ ([0-9]+) [0-9A-Fa-fx]+( |$)/ pid PID cycle ADDR \1 ADDR\2/
+			s/ pid [0-9]+ cycle [0-9A-Fa-fx]+ / pid PID cycle ADDR /
+			s/([a-z]+) [0-9]+:/\1 PID:/g'
+	rm -rf /tmp/zig.rcd
+}
+
 fn checks {
 	nbad=()
 	Z=$z/
@@ -492,6 +514,17 @@ fn checks {
 	awk '/zz|a'^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^'/{n++; l=NR ": " $0} END{print n; print l}' $z/grepwrap.txt >/tmp/zig.b
 	t grep-wrap
 	echo stock: `{grep -c -f $z/grepwrap.pat $z/grepwrap.txt} `{grep -n -f $z/grepwrap.pat $z/grepwrap.txt | tail -1 | sed 's/:.*//'}
+	# rc: each script of rccases run by planZ's rc and by stock rc
+	rm -rf /tmp/zig.rcc
+	mkdir /tmp/zig.rcc
+	awk '/^#### /{if(f != "") close(f); f = "/tmp/zig.rcc/" $2; next} f != "" {print >f}' $z/rccases
+	for(c in `{ls /tmp/zig.rcc | sed 's;.*/;;'}){
+		rcrun $Z^rc $c >/tmp/zig.a
+		rcrun rc $c >/tmp/zig.b
+		t rc-$c
+	}
+	rm -rf /tmp/zig.rcc
+
 	rm -rf /tmp/zig.utf /tmp/zig.c1 /tmp/zig.c2 /tmp/zig.x /tmp/zig.qd
 	rm -f /tmp/zig.gl /tmp/zig.gn /tmp/zig.ge /tmp/zig.gp /tmp/zig.gx /tmp/zig.gc
 

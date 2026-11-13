@@ -86,8 +86,8 @@ pub fn build(b: *std.Build) void {
     }
     // retest's and fltest's other halves, built in the guest against
     // stock libregexp and libc, and the table retest reads (see
-    // tools/retest.c and tools/fltest.c)
-    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c" };
+    // tools/retest.c and tools/fltest.c), and rc's scripts
+    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "rccases" };
     for (zdata) |name|
         user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
     // grep's pattern compiler and DFA, which take only the runes from

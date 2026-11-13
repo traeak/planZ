@@ -1087,7 +1087,13 @@ fn Xsrcline(line: i32) void {
 fn pfnc(f: *io.Io, t: *Thread) void {
     rc.pfln(f, srcfile(t), t.line);
     pfmt(f, " pid %d cycle %p %d ", .{ rc.libc.getpid(), t.code, t.code.?.wordpc(t.pc) });
-    io.pstr(f, t.code.?.inst[t.pc].name());
+    // Kept from C: pfnc.c's table has no Xsettrue, Xsub or builtins, and
+    // the C prints those functions' addresses
+    const i = &t.code.?.inst[t.pc];
+    switch (i.*) {
+        .settrue, .sub, .builtin => pfmt(f, "%p", .{i}),
+        else => io.pstr(f, i.name()),
+    }
     var a = t.argv;
     while (a) |l| : (a = l.next) pfmt(f, " (%v)", .{l.words});
     io.pchr(f, '\n');

@@ -1,0 +1,529 @@
+# rc's cases for usbzig.rc: each "#### name" line starts a script that
+# usbzig.rc runs with planZ's rc and with stock rc, in an empty
+# directory of its own, with its own environment and standard input
+# from /dev/null.  The environment starts empty but for true and false,
+# which 9front has as no programs:
+#	fn true { status='' }
+#	fn false { status=false }
+# $RC is the rc under test, for the scripts' own child shells; a plain
+# "rc" is always the stock one.  The two outputs, with errors and the
+# final status, must be the same once pids, addresses and the path of
+# planZ's rc are masked.  An error ends a script, as in any rc, so the
+# fatal ones run in a child, $RC -c.
+#### quoting
+echo 'single' 'it''s' '' x
+echo a'b'c a^b^c 'a'^b
+x=(one two three)
+echo $x^-s pre-^$x
+echo $x^(1 2 3)
+echo (a b)^(c d)
+y=foo
+echo $y.c $y^.c "$y" '$y'
+echo -$y- $y'/'bar
+echo #comment
+echo a#b 'a#b'
+echo `{echo back quoted}^x
+echo $"x
+echo $#x $#y $#nothere
+z=''
+echo $#z
+#### lists
+x=(a b c d e f g)
+echo $x(2) $x(2 4) $x(7 1) $x(9)
+echo $x(2-4) $x(5-) $x(3-3)
+i=3
+echo $x($i)
+*=(p q r)
+echo $1 $3 $* $#*
+echo $0
+l=()
+echo $#l $l
+l=($l a)
+echo $#l
+n=(1 (2 3) ((4)))
+echo $#n
+echo $"n
+x=y
+y=z
+echo $$x
+v=(a b)
+$v(1)=1
+echo $a
+#### match
+for(w in abc a.c '[x]' x 'a b' ''){
+	if(~ $w a*) echo $w 'a*'
+	if(~ $w a?c) echo $w 'a?c'
+	if(~ $w '[x]') echo $w quoted
+	if(~ $w [x]) echo $w class
+	if(~ $w [!x]*) echo $w 'not x'
+	if(~ $w '') echo empty
+	if(~ $w *' '*) echo has space
+}
+~ é [à-ö]; echo $status
+~ é [!à-ö]; echo $status
+~ ☺ ?; echo $status
+~ (a b c) x y b; echo $status
+~ () (); echo $status
+~ (); echo $status
+! ~ a a; echo $status
+#### control
+for(i in 1 2 3) echo $i
+for(i) echo none $i
+*=(x y)
+for(i) echo arg $i
+if(~ abc a*) echo matched
+if not echo no
+if(~ abc b*) echo matched
+if not echo no
+switch(hello){
+case h*
+	echo case h
+case *
+	echo default
+}
+switch(zzz){
+case a b
+	echo ab
+case [x-z]* q
+	echo xyz
+}
+switch(){
+case ''
+	echo empty
+case *
+	echo star
+}
+x=0
+while(! ~ $x 3) { echo x $x; x=`{echo $x+1 | hoc} }
+while(false) echo never
+true && echo and1
+false && echo and2
+false || echo or1
+true || echo or2
+! true; echo $status
+{echo grouped; false}; echo $status
+if(false) echo no
+if not if(true) echo elif
+#### functions
+fn a { echo in a $*; b x }
+fn b { echo in b $1 $#* }
+a 1 2
+fn c { return; echo never }
+c; echo $status
+fn d { echo d; d2 }
+fn d2 { status=custom }
+d; echo $status
+fn e
+e; echo $status
+whatis a b c e
+fn sigexit { echo leaving }
+fn f { echo $0 $1 }
+f arg
+*=(1 2)
+fn g { *=(z); echo $* }
+g; echo $*
+#### local
+x=global
+x=local { echo $x }
+echo $x
+x=() y=yy echo $x $y
+echo $#y
+a=1 b=(2 3) { echo $a $b; a=inner; echo $a }
+echo $a
+fn f { echo f sees $x }
+x=passed f
+x=1 x=2 { echo $x }
+#### redirections
+echo one >f1
+echo two >>f1
+cat f1
+cat <f1 | wc -l
+echo err >[1=2]
+echo to2 >[2]f2 >[1=2]
+cat f2
+{echo out; echo err >[1=2]} >f3 >[2=1]
+cat f3
+echo data >f4
+cat <>f4
+echo x >[1=]
+echo closed $status
+cat <f1 >[0=]
+{echo a; echo b >[1=2]} |[2] sed 's/^/2: /'
+{echo a; echo b >[1=2]} >[2=1] | sed 's/^/both: /'
+ls /nope >[2]/dev/null; echo $status
+>f5 echo first-redirect
+cat f5
+echo >f6 >f7 both
+cat f6 f7
+$RC -c 'cat </nope; echo not reached'
+echo after $status
+>[3]f8 echo three
+#### heredocs
+x=value
+cat <<EOF
+here $x and $"x and ${x}
+x$x^y 'q' "d" \ and $$
+$nothere.
+EOF
+cat <<'EOF'
+quoted $x
+EOF
+cat <<EOF >h1
+to a file $x
+EOF
+cat h1
+cat <<EOF | sed 's/^/| /'
+piped
+EOF
+cat <<EOF; cat <<'END'
+first $x
+EOF
+second $x
+END
+fn h {
+	cat <<EOF
+in fn $x
+EOF
+}
+h
+x=changed h
+whatis h
+cat <<eof
+lower $x
+eof
+cat <<EOF
+EOF
+echo empty-doc $status
+#### pipes
+echo hi | cat
+echo a b c | wc -w
+{echo 1; echo 2; echo 3} | sed 1d | sed 1d
+false | true; echo $status
+true | false; echo $status
+ls /nope | cat; echo $status
+ls /nope | ls /nope2; echo $status
+ls /nope >[2=1] | sed 's/^/>/'
+cat /lib/namespace | grep -c bind | sed 's/^/count /'
+#### backquote
+x=`{echo a b c}
+echo $#x
+x=`{echo 'a  b'; echo c}
+echo $#x $x
+ifs=: x=`{echo a:b::c}
+echo $#x $x
+x=`:{echo a:b:c}
+echo $#x $x(2)
+x=`''{echo -n 'a b'}
+echo $#x $x
+x=`' '{echo -n 'a b'}
+echo $#x
+$RC -c 'x=`` () {echo one; echo two}; echo $#x'
+$RC -c 'x=`{}; echo $#x'
+x=`{echo -n}
+echo $#x
+echo `{echo multi; echo lines}
+echo `{ls /nope}; echo $status
+cmp <{echo x} <{echo x} && echo same
+cmp <{echo x} <{echo y} >/dev/null || echo differ
+echo into >{sed 's/^/sub: /'}
+sleep 0
+diff <{echo a} <{echo a}; echo $status
+#### glob
+mkdir d d/sub
+touch d/a.c d/b.c d/c.h d/.hidden d/sub/x.c 'd/s p'
+echo d/*
+echo d/*.c
+echo d/?.c
+echo d/[ab].c
+echo d/[!a]*
+echo d/*/*.c
+echo d/.*
+echo d/nothing*
+echo 'd/*'
+x='*'
+echo d/$x
+echo d/^*.h
+echo d/s*
+echo */s*
+cd d
+echo *
+echo ./*
+echo */x*
+cd ..
+echo /rc/lib/rcm*
+#### async
+sleep 0 &
+wait
+echo waited $status
+{echo bg; exit 'bg status'} >o1 &
+wait $apid
+cat o1
+echo $status
+x=$apid
+~ $x [0-9]*; echo pid ok $status
+wait 99999; echo $status
+sleep 0 & sleep 0 &
+wait
+echo all waited
+#### subshell
+x=outer
+@{x=inner; echo $x; cd /}
+echo $x
+pwd
+@{exit 'sub status'}
+echo $status
+@{rfork e; y=new}
+echo $#y
+@{cd /lib; pwd}
+pwd
+#### builtins
+cd /lib/ndb
+pwd
+cd
+pwd
+cd /nope
+echo $status
+cd /lib /bin
+echo $status
+home=/rc cd
+pwd
+eval 'echo evaled; z=5'
+echo z $z
+eval echo '$z' list
+$RC -c 'eval; echo not reached'
+eval 'echo (' ; echo eval $status
+echo 'echo dotted $*; dotvar=1' >/tmp/zig.dot.$pid
+. /tmp/zig.dot.$pid a b
+echo $dotvar
+$RC -c '. /nope; echo not reached'
+echo $status
+rm /tmp/zig.dot.$pid
+*=(p q r s)
+shift
+echo $*
+shift 2
+echo $*
+shift 5
+echo $status $*
+shift x
+echo $status
+flag x +
+flag x
+echo x $status
+flag x -
+flag x
+echo x $status
+flag e; echo $status
+flag
+echo $status
+flag xy +
+echo $status
+whatis echo cd nothere path
+echo $status
+whatis -x
+echo $status
+exit 'final status'
+echo never
+#### exec
+exec echo replaced
+echo never
+#### exec2
+x=kept
+exec $RC -c 'echo execd $x'
+echo never
+#### exec4
+exec >e1
+echo never
+#### exec3
+exec /nope
+echo after failed exec $status
+#### rfork
+rfork e
+x=forked
+rfork n
+bind /lib /tmp
+rfork s
+rfork z
+echo $status
+rfork
+echo $status
+#### export
+x=(one 'two three' '')
+fn ex { echo exported fn $* }
+rc -c 'echo stock sees $#x $x; ex a; whatis x ex'
+$RC -c 'echo same sees $#x $x; ex b; whatis x ex'
+rc -c 'y=(from stock) ; fn back { echo back $* }; '^$RC^' -c ''echo $y; back c; whatis back'''
+$RC -c 'y=(from child); fn back2 { echo back2 }; rc -c ''echo $y; back2'''
+fn q { echo 'it''s' $"* ^x; echo `{echo é} | cat; x=(a b) { echo $x } }
+rc -c 'whatis q; q 1 2'
+$RC -c 'whatis q; q 1 2'
+pid=keep rc -c 'echo $pid' | grep -c keep
+fn 'odd name' { echo odd }
+rc -c 'whatis ''odd name'''
+cat /env/x | xd -c | sed 2q
+#### status
+false; echo $status
+true; echo $status
+ls /nope; echo $status
+echo $status
+x=`{false}; echo $status
+status=(a b); echo $status
+@{exit}; echo empty $status
+@{exit 'x y'}; echo $status
+@{exit '1'} | @{exit '2'}; echo $status
+fn f { status=(one two) }
+f; echo $status
+if(false) true
+echo if $status
+rc -c 'exit fromchild'; echo $status
+#### syntax
+$RC -c 'echo ok; if'
+echo $status
+$RC -c 'x=(a b'
+$RC -c 'echo >['
+$RC -c 'echo >[x]'
+$RC -c 'echo a |[ cat'
+$RC -c 'echo a |[x] cat'
+$RC -c 'echo }'
+$RC -c 'fn {echo}'
+$RC -c 'echo `'
+$RC -c 'echo '' unterminated'
+$RC -c 'case x'
+$RC -c 'echo $'
+$RC -c 'x=(a b)^(1 2 3); echo $x'
+$RC -c 'echo (a b)^(1 2 3); echo after'
+$RC -c 'echo $x(1'
+$RC -c '^'
+$RC -c 'a=b=c; echo $a'
+echo 'echo line1
+echo line2 (
+echo line3' >s1
+$RC s1
+echo $status
+rc s1 >[2=1] | sed 's/^/stock: /'
+echo 'echo ok
+}' >s2
+$RC s2
+#### flags
+$RC -c 'echo dash c $*' a b
+$RC -x -c 'x=1; echo $x; ls /lib/namespace'
+$RC -e -c 'echo one; false; echo two'
+echo e $status
+$RC -e -c 'if(false) echo no; false || echo or; ! true; echo three'
+$RC -e -c 'echo a; @{false}; echo b'
+$RC -n -c 'echo not run'
+echo n $status
+$RC -s -c 'false; echo s'
+$RC -v -c 'echo verbose'
+$RC -V -c 'echo very'
+$RC -p -c 'echo $path'
+$RC -I -c 'echo $#prompt'
+$RC -z
+echo $status
+$RC -c
+echo $status
+$RC -m /nope -c 'echo m'
+$RC /nope
+echo $status
+echo 'echo script $0 $*' >sc
+$RC sc 1 2
+$RC ./sc 1 2
+$RC <sc
+echo 'echo stdin $*' | $RC
+#### interactive
+echo 'echo one
+if(true)
+echo two
+x=(
+a)
+echo $x
+' | $RC -i >[2=1]
+echo '
+echo next
+fn f {
+echo f
+}
+f
+ls /nope
+echo $status
+' | $RC -i >[2=1]
+echo 'prompt=(''> '' ''>> '')
+echo p
+if(true)
+echo q
+' | $RC -i >[2=1]
+echo 'echo dot-i' >di
+echo '. -i di' | $RC >[2=1]
+echo 'echo error (; echo after' | $RC -i >[2=1]
+echo 'exit bye' | $RC -i >[2=1]; echo $status
+#### trace
+# nothing runs beside the shell being traced, whose lines would mix
+# with its own
+$RC -r -c 'x=(a b); echo $x'
+$RC -r -c 'fn f { echo $1 }; f q; if(~ a a) echo yes'
+$RC -r -c 'for(i in 1 2) echo $i; x=`{echo b}; echo $x >/dev/null'
+$RC -r -c 'echo $#x; ! true; @{echo s}; while(false) echo; x=$x(1)'
+#### notes
+$RC -c 'fn sigint { echo caught int }; sleep 2; echo after sleep' &
+sleep 0.5
+echo interrupt >/proc/$apid/note
+wait
+echo $status
+$RC -c 'fn sighup { echo caught hup }; sleep 2; echo after' &
+sleep 0.5
+echo hangup >/proc/$apid/note
+wait
+echo $status
+$RC -c 'sleep 2; echo not reached' &
+sleep 0.5
+echo interrupt >/proc/$apid/note
+wait
+echo $status
+$RC -c 'fn sigexit { echo exit trap }; echo body'
+$RC -c 'fn sigexit { echo exit trap $status }; exit later'
+$RC -c 'fn sigterm { echo term; exit }; sleep 2; echo not' &
+sleep 0.5
+echo term >/proc/$apid/note
+wait
+echo $status
+#### signedchar
+# 6c's char is signed, so rc's byte 0xff equals EOF: it ends a here
+# document's line and reading
+{echo 'cat <<EOF'; echo -n 'aÿb' | tcs -t latin1; echo; echo more; echo EOF; echo 'echo after'} >ff.rc
+$RC ff.rc
+echo $status
+x=`{echo -n 'aÿb' | tcs -t latin1}
+whatis x | xd -c | sed 2q
+y=(héllo 'a b' ☺ '' 'é''s')
+whatis y
+fn f { echo héllo ☺ 'é''s' }
+whatis f
+{echo 'echo a'; echo -n 'echo ÿ' | tcs -t latin1; echo; echo 'echo c'} >ff2.rc
+$RC ff2.rc | xd -c
+#### whatis
+whatis path prompt
+x=(a 'b c' 'd''e' '' '#' '=' '^' a$home)
+whatis x
+x=()
+whatis x
+x=''
+whatis x
+fn f { if(~ $1 a) echo a; if not { switch($2){ case b; echo b; case *; echo c } }; while(true) break; for(i in $*) echo $i >[2=1] >>f | cat >[2] /dev/null }
+whatis f
+fn g { x=1 y=2 echo $x^$y $"z $#z `{ls} `"x{echo} <{a} >{b} @{c} ! d && e || f; e <<EOF
+doc $x
+EOF
+}
+whatis g
+#### rcbin
+# every rc script of /rc/bin as a function, printed back by whatis
+for(f in /rc/bin/* /rc/lib/rcmain){
+	l=`{sed 1q $f}
+	if(~ $f /rc/lib/rcmain || ~ $l '#!/bin/rc'*){
+		echo '=== '^$f
+		{echo 'fn x {'; cat $f; echo; echo '}'} >def
+		. def
+		whatis x
+		fn x
+	}
+}
