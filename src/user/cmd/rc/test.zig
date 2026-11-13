@@ -16,7 +16,8 @@ var inited = false;
 fn setup() void {
     if (inited) return;
     @"var".kinit();
-    exec.err = io.openiostr();
+    exec.err = io.openiofd(2);
+    exec.err_open = true;
     const t = rc.new(rc.Thread);
     t.* = .{};
     exec.runq = t;
@@ -37,10 +38,13 @@ fn keep(t: ?*rc.Tree) bool {
     return true;
 }
 
-/// The error output so far, emptied.
+const hostlibc = @import("libc");
+
+/// The error output so far (rc's fd 2), emptied.
 fn takeErr() []u8 {
-    const s = io.closeiostr(exec.err);
-    exec.err = io.openiostr();
+    io.flushio(exec.err);
+    const s = rc.estrdup(hostlibc.fd2.items);
+    hostlibc.fd2.clearRetainingCapacity();
     return s;
 }
 
@@ -133,8 +137,9 @@ test "parse and print" {
 test "syntax errors" {
     try expectError("echo (\n", "t:2: syntax error\n");
     try expectError("if) x\n", "t:1: token ')': syntax error\n");
-    try expectError("echo >[x] y\n", "t:1: token '>[x': redirection syntax\n");
-    try expectError("a |[2=] b\n", "t:1: token '|[22=': pipe syntax\n");
+    // the lexer's error returns EOF, which is a syntax error too
+    try expectError("echo >[x] y\n", "t:1: token '>[x': redirection syntax\nt:2: token '>[x': syntax error\n");
+    try expectError("a |[2=] b\n", "t:1: token '|[22=': pipe syntax\nt:2: token '|[22=': syntax error\n");
 }
 
 // Parse each of 9front's rc scripts and print what was parsed: the
@@ -436,3 +441,114 @@ test "9front's scripts compile" {
     try testing.expect(ncmds > 1000);
 }
 
+
+const simple = @import("simple.zig");
+
+var basecode: ?*code.Code = null;
+
+/// Run text as rc runs a file of commands (execcmds), on top of an
+/// interactive thread that errors unwind to; returns when it is read.
+fn runText(text: []const u8) void {
+    setup();
+    syn.compile = &code.compile;
+    defer syn.compile = &keep;
+    const bc = basecode orelse blk: {
+        const c = rc.new(code.Code);
+        c.* = .{ .ref = 1, .file = null, .inst = rc.a.dupe(code.Inst, &.{.mark}) catch unreachable };
+        basecode = c;
+        break :blk c;
+    };
+    const base = rc.new(rc.Thread);
+    base.* = .{ .iflag = true, .code = bc, .ret = exec.runq };
+    exec.runq = base;
+    simple.execcmds(io.openiocore(rc.estrdup(text)), rc.estrdup("t"), null, null);
+    while (exec.runq != base) exec.step();
+    exec.runq = base.ret;
+    rc.destroy(base);
+}
+
+/// A variable's value, its words joined by spaces.
+fn val(name: []const u8) []const u8 {
+    const g = std.heap.smp_allocator;
+    var s: std.ArrayList(u8) = .empty;
+    var w = @"var".vlook(name).val;
+    while (w) |x| : (w = x.next) {
+        if (s.items.len > 0) s.append(g, ' ') catch unreachable;
+        s.appendSlice(g, x.word) catch unreachable;
+    }
+    return s.items;
+}
+
+fn expectVal(name: []const u8, want: []const u8) !void {
+    testing.expectEqualStrings(want, val(name)) catch |e| {
+        std.debug.print("${s}\n", .{name});
+        return e;
+    };
+}
+
+test "run" {
+    runText(
+        \\x=(a b c)
+        \\n=$#x
+        \\y=$x(2-)
+        \\y1=$x(3 1)
+        \\z=pre-^$x
+        \\q=$"x
+        \\e=()
+        \\ne=$#e
+        \\fn f { r=$2 }
+        \\f p q
+        \\switch(b){case a; s=1; case b c; s=2; case *; s=3}
+        \\~ abc a*; m=$status
+        \\~ abc x*; m2=$status
+        \\~ é [à-ê]; m3=$status
+        \\if(~ a b) i=1
+        \\if not i=2
+        \\for(k in 1 2 3) acc=($acc $k)
+        \\*=(a b c)
+        \\while(! ~ $#* 0) { l=($l $1); shift }
+        \\x=1 { inner=$x }
+        \\eval 'ev=5; ev2=$ev'
+        \\fn g { *=(1 2 3); shift 2; gs=$* }
+        \\g
+        \\t1=a^(1 2)^b
+        \\cnt=$#t1
+        \\
+    );
+    const msg = takeErr();
+    defer rc.a.free(msg);
+    try testing.expectEqualStrings("", msg);
+    try expectVal("x", "a b c");
+    try expectVal("n", "3");
+    try expectVal("y", "b c");
+    try expectVal("y1", "c a");
+    try expectVal("z", "pre-a pre-b pre-c");
+    try expectVal("q", "a b c");
+    try expectVal("ne", "0");
+    try expectVal("r", "q");
+    try expectVal("s", "2");
+    try expectVal("m", "");
+    try expectVal("m2", "no match");
+    try expectVal("m3", "");
+    try expectVal("i", "2");
+    try expectVal("acc", "1 2 3");
+    try expectVal("l", "a b c");
+    try expectVal("inner", "1");
+    try expectVal("ev", "5");
+    try expectVal("ev2", "5");
+    try expectVal("gs", "3");
+    try expectVal("t1", "a1b a2b");
+    try expectVal("cnt", "2");
+}
+
+test "run errors" {
+    runText("u=(a b c)^(1 2)\n");
+    var msg = takeErr();
+    try testing.expectEqualStrings("t:1: mismatched list lengths in concatenation\n", msg);
+    rc.a.free(msg);
+    try expectVal("status", "error");
+    runText("w=(a b); $w=1\n");
+    msg = takeErr();
+    try testing.expectEqualStrings("t:1: = variable name not singleton!\n", msg);
+    rc.a.free(msg);
+}

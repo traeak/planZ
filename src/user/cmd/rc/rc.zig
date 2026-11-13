@@ -126,14 +126,14 @@ pub const ROPEN = 1; // dup2(from, to); close(from);
 pub const RDUP = 2; // dup2(from, to);
 pub const RCLOSE = 3; // close(from);
 
-/// A function's or a command's compiled code (code.zig); opaque here.
-pub const Code = opaque {};
+/// A function's or a command's compiled code.
+pub const Code = @import("code.zig").Code;
 
 pub const Var = struct {
     next: ?*Var, // next on hash or local list
     val: ?*Word = null, // value
     @"fn": ?*Code = null, // pointer to function's code vector
-    pc: i32 = 0, // pc of start of function
+    pc: u32 = 0, // pc of start of function
     fnchanged: bool = false,
     changed: bool = false,
     name: []u8,
@@ -143,7 +143,7 @@ pub const NVAR = 521;
 
 pub const Thread = struct {
     code: ?*Code = null, // code for this thread
-    pc: i32 = 0, // code[pc] is the next instruction
+    pc: u32 = 0, // code.inst[pc] is the next instruction
     line: i32 = 0, // source code line for Xsrcline
     argv: ?*List = null, // argument stack
     redir: ?*Redir = null, // redirection stack
@@ -248,7 +248,11 @@ pub fn inttoascii(buf: []u8, n_: i32) []u8 {
 pub fn panic(comptime s: []const u8, n: anytype) noreturn {
     const exec = @import("exec.zig");
     io.pfmt(exec.err, "%s: ", .{argv0});
-    io.pfmt(exec.err, s, .{@as(i32, @truncate(@as(i64, @intCast(n))))});
+    // the C passes n to every message; some have no %d for it
+    if (comptime std.mem.indexOfScalar(u8, s, '%') != null)
+        io.pfmt(exec.err, s, .{@as(i32, @truncate(@as(i64, @intCast(n))))})
+    else
+        io.pfmt(exec.err, s, .{});
     io.pchr(exec.err, '\n');
     io.flushio(exec.err);
     @import("plan9.zig").Abort();

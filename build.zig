@@ -77,7 +77,7 @@ pub fn build(b: *std.Build) void {
         "read",  "unicode",  "tr",        "xd",
         "split", "du",       "test",      "retest",
         "sed",   "fltest",   "seq",       "factor",
-        "primes", "grep",
+        "primes", "grep",     "rc",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
