@@ -161,6 +161,24 @@ fn inputs {
 	mkdir -p /tmp/zig.qd/sub
 	touch '/tmp/zig.qd/a b' '/tmp/zig.qd/x$y' '/tmp/zig.qd/it''s' /tmp/zig.qd/sub/plain
 	cp /lib/namespace /tmp/zig.qd/sub/ns
+	# for grep: lines around 16K and 32K long, no final newline, an
+	# empty file, pattern files, and a class of 99 and of 100 entries
+	awk 'BEGIN{s=""; for(i=0;i<1000;i++) s = s "0123456789abcdef"
+		print substr(s,1,16000) "bind"; print "bind" substr(s,1,16380); print "short bind"
+		print "x" s s "bind end"; print s s s "tail bind"; print "last"}' >/tmp/zig.gl
+	echo -n 'first
+last bind' >/tmp/zig.gn
+	touch /tmp/zig.ge
+	echo 'bind
+mount
+
+*a.b' >/tmp/zig.gp
+	echo 'a.b
+axb
+a*b
+[x] and ^ $
+BIND Mount' >/tmp/zig.gx
+	awk 'BEGIN{s=""; for(i=0;i<99;i++) s = s "a"; print "[" s "]"; print "[" s "b]"}' >/tmp/zig.gc
 }
 
 fn mtimes {
@@ -361,6 +379,45 @@ x' >/tmp/zig.sed; $p^sed -f /tmp/zig.sed $u; rm -f /tmp/zig.sed
 	$p^sed 's/a/b/x' $u; s
 }
 
+fn greps {
+	p=$1
+	n=/lib/namespace; u=/tmp/zig.utf; x=/tmp/zig.gx
+	$p^grep bind $n; s; $p^grep -n mount $n; $p^grep -c '^#' $n; s
+	$p^grep -v '^#' $n; $p^grep -vc bind $n; $p^grep -i BIND $n $x
+	$p^grep -l bind $n $u /dev/null; s; $p^grep -L bind $n $u /dev/null; s
+	$p^grep -h bind $n /dev/null; $p^grep bind $n /dev/null; $p^grep -cn bind $n $u /dev/null
+	$p^grep -s bind $n; s; $p^grep -s zzzz $n; s; $p^grep zzzz $n; s
+	$p^grep -b -n bind $n; $p^grep -nv x $u; $p^grep -lv bind $n $x; $p^grep -cv . $n
+	$p^grep -e bind -e mount $n; $p^grep 'bind
+mount' $n; $p^grep -e 'bind
+' -n $n; $p^grep -- -c $n /dev/null; s
+	$p^grep 'b(i|a)nd' $n; $p^grep 'mo+u?nt' $n; $p^grep '^[a-c]' $n; $p^grep '[^a-z #/]' $n
+	$p^grep 'n$' $n; $p^grep '^$' $n; $p^grep -c '' $n; s; $p^grep '(a|e|i|o|u|y|w|n)(d|t)$' $n
+	$p^grep 'a|b|c|d|e|f|g|h' $x; $p^grep -n '[x-z]|[0-9]|(bin|mou)' $n; $p^grep '.*' $x
+	$p^grep '[☺日]' $u; $p^grep '[^ -~]' $u; $p^grep -c '.' $u; $p^grep '[é-ö]' $u
+	$p^grep 'h.llo w.rld' $u; $p^grep -i 'HÉLLO' $u; $p^grep -i 'h[A-Z]llo' $u; $p^grep '[^	a-z]' $u
+	$p^grep '*a.b' $x; $p^grep '**' $x; $p^grep '*[x]' $x; $p^grep 'a\.b' $x; $p^grep '\[' $x
+	$p^grep 'a\*b' $x; $p^grep '[\]]' $x; $p^grep '[a-]' $x; $p^grep 'x^' $x
+	$p^grep '^^' $x; $p^grep '[$]' $x; $p^grep -i 'bind mount' $x; $p^grep -i '[a-c]IND' $x
+	cat $n | $p^grep bind; cat $x | $p^grep -c a; $p^grep -n x </dev/null; s
+	$p^grep -f /tmp/zig.gp $n $x; $p^grep -e x -f /tmp/zig.gp $n $x; $p^grep -nf /tmp/zig.gp -i $x
+	$p^grep -f /tmp/zig.gc $x; s; $p^grep -f /tmp/zig.gp -e x $n; s
+	$p^grep bind /tmp/zig.gl; $p^grep -n bind /tmp/zig.gl /dev/null; $p^grep -c 0 /tmp/zig.gl
+	$p^grep -v bind /tmp/zig.gl; $p^grep 'tail bind$' /tmp/zig.gl | wc -c
+	$p^grep bind /tmp/zig.gn; $p^grep -v bind /tmp/zig.gn; $p^grep bind /tmp/zig.gn /dev/null
+	$p^grep -c bind /tmp/zig.gn; $p^grep -n . /tmp/zig.gn; cat /tmp/zig.gn | $p^grep last
+	$p^grep x /tmp/zig.ge; s; $p^grep -c x /tmp/zig.ge; $p^grep -L x /tmp/zig.ge; $p^grep -v x /tmp/zig.ge; s
+	$p^grep -c '[^a]' /amd64/bin/rc; $p^grep -c '[^ab]' /amd64/bin/rc; $p^grep -c . /amd64/bin/rc
+	$p^grep -c '^ELF|rc' /amd64/bin/rc; $p^grep -s '' /amd64/bin/rc; s
+	$p^grep; s; $p^grep -q x $n; s; $p^grep '' $n; s; $p^grep -e '' $n; s; $p^grep -e; s
+	$p^grep '(' $n; s; $p^grep ')' $n; s; $p^grep 'a)' $n; s; $p^grep '[abc' $n; s
+	$p^grep 'a[bc' $n; s; $p^grep '*' $n; s; $p^grep '+a' $n; s; $p^grep 'a||b' $n; s
+	$p^grep '()' $n; s; $p^grep 'a
+)' $n; s; $p^grep -e a -e '|' $n; s; $p^grep x /nope; s; $p^grep x /nope $n; s
+	$p^grep -f /nope x; s; $p^grep -f /tmp/zig.ge $n; s; $p^grep -e bind -e '' $n; s
+	$p^grep -f /tmp/zig.gc -n $n; s
+}
+
 fn tests {
 	p=$1
 	$p^test -f /lib/namespace; s; $p^test -d /lib; s; $p^test -d /lib/namespace; s
@@ -409,12 +466,34 @@ fn checks {
 	# sysfatal and some usage messages print argv0, which is /tmp/zig/x
 	# for planZ's programs: it is cut on both sides
 	inputs
-	for(c in mtime strings freq comm read unicode tr xd du test sed seq factor primes){
+	for(c in mtime strings freq comm read unicode tr xd du test sed seq factor primes grep){
 		$c^s $Z >[2=1] | sed 's;/tmp/zig/;;g' >/tmp/zig.a
 		$c^s '' >[2=1] | sed 's;/tmp/zig/;;g' >/tmp/zig.b
 		t $c
 	}
+
+	# g, the script, running each grep
+	@{rfork n; bind $z/grep /bin/grep; g -i yyerror /sys/src/cmd/grep} >/tmp/zig.a >[2=1]
+	g -i yyerror /sys/src/cmd/grep >/tmp/zig.b >[2=1]
+	t g
+
+	# Fixed from C, so these two are checked against what is right,
+	# and stock's output is shown.  A pattern ending in \: the C reads
+	# on past its 0 into the next argument, here '(', and fails with a
+	# syntax error; the Zig's pattern ends there, as plain 'a' would.
+	{$Z^grep 'a\' '('; s} >/tmp/zig.a >[2=1]
+	{grep 'a' '('; s} >/tmp/zig.b >[2=1]
+	t grep-backslash
+	echo stock: `{grep 'a\' '(' >[2=1]; s}
+	# grep's generation coming round (see tools/grepwrap.zig): the
+	# last line of grepwrap.txt matches, as awk finds
+	{$Z^grep -c -f $z/grepwrap.pat $z/grepwrap.txt; $Z^grep -n -f $z/grepwrap.pat $z/grepwrap.txt | tail -1} >/tmp/zig.a >[2=1]
+	ab='[ab]'
+	awk '/zz|a'^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^$ab^'/{n++; l=NR ": " $0} END{print n; print l}' $z/grepwrap.txt >/tmp/zig.b
+	t grep-wrap
+	echo stock: `{grep -c -f $z/grepwrap.pat $z/grepwrap.txt} `{grep -n -f $z/grepwrap.pat $z/grepwrap.txt | tail -1 | sed 's/:.*//'}
 	rm -rf /tmp/zig.utf /tmp/zig.c1 /tmp/zig.c2 /tmp/zig.x /tmp/zig.qd
+	rm -f /tmp/zig.gl /tmp/zig.gn /tmp/zig.ge /tmp/zig.gp /tmp/zig.gx /tmp/zig.gc
 
 	rm -rf /tmp/zig.zd /tmp/zig.sd
 	mkdir /tmp/zig.zd /tmp/zig.sd

@@ -385,7 +385,7 @@ Progress, all six steps:
 - **Found in the C.** (1) `_floatfmt`'s buffer is `1+308+1+30+1` bytes, but numbers of 1e308 and up have 309 integer digits: `%.30f` of one at or below -1e308 writes its 0 a byte past the end, and stock `fltest` faulted there (nil read), on the stock kernel too. The Zig buffer needs no 0, so it prints the whole 341 characters: Fixed from C. Both `fltest`s skip that one field. (2) 6c's code takes `NaN <= x` as true; `fltest.c` tests `isNaN` first. (3) Not explained yet: the first version of `fltest.c` printed each line with one `Bprint` of 17 values, and stock faulted (nil read, pc 0x202c03) while printing line 2619 (-1.04e49), on both kernels, 42 lines before the first value the overflow above touches. Formatting each field with `snprint` and writing it avoids it; the cause, in stock libbio or libc's fmt, is still to be found.
 - **Commands.** `seq` (its format built or given at run time, through `runsnprint`), `factor`, `primes`, and `du -e`/`-h` (kept: a value past the "Y" prefix prints `<nil>`, as the C's nil-ended table does). All compared with stock in `usbzig.rc`.
 
-#### grep: planned
+#### grep: done
 9front's `grep` (`cmd/grep`, 1,250 lines) does not use libregexp. `grep.y` (236 lines) is a yacc grammar and lexer: `* + ? | ( ) ^ $ .`, classes, and a newline as an alternative with the lowest precedence. `sub.c` (325) allocates nodes from `sbrk`, builds the graph, and has `addcase`, which turns an alternation of 7 or more characters into a 256-way table. `comp.c` (287) turns classes into UTF-8 byte ranges and builds a DFA lazily: `increment` makes a state the first time a byte reaches it. `main.c` (260) holds the flags and a byte loop over a 16K+16K buffer, written twice (plain and `-i`). It matches bytes, not runes, through one `next[256]` per state; that is why it is fast, and why it differs from libregexp on bytes that are not UTF-8.
 
 Kept from the C, so the output matches:
@@ -418,6 +418,17 @@ Steps, each tested before the next:
 6. Optional: timing over a large file, stock against Zig, as in `kbench`.
 
 Estimate: about 900 lines of Zig with tests.
+
+Progress, steps 1–5 (step 6, timing, not done):
+- **`src/user/cmd/grep/re.zig`** (the lexer, recursive-descent parser, graph, classes and DFA; 740 lines, then the host tests) and **`src/user/cmd/grep.zig`** (main and the byte loop, 260 lines). States are arena pointers with `next: [256]?*State`, as in C; nodes are a tagged union linked by index. The parser gives "empty pattern" for any first token that cannot start an expression (yacc's first state reduces the empty program by default), so `grep ')'` and `grep '[abc'` say "empty pattern", as stock does.
+- **Host tests** (`zig build test`): the grammar and its messages, "class too big" at 100 entries and "class too long", 300 random rune ranges as classes and negated classes against the runes' encodings, and 3,000 random patterns (alternatives by `|` and newline, groups, `* + ?`, classes, `^`/`$`) each over 200 lines in one run, against a backtracking matcher.
+- **In the guest** (`usbzig.rc`): about 150 grep runs compared with stock, output and exit status, all the same (200,420 bytes), and stock's `g` script running each grep (same).
+- **Found in the C, both Fixed from C** and checked in `usbzig.rc` against what is right (stock's output is printed beside):
+  1. The trailing `\`, confirmed: stock `grep 'a' '('` reads on into the next argument and fails with "syntax error"; the Zig's pattern ends there, as plain `a` would.
+  2. **The generation wraps.** Nodes are marked visited with a `ushort` generation, one more per new DFA transition; after 65536 transitions a node last visited exactly that many before looks visited and is skipped. `tools/grepwrap.zig` (run on the host by `build.zig`) drives the port, which makes the C's transitions in the C's order, to build a pattern ("zz", or `a` and 15 of `(a|b)`) and a 322K input where that happens on the last line: stock prints 5,267 lines and misses line 8168, which ends in "zz"; awk finds 5,268. The Zig's generation is 32 bits.
+- The `follow` bound (suspicion 2) is kept as the C's check over a list that grows, so the port is safe either way; whether the C's array can overflow was not settled.
+- Kept from the C and tested: `[^ab]` matches a raw 0xff byte where `[^a]` does not; `.` and classes never match bytes that are not UTF-8; `x^` matches a line after one ending in x; `-f` before `-e` makes the `-e` read the (finished) file, so it fails with "empty pattern".
+- Seen while testing, not from grep: during `usbzig.rc`'s sed cases the guest prints `rc: can't open: file does not exist: '/env//tmp'` outside every compared output; the committed script does it too.
 
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).

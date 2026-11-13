@@ -77,7 +77,7 @@ pub fn build(b: *std.Build) void {
         "read",  "unicode",  "tr",        "xd",
         "split", "du",       "test",      "retest",
         "sed",   "fltest",   "seq",       "factor",
-        "primes",
+        "primes", "grep",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
@@ -90,6 +90,30 @@ pub fn build(b: *std.Build) void {
     const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c" };
     for (zdata) |name|
         user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
+    // grep's pattern compiler and DFA, which take only the runes from
+    // libc: the host gives them rune.zig under that name.
+    const grepre = b.createModule(.{
+        .root_source_file = b.path("src/user/cmd/grep/re.zig"),
+        .target = b.graph.host,
+        .optimize = .safe,
+        .imports = &.{.{ .name = "libc", .module = b.createModule(.{ .root_source_file = b.path("src/user/lib/rune.zig") }) }},
+    });
+    // The pattern and input on which stock grep misses a line, made on
+    // the host by driving that machine (see tools/grepwrap.zig).
+    const zgen = blk: {
+        const gw = b.addExecutable(.{ .name = "grepwrap", .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/grepwrap.zig"),
+            .target = b.graph.host,
+            .optimize = .safe,
+            .imports = &.{.{ .name = "re", .module = grepre }},
+        }) });
+        const run = b.addRunArtifact(gw);
+        const pat = run.addOutputFileArg("grepwrap.pat");
+        const txt = run.addOutputFileArg("grepwrap.txt");
+        break :blk [_]struct { []const u8, std.Build.LazyPath }{ .{ "grepwrap.pat", pat }, .{ "grepwrap.txt", txt } };
+    };
+    for (zgen) |f|
+        user_step.dependOn(&b.addInstallFile(f[1], b.fmt("user/bin/{s}", .{f[0]})).step);
 
     const kernel = b.addExecutable(.{
         .name = "planz",
@@ -300,6 +324,8 @@ pub fn build(b: *std.Build) void {
                     mk.addPrefixedFileArg(b.fmt("zig/bin/{s}=", .{name}), bin);
                 for (zdata) |name|
                     mk.addPrefixedFileArg(b.fmt("zig/bin/{s}=", .{name}), b.path(b.fmt("tools/{s}", .{name})));
+                for (zgen) |f|
+                    mk.addPrefixedFileArg(b.fmt("zig/bin/{s}=", .{f[0]}), f[1]);
                 mk.addPrefixedFileArg("zig/run=", b.path("tools/usbzig.rc"));
                 mk.has_side_effects = true;
                 if (usb_write) |w| mk.step.dependOn(&w.step);
@@ -369,6 +395,11 @@ pub fn build(b: *std.Build) void {
             .optimize = .safe,
             .imports = &.{.{ .name = "fmt", .module = fmt }},
         }) });
+        test_step.dependOn(&b.addRunArtifact(unit).step);
+    }
+    {
+        // grep's pattern compiler and DFA (grepre, above)
+        const unit = b.addTest(.{ .root_module = grepre });
         test_step.dependOn(&b.addRunArtifact(unit).step);
     }
     {
