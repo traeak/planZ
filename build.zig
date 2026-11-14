@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
     disk_bus = b.option([]const u8, "diskbus", "How the disk image is attached: virtio (default), nvme or ahci") orelse "virtio";
     const ref = b.option([]const u8, "ref", "Directory of 9front reference files, e.g. ref");
     const zigrc = b.option(bool, "zigrc", "Boot 9front's user programs with planZ's rc as /bin/rc (see tools/session)") orelse false;
-    session = b.option([]const u8, "session", "session= for the test boot volumes' plan9.ini: what runs after boot, rio or text (see tools/session)");
+    session = b.option([]const u8, "session", "session= for the boot volumes' plan9.ini that do not set it: what runs after boot, vt (the default), rio or text (see tools/session)");
     const usb_esp_mb = b.option(u32, "usbesp", "Size in MiB of the boot volume of the USB image (default 40)") orelse 40;
 
     const fmt = b.createModule(.{ .root_source_file = b.path("src/lib/fmt.zig") });
@@ -94,13 +94,14 @@ pub fn build(b: *std.Build) void {
         "split", "du",       "test",      "retest",
         "sed",   "fltest",   "seq",       "factor",
         "primes", "grep",     "rc",    "fpstress", "srvtest",
-        "drawtest",
+        "drawtest", "vtfs",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
         zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc, libdraw);
         user_step.dependOn(&b.addInstallFile(zbins[i], b.fmt("user/bin/{s}", .{name})).step);
         if (zigrc and std.mem.eql(u8, name, "rc")) zigrc_bin = zbins[i];
+        if (std.mem.eql(u8, name, "vtfs")) vtfs_bin = zbins[i];
     }
     // retest's, fltest's and drawtest's other halves, built in the guest against
     // stock libregexp, libc and libdraw, and the table retest reads
@@ -234,6 +235,9 @@ pub fn build(b: *std.Build) void {
     // and boot file system, with the console on the serial port.
     if (ref) |dir| {
         const ini9 = "console=0\n";
+        // The tests that hold their conversation in rio's console
+        // window: rio, not the default vtfs.
+        const ini9rio = ini9 ++ "session=rio\n";
 
         const run9 = b.addSystemCommand(qemu_args);
         addEsp(b, run9, loader, kernel, ini9, dir);
@@ -266,14 +270,14 @@ pub fn build(b: *std.Build) void {
             const dchat = b.addSystemCommand(&.{ "sh", "tools/disktest.sh", "180" });
             dchat.addArgs(qemu_args);
             dchat.addArgs(&.{ "-display", "none" });
-            addEsp(b, dchat, loader, kernel, ini9, dir);
+            addEsp(b, dchat, loader, kernel, ini9rio, dir);
             b.step("test-disk", "Boot stock 9front from the disk image and use it").dependOn(&dchat.step);
 
             // And the network: DHCP, ping, and a file over TCP.
             const nchat = b.addSystemCommand(&.{ "sh", "tools/nettest.sh", "240" });
             nchat.addArgs(qemu_args);
             nchat.addArgs(&.{ "-display", "none" });
-            addEsp(b, nchat, loader, kernel, ini9, dir);
+            addEsp(b, nchat, loader, kernel, ini9rio, dir);
             b.step("test-net", "Boot stock 9front from the disk image and use the network").dependOn(&nchat.step);
 
             // And sound: a tone played through the HDA driver to a wav
@@ -281,14 +285,14 @@ pub fn build(b: *std.Build) void {
             const achat = b.addSystemCommand(&.{ "sh", "tools/audiotest.sh", "240" });
             achat.addArgs(qemu_args);
             achat.addArgs(&.{ "-display", "none" });
-            addEsp(b, achat, loader, kernel, ini9, dir);
+            addEsp(b, achat, loader, kernel, ini9rio, dir);
             b.step("test-audio", "Boot stock 9front from the disk image and play a tone through the HDA driver").dependOn(&achat.step);
 
             // planZ's Zig programs beside the stock ones they copy.
             const zchat = b.addSystemCommand(&.{ "sh", "tools/zusertest.sh", "900", "zig-out/user/bin" });
             zchat.addArgs(qemu_args);
             zchat.addArgs(&.{ "-display", "none" });
-            addEsp(b, zchat, loader, kernel, ini9, dir);
+            addEsp(b, zchat, loader, kernel, ini9rio, dir);
             zchat.step.dependOn(user_step);
             b.step("test-zuser", "Boot stock 9front and compare planZ's Zig programs with the stock ones").dependOn(&zchat.step);
 
@@ -299,6 +303,13 @@ pub fn build(b: *std.Build) void {
             addEsp(b, tchat, loader, kernel, ini9 ++ "session=text\n", dir);
             b.step("test-text", "Boot stock 9front with session=text: a shell on the screen, no rio").dependOn(&tchat.step);
 
+            // The default session: vtfs's consoles, switched with keys.
+            const vchat = b.addSystemCommand(&.{ "sh", "tools/vttest.sh", "300" });
+            vchat.addArgs(qemu_args);
+            vchat.addArgs(&.{ "-display", "none" });
+            addEsp(b, vchat, loader, kernel, ini9, dir);
+            b.step("test-vt", "Boot stock 9front to its default session: vtfs's consoles, switched with keys").dependOn(&vchat.step);
+
             // The same through a USB Ethernet adapter, which stock
             // nusb/ether drives from user space over the kernel's USB
             // stack.  The virtio card is still there; the test names
@@ -306,7 +317,7 @@ pub fn build(b: *std.Build) void {
             const unchat = b.addSystemCommand(&.{ "sh", "tools/usbnettest.sh", "240" });
             unchat.addArgs(qemu_args);
             unchat.addArgs(&.{ "-display", "none" });
-            addEsp(b, unchat, loader, kernel, ini9, dir);
+            addEsp(b, unchat, loader, kernel, ini9rio, dir);
             b.step("test-usbnet", "Boot stock 9front from the disk image and use the network through a USB adapter").dependOn(&unchat.step);
 
             // And the screen: rio, a typed key and a moved mouse, once
@@ -320,7 +331,7 @@ pub fn build(b: *std.Build) void {
                 rchat.addArgs(qemu_args);
                 rchat.addArgs(&.{ "-display", "none" });
                 rchat.addArgs(extra);
-                addEsp(b, rchat, loader, kernel, ini9 ++ "mouseport=ps2\n", dir);
+                addEsp(b, rchat, loader, kernel, ini9rio ++ "mouseport=ps2\n", dir);
                 rio.dependOn(&rchat.step);
             }
 
@@ -343,6 +354,7 @@ pub fn build(b: *std.Build) void {
                 mk.addPrefixedFileArg("plan9.ini=", ini);
                 mk.addPrefixedFileArg("boot/session=", b.path("tools/session"));
                 if (zigrc_bin) |rc| mk.addPrefixedFileArg("boot/rc=", rc);
+                if (vtfs_bin) |v| mk.addPrefixedFileArg("boot/vtfs=", v);
                 mk.addPrefixedFileArg("boot/boot=", b.path(b.pathJoin(&.{ dir, "boot/boot" })));
                 mk.addPrefixedFileArg("boot/bootfs.paq=", b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })));
                 mk.addPrefixedFileArg("boot/paqfs=", b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })));
@@ -448,6 +460,20 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(unit).step);
     }
     {
+        // vtfs's console text, line discipline and keys, which need
+        // only runes
+        const runes = b.createModule(.{ .root_source_file = b.path("src/user/lib/rune.zig") });
+        for ([_][]const u8{ "text", "keys" }) |name| {
+            const unit = b.addTest(.{ .root_module = b.createModule(.{
+                .root_source_file = b.path(b.fmt("src/user/cmd/vtfs/{s}.zig", .{name})),
+                .target = b.graph.host,
+                .optimize = .safe,
+                .imports = &.{.{ .name = "libc", .module = runes }},
+            }) });
+            test_step.dependOn(&b.addRunArtifact(unit).step);
+        }
+    }
+    {
         // grep's pattern compiler and DFA (grepre, above)
         const unit = b.addTest(.{ .root_module = grepre });
         test_step.dependOn(&b.addRunArtifact(unit).step);
@@ -536,6 +562,7 @@ fn addEsp(
         _ = esp.addCopyFile(b.path(b.pathJoin(&.{ dir, "root/amd64/bin/auth/factotum" })), "boot/factotum");
         _ = esp.addCopyFile(b.path("tools/session"), "boot/session");
         if (zigrc_bin) |rc| _ = esp.addCopyFile(rc, "boot/rc");
+        if (vtfs_bin) |v| _ = esp.addCopyFile(v, "boot/vtfs");
     }
     run.addArg("-drive");
     run.addPrefixedDirectoryArg("format=raw,file=fat:rw:", esp.getDirectory());
@@ -557,6 +584,9 @@ fn addEsp(
 var disk_image: ?[]const u8 = null;
 /// planZ's rc, for the boot volumes, when -Dzigrc is given.
 var zigrc_bin: ?std.Build.LazyPath = null;
+/// vtfs, for the boot volumes (tools/session runs it unless session=
+/// says rio or text).
+var vtfs_bin: ?std.Build.LazyPath = null;
 /// -Dsession: session= for the boot volumes' plan9.ini.
 var session: ?[]const u8 = null;
 

@@ -4,7 +4,12 @@
 # bootrc ends with exec /boot/session; it runs init as bootrc would,
 # with the command init gives rc after making the name space from
 # /lib/namespace.  session= in plan9.ini picks what follows termrc:
-#	rio	the profile, which starts rio (the default)
+#	vt	virtual terminals (the default): the profile read as for
+#		service=con, then vtfs (/boot/vtfs, which the loader
+#		brings), with its first console copied to the serial line
+#		if console= is set, as riostart's console window is;
+#		without /boot/vtfs, as rio
+#	rio	the profile, which starts rio
 #	text	no rio: an rc on the screen, the profile read as for
 #		service=con (rc -l)
 # The name has three letters or more: bootrc removes /env/? and /env/??
@@ -25,10 +30,22 @@
 zigrc=''
 if(/$cputype/bin/test -x /boot/rc)
 	zigrc='bind /boot/rc /bin/rc && '
+then='. ./lib/profile'
 switch($session){
+case rio
+	then='. ./lib/profile'
 case text
 	then='service=con exec /bin/rc -li'
 case *
-	then='. ./lib/profile'
+	if(/$cputype/bin/test -x /boot/vtfs){
+		tee=''
+		if(! ~ $#console 0){
+			a=$console(1)
+			if(! ~ $a /* '#'*)
+				a=/dev/eia^$a
+			tee=' -t '^$a
+		}
+		then='service=con; . ./lib/profile; exec /boot/vtfs'^$tee
+	}
 }
 exec /$cputype/init -t $zigrc^'exec /bin/rc -c ''. /rc/bin/termrc; home=/usr/$user; cd && '^$then^''''

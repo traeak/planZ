@@ -13,7 +13,7 @@
 //! respondError, or until a Tflush drops it.
 //!
 //! T must have (a compile error says which is missing):
-//!   root(t) Qid
+//!   root(t, aname) ?Qid                    null: no such tree to attach
 //!   walk1(t, q: Qid, name) ?Qid            null: no such file
 //!   stat(t, q: Qid) ?Dir                    strings may be T's own
 //!   dirent(t, q: Qid, i: usize) ?Dir        the i'th entry of directory q
@@ -78,6 +78,7 @@ pub const Ebotch = "9P protocol botch";
 pub const Eperm = "permission denied";
 pub const Enoauth = "authentication not required";
 pub const Ebadoffset = "bad offset in directory read";
+pub const Ebadattach = "unknown attach name";
 
 pub fn Server(comptime T: type) type {
     comptime {
@@ -207,7 +208,7 @@ pub fn Server(comptime T: type) type {
         }
 
         fn attach(s: *S, t: *Fcall) void {
-            const q = s.tree.root();
+            const q = s.tree.root(t.aname) orelse return s.rerror(t.tag, Ebadattach);
             if (s.newfid(t.fid, q) == null)
                 return s.rerror(t.tag, Efidinuse);
             var r: Fcall = .{ .type = fcall.Rattach, .tag = t.tag, .qid = q };
@@ -389,7 +390,8 @@ const TestTree = struct {
         return .{ .path = p, .type = if (p == Qroot) fcall.QTDIR else fcall.QTFILE };
     }
 
-    pub fn root(_: *TestTree) Qid {
+    pub fn root(_: *TestTree, aname: []const u8) ?Qid {
+        if (std.mem.eql(u8, aname, "bad")) return null;
         return qid(Qroot);
     }
     pub fn walk1(_: *TestTree, q: Qid, name: []const u8) ?Qid {
@@ -574,6 +576,20 @@ test "walk errors and partial walks" {
     try std.testing.expectEqual(0, r[4].nwqid);
     try std.testing.expectEqualStrings(Efidinuse, r[5].ename);
     try std.testing.expectEqualStrings(Eunknownfid, r[6].ename);
+}
+
+test "an attach name the tree does not have" {
+    var tree: TestTree = .{};
+    var wire: Wire = .{};
+    defer wire.deinit();
+    var s = setup(&tree, &wire);
+    defer s.deinit();
+
+    tmsg(&s, .{ .type = fcall.Tattach, .tag = 2, .fid = 1, .afid = fcall.NOFID, .uname = "glenda", .aname = "bad" });
+    var buf: [4]Fcall = undefined;
+    const r = wire.take(&buf);
+    try std.testing.expectEqualStrings(Ebadattach, r[2].ename);
+    try std.testing.expect(s.lookup(1) == null);
 }
 
 test "a directory read in pieces" {

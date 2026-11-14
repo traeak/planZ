@@ -37,7 +37,7 @@ const Tree = struct {
         return .{ .path = @intFromEnum(q), .type = if (q == .root) fcall.QTDIR else fcall.QTFILE };
     }
 
-    pub fn root(_: *Tree) Qid {
+    pub fn root(_: *Tree, _: []const u8) ?Qid {
         return qid(.root);
     }
 
