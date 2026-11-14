@@ -26,23 +26,40 @@
 //!    winid     its number
 //!    wctl      read: its rectangle, "current" or "notcurrent", and
 //!              "visible" or "hidden", as rio's
+//!    winname   the name of the console's window, for a program
+//!              that draws (libdraw's getwindow)
+//!    mouse     read: the mouse, while the console is the current
+//!              one; written: moves it
+//!    cursor    written: the cursor shown while the console is the
+//!              current one
+//!    kbd       read: kbdfs's messages, while the console is the
+//!              current one; while it is open, keys are not typed
+//!              into cons
 //!    vt/       a directory of the consoles, 1 to 4, each with the
 //!              files above
 //!
+//! A program that draws takes the console as it would a rio window:
+//! while it has read winname and holds mouse open, vtfs draws no text
+//! there (what is written to cons is kept), and when it closes mouse
+//! the text is drawn again.  So rio runs on a console, started from
+//! its shell.  The switch keys stay vtfs's.
+//!
 //! Processes: vtfs reads its inputs (/dev/kbd, /dev/kprint, the 9P
 //! connection) in a process each, which hand what they read to the
-//! main process through one pipe; a keeper process per shell console
+//! main process through one pipe (so does one for /dev/mouse, if
+//! there is a mouse); a keeper process per shell console
 //! mounts the console and runs rc, again when it exits, and reports
 //! its pid; a note process sends interrupts.  Only the main process
 //! changes the consoles, so nothing is locked.
 //!
-//! Not part of 9front: rio's window files, without the mouse.
+//! Not part of 9front: rio's window files, full screen.
 
 const std = @import("std");
 const libc = @import("libc");
 const D = @import("draw");
 const text = @import("vtfs/text.zig");
 const keys = @import("vtfs/keys.zig");
+const input = @import("vtfs/input.zig");
 
 const srv = libc.srv;
 const fcall = libc.fcall;
@@ -67,7 +84,24 @@ const Console = struct {
     label: std.ArrayList(u8) = .empty,
     dirty: bool = true,
     kpart: text.Partial = .{}, // of /dev/kprint
+    // for a program that draws here
+    name: []const u8 = "",
+    winnameread: bool = false,
+    mouseopen: bool = false,
+    kbdopen: bool = false,
+    mq: input.MouseQ = .{},
+    kq: input.KbdQ = .{},
+    mreads: std.ArrayList(Req) = .empty,
+    kreads: std.ArrayList(Req) = .empty,
+    cursor: ?[CursorSize]u8 = null,
+
+    /// A program draws here: no text is drawn (rio's wrepaint).
+    fn graphics(c: *const Console) bool {
+        return c.mouseopen and c.winnameread;
+    }
 };
+
+const CursorSize = 2 * 4 + 2 * 2 * 16;
 
 var con: [NCON]Console = undefined;
 var cur: usize = 0;
@@ -176,16 +210,43 @@ fn paint(c: *Console) void {
 fn switchto(n: usize) void {
     if (n == cur)
         return;
+    // the program on the old one sees its keys and buttons go up
+    const o = &con[cur];
+    if (o.kbdopen)
+        o.kq.release();
+    if (o.mouseopen)
+        o.mq.release();
     cur = n;
     D.topwindow(con[n].win);
-    if (con[n].dirty)
+    if (con[n].dirty and !con[n].graphics())
         paint(&con[n]);
+    setcursor();
+}
+
+/// The current console's cursor: what its program wrote to cursor, or
+/// the kernel's arrow if it only reads the mouse; none on a console
+/// of text.
+fn setcursor() void {
+    if (cursorfd < 0)
+        return;
+    const c = &con[cur];
+    const empty: [CursorSize]u8 = @splat(0);
+    if (c.cursor) |*p| {
+        _ = libc.write(cursorfd, p) catch {};
+    } else if (c.mouseopen) {
+        _ = libc.write(cursorfd, empty[0..1]) catch {}; // short: the arrow
+    } else {
+        _ = libc.write(cursorfd, &empty) catch {};
+    }
 }
 
 // ---- the file tree
 
-const F = enum(u8) { dir, cons, consctl, label, text, winid, wctl, vt };
-const files = [_]F{ .cons, .consctl, .label, .text, .winid, .wctl, .vt };
+const F = enum(u8) { dir, cons, consctl, label, text, winid, wctl, vt, winname, mouse, cursor, kbd };
+const files = [_]F{ .cons, .consctl, .cursor, .kbd, .label, .mouse, .text, .winid, .winname, .wctl, .vt };
+
+const Einuse = "file in use";
+const Ebadmouse = "bad format on /dev/mouse";
 
 fn qid(c: usize, f: F) Qid {
     return .{
@@ -247,7 +308,7 @@ const Tree = struct {
             .mode = switch (f) {
                 .dir, .vt => fcall.DMDIR | 0o555,
                 .consctl => 0o200,
-                .winid, .wctl => 0o400,
+                .winid, .wctl, .winname => 0o400,
                 else => 0o600,
             },
             .length = 0,
@@ -285,14 +346,49 @@ const Tree = struct {
         // the files are their user's, as rio's
         if ((d.mode >> 6) & want != want) return srv.Eperm;
         f.aux = .{};
+        const c = &con[qcon(f.qid)];
+        switch (qfile(f.qid)) {
+            .mouse => {
+                if (c.mouseopen) return Einuse;
+                c.mouseopen = true;
+                c.mq = .{};
+                if (c == &con[cur]) setcursor();
+            },
+            .kbd => {
+                if (c.kbdopen) return Einuse;
+                c.kbdopen = true;
+                c.kq.reset();
+            },
+            else => {},
+        }
         return null;
     }
 
     pub fn clunk(_: *Tree, f: anytype) void {
-        if (f.omode != null and qfile(f.qid) == .consctl) {
-            const c = &con[qcon(f.qid)];
-            c.t.ctlclose() catch {};
-            c.dirty = true;
+        if (f.omode == null)
+            return;
+        const c = &con[qcon(f.qid)];
+        switch (qfile(f.qid)) {
+            .consctl => {
+                c.t.ctlclose() catch {};
+                c.dirty = true;
+            },
+            .mouse => {
+                // the text again (rio's Refresh)
+                c.mouseopen = false;
+                c.winnameread = false;
+                c.dirty = true;
+                if (c == &con[cur]) setcursor();
+            },
+            .cursor => {
+                c.cursor = null;
+                if (c == &con[cur]) setcursor();
+            },
+            .kbd => {
+                c.kbdopen = false;
+                c.kq.reset();
+            },
+            else => {},
         }
     }
 
@@ -311,6 +407,23 @@ const Tree = struct {
                 return .{ .data = from(t.tbuf.?, r.offset) };
             },
             .label => return .{ .data = from(c.label.items, r.offset) },
+            .winname => {
+                c.winnameread = true;
+                return .{ .data = from(c.name, r.offset) };
+            },
+            .mouse => {
+                if (c.mreads.items.len == 0 and c.mq.ready())
+                    return .{ .data = t.mousemsg(c, r.count) };
+                c.mreads.append(a, r) catch return .{ .err = "out of memory" };
+                return .later;
+            },
+            .kbd => {
+                if (c.kreads.items.len == 0 and c.kq.ready())
+                    return .{ .data = t.buf[0..c.kq.get(t.buf[0..@min(r.count, t.buf.len)])] };
+                c.kreads.append(a, r) catch return .{ .err = "out of memory" };
+                return .later;
+            },
+            .cursor => return .{ .err = "cursor read not implemented" },
             .winid => return .{ .data = from(libc.sprint(&t.sbuf, "%11d ", .{qcon(f.qid) + 1}), r.offset) },
             .wctl => {
                 const w = c.win.r;
@@ -344,6 +457,22 @@ const Tree = struct {
                 c.label.clearRetainingCapacity();
                 c.label.appendSlice(a, data) catch return .{ .err = "out of memory" };
             },
+            .cursor => {
+                if (data.len < CursorSize) {
+                    c.cursor = null;
+                } else {
+                    c.cursor = data[0..CursorSize].*;
+                }
+                if (c == &con[cur]) setcursor();
+            },
+            .mouse => {
+                // m x y: move the mouse there
+                if (c == &con[cur] and mousefd >= 0) {
+                    if (data.len == 0 or data[0] != 'm')
+                        return .{ .err = Ebadmouse };
+                    _ = libc.write(mousefd, data) catch return .{ .err = Ebadmouse };
+                }
+            },
             else => return .{ .err = srv.Eperm },
         }
         return .{ .count = @intCast(data.len) };
@@ -351,13 +480,22 @@ const Tree = struct {
 
     pub fn flush(_: *Tree, r: Req) void {
         for (&con) |*c| {
-            for (c.reads.items, 0..) |q, i| {
-                if (q.tag == r.tag) {
-                    _ = c.reads.orderedRemove(i);
-                    return;
+            for ([_]*std.ArrayList(Req){ &c.reads, &c.mreads, &c.kreads }) |l| {
+                for (l.items, 0..) |q, i| {
+                    if (q.tag == r.tag) {
+                        _ = l.orderedRemove(i);
+                        return;
+                    }
                 }
             }
         }
+    }
+
+    /// What a read of mouse gets, as /dev/mouse gives it.
+    fn mousemsg(t: *Tree, c: *Console, count: u32) []const u8 {
+        const m = c.mq.get();
+        const s = libc.sprint(&t.sbuf, "m%11d %11d %11d %11d ", .{ m.x, m.y, m.buttons, @as(i64, m.msec) });
+        return s[0..@min(s.len, count)];
     }
 
     fn from(s: []const u8, off: i64) []const u8 {
@@ -374,6 +512,15 @@ const Tree = struct {
                 _ = t.s.respondRead(r.tag, t.buf[0..n]);
                 c.dirty = true;
             }
+            while (c.mreads.items.len > 0 and c.mq.ready()) {
+                const r = c.mreads.orderedRemove(0);
+                _ = t.s.respondRead(r.tag, t.mousemsg(c, r.count));
+            }
+            while (c.kreads.items.len > 0 and c.kq.ready()) {
+                const r = c.kreads.orderedRemove(0);
+                const n = c.kq.get(t.buf[0..@min(r.count, t.buf.len)]);
+                _ = t.s.respondRead(r.tag, t.buf[0..n]);
+            }
         }
     }
 };
@@ -381,12 +528,14 @@ const Tree = struct {
 var username: []const u8 = "none";
 var debug = false;
 var teefd: i32 = -1;
+var mousefd: i32 = -1; // /dev/mouse, which one process may hold
+var cursorfd: i32 = -1;
 
 // ---- the processes
 
 /// What the readers and keepers tell the main process: one write each,
 /// a type, a length (2 bytes, little-endian) and the data.
-const Ev = enum(u8) { nine = '9', kbd = 'k', kprint = 'p', started = 's', exited = 'x' };
+const Ev = enum(u8) { nine = '9', kbd = 'k', kprint = 'p', mouse = 'm', started = 's', exited = 'x' };
 
 var evbuf: [3 + srv.MAXMSG]u8 = undefined;
 
@@ -421,7 +570,7 @@ fn reader(evfd: i32, e: Ev, path: ?[]const u8, fd_: i32) void {
     while (true) {
         const n = (if (e == .nine) libc.read9pmsg(fd, &buf) else libc.read(fd, &buf)) catch 0;
         if (n == 0) {
-            libc.fprint(2, "vtfs: reading %s: %r\n", .{path orelse "9P"});
+            libc.fprint(2, "vtfs: reading %s: %r\n", .{path orelse if (e == .mouse) "/dev/mouse" else "9P"});
             sendev(evfd, e, "");
             libc.exits(null);
         }
@@ -513,12 +662,11 @@ pub fn main() void {
     D.initdraw(null, fontname, null) catch libc.sysfatal("initdraw: %r", .{});
     const d = D.display.?;
     font = D.font.?;
-    // The mouse is no use here: while vtfs holds /dev/cursor open with
-    // an empty cursor, the kernel draws none.
-    if (libc.open("/dev/cursor", libc.OWRITE | libc.OCEXEC)) |fd| {
-        const empty: [2 * 4 + 2 * 2 * 16]u8 = @splat(0);
-        _ = libc.write(fd, &empty) catch {};
-    } else |_| {}
+    // The mouse is no use on a console of text: while vtfs holds
+    // /dev/cursor open with an empty cursor, the kernel draws none.
+    // Without a mouse the consoles still work.
+    cursorfd = libc.open("/dev/cursor", libc.OWRITE | libc.OCEXEC) catch -1;
+    mousefd = libc.open("/dev/mouse", libc.ORDWR | libc.OCEXEC) catch -1;
     const whole = D.screen.?.r;
     textr = D.insetrect(whole, Margin);
     back = d.white;
@@ -528,12 +676,17 @@ pub fn main() void {
         const r: Rune = @intCast(i);
         w.* = D.runestringnwidth(font, &.{r}, 1);
     }
-    for (&con) |*c| {
+    for (&con, 0..) |*c, i| {
         c.* = .{
             .t = .{ .a = a, .lay = layout() },
             .win = D.allocwindow(D._screen.?, whole, D.Refbackup, D.DWhite) catch libc.sysfatal("allocwindow: %r", .{}),
         };
+        // "noborder": libdraw's getwindow then takes all of it
+        var nb: [32]u8 = undefined;
+        c.name = a.dupe(u8, libc.sprint(&nb, "noborder.vt.%d", .{i + 1})) catch libc.sysfatal("out of memory", .{});
+        D.nameimage(c.win, c.name, true) catch libc.sysfatal("nameimage: %r", .{});
     }
+    setcursor();
     D.topwindow(con[0].win);
     paint(&con[0]);
     D.flushimage(d, true) catch {};
@@ -545,6 +698,8 @@ pub fn main() void {
     reader(ev[1], .kbd, "/dev/kbd", -1);
     reader(ev[1], .kprint, "/dev/kprint", -1);
     reader(ev[1], .nine, null, sp[1]);
+    if (mousefd >= 0)
+        reader(ev[1], .mouse, null, mousefd);
     noter(np[0]);
     for (0..NCON) |c| {
         if (c != KCON)
@@ -582,13 +737,20 @@ pub fn main() void {
                     libc.sysfatal("no keyboard", .{});
                 var it = keys.split(e.data);
                 while (it.next()) |m| {
-                    switch (k.msg(m)) {
+                    const what = k.msg(m);
+                    // a program reading kbd gets all but the switch keys
+                    // (and the digits with Ctl and Alt that go nowhere)
+                    if (con[cur].kbdopen and (what == .key or (m.len > 0 and m[0] != 'c')))
+                        con[cur].kq.put(m);
+                    switch (what) {
                         .none => {},
                         .prev => switchto((cur + NCON - 1) % NCON),
                         .next => switchto((cur + 1) % NCON),
                         .go => |n| switchto(n),
                         .key => |kk| {
                             const c = &con[cur];
+                            if (c.kbdopen)
+                                continue;
                             if (cur == KCON and !isnav(kk.r))
                                 continue;
                             const act = c.t.key(kk.r, kk.shift) catch .none;
@@ -611,6 +773,12 @@ pub fn main() void {
                 c.t.write(rs) catch {};
                 c.dirty = true;
             },
+            .mouse => {
+                // nothing read: the mouse is gone, the consoles go on
+                const m = input.parse(e.data) orelse continue;
+                if (con[cur].mouseopen)
+                    con[cur].mq.put(m);
+            },
             .started => {
                 var f: [2][]u8 = undefined;
                 if (libc.tokenize(e.data, &f) == 2)
@@ -621,9 +789,8 @@ pub fn main() void {
             },
         }
         tree.pump();
-        if (con[cur].dirty) {
+        if (con[cur].dirty and !con[cur].graphics())
             paint(&con[cur]);
-        }
         D.flushimage(d, true) catch {};
     }
 }

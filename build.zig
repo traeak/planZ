@@ -460,10 +460,10 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(unit).step);
     }
     {
-        // vtfs's console text, line discipline and keys, which need
+        // vtfs's console text, line discipline, keys and input queues, which need
         // only runes
         const runes = b.createModule(.{ .root_source_file = b.path("src/user/lib/rune.zig") });
-        for ([_][]const u8{ "text", "keys" }) |name| {
+        for ([_][]const u8{ "text", "keys", "input" }) |name| {
             const unit = b.addTest(.{ .root_module = b.createModule(.{
                 .root_source_file = b.path(b.fmt("src/user/cmd/vtfs/{s}.zig", .{name})),
                 .target = b.graph.host,

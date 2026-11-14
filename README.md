@@ -67,14 +67,15 @@ With the reference files (`D="-Dref=ref -Ddisk=ref/disk/9front-11952.amd64.qcow2
 | `zig build test-zuser $D` | planZ's Zig programs beside the stock ones, compared byte for byte |
 | `zig build test-audio $D` | A tone played through the HD Audio driver, recorded by QEMU and checked |
 | `zig build test-text $D` | `session=text`: one shell on the screen, no `rio` |
-| `zig build test-vt $D` | `vtfs`'s consoles: switch keys, typing, kernel messages, checked by screenshot |
+| `zig build test-vt $D` | `vtfs`'s consoles: switch keys, typing, kernel messages, `rio` run on one, checked by screenshot |
 
 Useful options include `-Dcpu=` (`SandyBridge` by default, also `max`
 and `Opteron_G4,+xsaveopt`), `-Dsmp=`, `-Dmem=`,
 `-Ddiskbus=virtio|nvme|ahci` and `-Doptimize=debug`. `-Dzigrc` boots
 9front's user programs with planZ's rc as `/bin/rc`. 9front boots to
 `vtfs`, four full-screen consoles switched with Ctl-Alt-Left/Right or
-Ctl-Alt-1…4 (three shells and the kernel's messages); `-Dsession=rio`
+Ctl-Alt-1…4 (three shells and the kernel's messages; `rio` typed at
+one of the shells runs on that console); `-Dsession=rio`
 boots to rio instead and `-Dsession=text` to one shell on the screen
 (see `tools/session`). The tests that drive rio set `session=rio`
 themselves.
