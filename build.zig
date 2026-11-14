@@ -47,6 +47,20 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // libdraw for user programs: the client in src/user/lib/draw, on
+    // the kernel's ports of libdraw's plain functions.
+    const drawlib = b.createModule(.{
+        .root_source_file = b.path("src/kernel/drawlib.zig"),
+        .imports = &.{.{ .name = "fmt", .module = fmt }},
+    });
+    const libdraw = b.createModule(.{
+        .root_source_file = b.path("src/user/lib/draw/libdraw.zig"),
+        .imports = &.{
+            .{ .name = "libc", .module = libc },
+            .{ .name = "drawlib", .module = drawlib },
+        },
+    });
+
     // The kernel: freestanding, no floating point or vector registers
     // (they belong to user processes), no red zone (interrupts run on
     // the interrupted stack), linked in the top 2GiB.
@@ -80,17 +94,19 @@ pub fn build(b: *std.Build) void {
         "split", "du",       "test",      "retest",
         "sed",   "fltest",   "seq",       "factor",
         "primes", "grep",     "rc",    "fpstress", "srvtest",
+        "drawtest",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
-        zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc);
+        zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc, libdraw);
         user_step.dependOn(&b.addInstallFile(zbins[i], b.fmt("user/bin/{s}", .{name})).step);
         if (zigrc and std.mem.eql(u8, name, "rc")) zigrc_bin = zbins[i];
     }
-    // retest's and fltest's other halves, built in the guest against
-    // stock libregexp and libc, and the table retest reads (see
-    // tools/retest.c and tools/fltest.c), and rc's scripts
-    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "rccases" };
+    // retest's, fltest's and drawtest's other halves, built in the guest against
+    // stock libregexp, libc and libdraw, and the table retest reads
+    // (see tools/retest.c, tools/fltest.c and tools/drawtest.c), and
+    // rc's scripts
+    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "rccases" };
     for (zdata) |name|
         user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
     // grep's pattern compiler and DFA, which take only the runes from
@@ -453,10 +469,13 @@ pub fn build(b: *std.Build) void {
 /// Build a user program on the library (src/user/lib): the library's
 /// root.zig is the root file and the program's file is the module
 /// "program".
-fn addLibcProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize, libc: *std.Build.Module) std.Build.LazyPath {
+fn addLibcProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize, libc: *std.Build.Module, libdraw: *std.Build.Module) std.Build.LazyPath {
     const program = b.createModule(.{
         .root_source_file = b.path(root),
-        .imports = &.{.{ .name = "libc", .module = libc }},
+        .imports = &.{
+            .{ .name = "libc", .module = libc },
+            .{ .name = "draw", .module = libdraw },
+        },
     });
     return addUserProgramRoot(b, name, "src/user/lib/root.zig", optimize, &.{
         .{ .name = "libc", .module = libc },

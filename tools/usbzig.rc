@@ -631,6 +631,21 @@ fn checks {
 	}
 	rm -f /tmp/zig.cc
 
+	# libdraw: the Zig port against the stock library, which
+	# drawtest.c is built with here (see tools/drawtest.c); both draw
+	# off the screen through /dev/draw
+	if(@{cd $z && 6c -FTVw drawtest.c && 6l -o drawtest.stock drawtest.6} >/tmp/zig.cc >[2=1]){
+		$Z^drawtest $z >/tmp/zig.a >[2=1]
+		$z/drawtest.stock $z >/tmp/zig.b >[2=1]
+		t draw
+	}
+	if not {
+		echo DIFF draw: drawtest.c did not build
+		cat /tmp/zig.cc
+		nbad=($nbad draw)
+	}
+	rm -f /tmp/zig.cc
+
 	mks $z/rc >/tmp/zig.a >[2=1]
 	mks >/tmp/zig.b >[2=1]
 	t mk
