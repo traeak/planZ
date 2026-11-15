@@ -27,7 +27,8 @@
 //!   - PgUp and PgDn do the same with Shift held (Linux's keys).
 //!   - Holding is drawn by the caller, which also sends the interrupt
 //!     that key() asks for.
-//!   - Kscrolloneup/down move one line (rio: mousescrollsize).
+//!   - Kscrolloneup/down move one line (rio: mousescrollsize);
+//!     scroll() is for the caller's mouse wheel.
 //!   - holding is a bool: holdon and Esc hold, holdoff and Esc or
 //!     Delete let go, where rio counts holdons.  What was typed in raw
 //!     mode is typed again when it ends, a Delete among it with no
@@ -308,6 +309,16 @@ pub const Text = struct {
         return t.q0 - q;
     }
 
+    /// Move the screen n lines (one at least) down the text, or up;
+    /// not past the bottom, where the last line is the screen's last.
+    pub fn scroll(t: *Text, down: bool, n: usize) void {
+        if (down) {
+            const b = t.bottom();
+            if (t.org < b)
+                t.org = @min(t.linesFrom(t.org, @max(n, 1)), b);
+        } else t.org = t.linesBack(t.org, @max(n, 1));
+    }
+
     /// A typed key (wkeyctl).  shift: Shift is held.
     pub fn key(t: *Text, r: Rune, shift: bool) std.mem.Allocator.Error!Action {
         switch (r) {
@@ -323,9 +334,7 @@ pub const Text = struct {
                     Kscrollonedown => 1,
                     else => 2 * t.lay.maxlines / 3,
                 };
-                const b = t.bottom();
-                if (t.org < b)
-                    t.org = @min(t.linesFrom(t.org, @max(n, 1)), b);
+                t.scroll(true, n);
                 return .none;
             },
             Kup, Kscrolloneup, Kpgup => {
@@ -334,7 +343,7 @@ pub const Text = struct {
                     Kscrolloneup => 1,
                     else => 2 * t.lay.maxlines / 3,
                 };
-                t.org = t.linesBack(t.org, @max(n, 1));
+                t.scroll(false, n);
                 return .none;
             },
             Kleft => {
@@ -931,6 +940,24 @@ test "history is cut when it passes HiWater" {
     try put(&t, "yy");
     try std.testing.expectEqual(HiWater + 1 - (HiWater - LoWater), t.r.items.len);
     try std.testing.expectEqual(t.r.items.len, t.qh);
+}
+
+test "the wheel's scroll stops at the top and at the bottom" {
+    var t = testText();
+    defer t.deinit();
+    for (0..20) |_| try put(&t, "l\n");
+    const b = t.bottom();
+    try std.testing.expectEqual(b, t.org);
+    t.scroll(true, 3); // at the bottom already
+    try std.testing.expectEqual(b, t.org);
+    t.scroll(false, 3);
+    try std.testing.expectEqual(b - 6, t.org);
+    t.scroll(true, 0); // one line at least
+    try std.testing.expectEqual(b - 4, t.org);
+    t.scroll(true, 3);
+    try std.testing.expectEqual(b, t.org);
+    t.scroll(false, 100);
+    try std.testing.expectEqual(0, t.org);
 }
 
 test "the mouse points between characters, at a line's end, at the text's end" {

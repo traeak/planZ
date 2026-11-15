@@ -24,7 +24,9 @@
 #     line marks it (the picture changes) and it is in /dev/snarf; a
 #     double click on the second line takes its word; button 2 types
 #     it after what was typed; the pointer shows when the mouse
-#     moves and goes when a key is typed; /dev/snarf can be written.
+#     moves and goes when a key is typed; /dev/snarf can be written;
+#   - the wheel: with more than a screen of text on console 3, a notch
+#     up changes the picture and a notch down brings it back.
 # The mouse positions are for a screen of 1280x800 and the 8x16 font.
 # Each console's text is read from /dev/vt/N/text on console 1.
 #
@@ -127,6 +129,14 @@ word="$word && $qmp shot $shots/noptr.ppm && $qmp abs 20000 20000 && sleep 1 && 
 word="$word && $qmp type x , key backspace && sleep 1 && $qmp shot $shots/noptr2.ppm"
 word="$word && cmp -s $shots/noptr.ppm $shots/noptr2.ppm && ! cmp -s $shots/noptr.ppm $shots/ptr.ppm"
 word="$word && echo vt test: the pointer shows when the mouse moves and goes when a key is typed && $qmp key ctrl alt 1"
+# The wheel, console 3 holding more than a screen: the mouse moved to a
+# new place (so the pointer is in every picture), a notch up, a notch
+# down.
+wheel="$qmp key ctrl alt 3 , type 'seq 1 150\\n' && sleep 2 && $qmp abs 21000 21000 && sleep 1 && $qmp shot $shots/bottom.ppm"
+wheel="$wheel && $qmp btn wheel-up click && sleep 1 && $qmp shot $shots/up.ppm"
+wheel="$wheel && $qmp btn wheel-down click && sleep 1 && $qmp shot $shots/down.ppm"
+wheel="$wheel && $pix diff $shots/bottom.ppm $shots/up.ppm 200 && cmp -s $shots/bottom.ppm $shots/down.ppm"
+wheel="$wheel && echo vt test: the wheel scrolls back and forth && $qmp key ctrl alt 1"
 
 sh "$here/bootchat.sh" "$timeout" \
 	"bootargs is" "" \
@@ -158,5 +168,7 @@ sh "$here/bootchat.sh" "$timeout" \
 	"cpuechothreethree" "@host $word" \
 	"" "~ \`{cat /dev/snarf} three^three && grep -s got^three^three /dev/vt/3/text && echo paste^ok" \
 	"pasteok" "echo -n snarf^written >/dev/snarf; cat /dev/snarf; echo" \
-	"snarfwritten" \
+	"snarfwritten" "@host $wheel" \
+	"" "grep -s '^150\$' /dev/vt/3/text && echo wheel^ok" \
+	"wheelok" \
 	-- "$@" $tablet -qmp "unix:$tmp/qmp,server=on,wait=off"

@@ -18,8 +18,8 @@
 //! white space), a triple click a line, and letting go copies what is
 //! marked; button 2 puts the copy where typing goes.  The copy is one
 //! for all the consoles and is the file snarf, so rio on a console
-//! shares it.  The pointer shows once the mouse moves and goes when a
-//! key is typed.
+//! shares it.  The wheel scrolls the text, three lines a notch.  The
+//! pointer shows once the mouse moves and goes when a key is typed.
 //!
 //! -t: what is written to console 1 is written to file too: the serial
 //! line, as riostart's console window has it.
@@ -242,6 +242,8 @@ fn showpointer(on: bool) void {
     setcursor();
 }
 
+const WheelLines = 3; // a notch of the wheel, as in an X11 terminal
+
 /// A mouse event on console c, which no program has taken.
 fn textmouse(c: *Console, m: input.Mouse) void {
     showpointer(true);
@@ -249,6 +251,15 @@ fn textmouse(c: *Console, m: input.Mouse) void {
     prevb = m.buttons;
     const t = &c.t;
     const h: i32 = font.height;
+    // the wheel: each notch is an event with button 4 or 5 set (rio
+    // scrolls on every such event too); the marked text stays marked,
+    // and a drag goes on over what comes into view
+    if (m.buttons & (8 | 16) != 0) {
+        const org = t.org;
+        t.scroll(m.buttons & 16 != 0, WheelLines);
+        if (t.org != org)
+            c.dirty = true;
+    }
     const row: usize = @intCast(std.math.clamp(@divFloor(m.y - textr.min.y, h), 0, @as(i32, @intCast(t.lay.maxlines)) - 1));
     const q = t.charAt(row, m.x - textr.min.x);
     const s = [2]usize{ t.s0, t.s1 };
