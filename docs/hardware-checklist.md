@@ -1,11 +1,33 @@
 # Checking planZ on the test machine
 
-What to do once the stick has booted to rio on the Ryzen 5 3600 /
-B550i machine. Type everything in a rio shell window. The up and down
-arrow keys scroll a window. Background and failure tables are in
-`real-hardware.md`.
+What to do once the stick has booted on the Ryzen 5 3600 / B550i
+machine. It now boots to `vtfs`'s consoles, not rio: a white screen
+with a `cpu% ` prompt. Section 0 checks the consoles and starts rio;
+the rest can be typed on a console or in a rio shell window. PgUp and
+PgDn scroll a console, the up and down arrow keys a rio window.
+Background and failure tables are in `real-hardware.md`.
+
+## 0. The consoles (new: never run on this machine)
+
+- [ ] The white screen with `cpu% ` appears, with no pointer on it.
+- [ ] Typing works: `echo hello`.
+- [ ] Ctl-Alt-2 shows an empty console with its own prompt; what is
+      typed there stays there. Ctl-Alt-1 shows the first again, as it
+      was.
+- [ ] Ctl-Alt-Right and Ctl-Alt-Left step through the four, wrapping
+      round.
+- [ ] Console 4 shows the kernel's messages: `echo hello >'#c/cons'`
+      typed on console 1 appears there.
+- [ ] Delete interrupts `sleep 100`. PgUp and PgDn scroll after
+      `cat /dev/kmesg`.
+- [ ] `rio -i riostart` on console 2: the grey screen, the windows and
+      the pointer appear. Ctl-Alt-1 still shows console 1, with no
+      pointer; Ctl-Alt-2 shows rio again.
+- [ ] *Exit* from rio's menu: console 2 is text again.
 
 ## 1. Keyboard and mouse
+
+In rio (`rio -i riostart` on a console):
 
 - [ ] Typing in the window works. (Already seen on the first boot.)
 - [ ] The pointer follows the mouse.

@@ -381,7 +381,7 @@ pub fn build(b: *std.Build) void {
             utest.addArgs(qemu_args);
             utest.addArgs(&.{ "-display", "none" });
             utest.step.dependOn(&usb_check.step);
-            b.step("test-usb", "Boot the USB image in QEMU from a USB disk into rio and use it").dependOn(&utest.step);
+            b.step("test-usb", "Boot the USB image in QEMU from a USB disk to vtfs's consoles and use it").dependOn(&utest.step);
         }
     }
 

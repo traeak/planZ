@@ -20,7 +20,8 @@ cache.
   framebuffer with a USB or PS/2 keyboard and mouse. Sound plays
   through an emulated Intel HD Audio controller.
 - **Real hardware:** a USB stick image has booted to `rio`, with
-  working typing, on one machine (Ryzen 5 3600, B550 board). Checking
+  working typing, on one machine (Ryzen 5 3600, B550 board); the stick
+  now boots to `vtfs`'s consoles, not yet tried there. Checking
   the rest of that machine is in progress; see
   [docs/hardware-checklist.md](docs/hardware-checklist.md).
 - **Not yet:** a Zig userland beyond a small libc and eighteen commands, sound
@@ -62,7 +63,7 @@ With the reference files (`D="-Dref=ref -Ddisk=ref/disk/9front-11952.amd64.qcow2
 | `zig build test-disk $D` | Boots from the 9front disk image and uses the file system |
 | `zig build test-net $D` | DHCP, HTTP and TLS |
 | `zig build test-rio $D` | `rio` with keyboard and mouse, checked by screenshot |
-| `zig build test-usb $D` | The USB stick image booted from a USB disk |
+| `zig build test-usb $D` | The USB stick image booted from a USB disk to `vtfs`, and `rio` on a console |
 | `zig build test-usbnet $D` | The network through a USB Ethernet adapter |
 | `zig build test-zuser $D` | planZ's Zig programs beside the stock ones, compared byte for byte |
 | `zig build test-audio $D` | A tone played through the HD Audio driver, recorded by QEMU and checked |
@@ -84,7 +85,8 @@ themselves.
 
 `zig build usb-image $D` writes `zig-out/planz-usb.img`. Copy it to a
 USB stick with `dd`. The stick has a FAT boot partition and a copy of
-the 9front root, and it boots to `rio` with no other disk.
+the 9front root, and it boots with no other disk to `vtfs`'s consoles;
+`rio -i riostart` at a shell starts rio on one.
 [docs/real-hardware.md](docs/real-hardware.md) covers firmware
 settings, what the screen should show, and how to collect diagnostics.
 

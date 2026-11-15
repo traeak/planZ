@@ -1,6 +1,6 @@
 # Booting on a real machine
 
-For M9: boot planZ on a PC from a USB stick, with no other disk needed, to stock 9front's `rio`.
+For M9: boot planZ on a PC from a USB stick, with no other disk needed, to stock 9front: its shells on `vtfs`'s consoles, and `rio` from there.
 Written for the test machine (Ryzen 5 3600, B550 mini-ITX, discrete Radeon, no serial port, USB keyboard and mouse).
 So far the stick has only been booted in QEMU; see "Not yet tried on hardware" at the end.
 
@@ -60,9 +60,12 @@ Nothing needs to be typed. In QEMU the whole boot takes about 25 seconds, most o
 1. **Loader**, a few lines of firmware text: `planz loader`, `kernel … bytes at …`, `framebuffer WxH …`, `acpi rsdp …, 4 boot files`, `starting the kernel`.
 2. **Kernel**, text in a framed "Plan 9 Console": `Plan 9`, memory lines, `init: …` lines naming each stage as it starts, one `cpuN:` line per processor, a `usbxhci:` line per USB controller, `i8042: no controller` if there is no PS/2, and `selftest` lines ending in `selftest ok`.
 3. **bootrc**: `usbroot: hjfs on /dev/sdUxxxxx/fs`, then `hjfs: fs is /dev/sdUxxxxx/fs`, then `init: starting /bin/rc`.
-4. **rio**: a grey screen with a small `stats` window at the top left and a shell window with a `term%` prompt.
+4. **vtfs**: a white screen with a `cpu% ` prompt at the top left and no pointer. This is console 1 of four. Ctl-Alt-Right and Ctl-Alt-Left step through them, and Ctl-Alt-1 to Ctl-Alt-4 go to one: 1 to 3 are shells, 4 shows the kernel's messages. PgUp and PgDn scroll.
+5. **rio**, when wanted: type `rio -i riostart` at a console's shell. That console becomes a grey screen with a small `stats` window at the top left and a shell window with a `cpu% ` prompt (`term% ` when booted with `session=rio`), and the pointer appears; the other consoles stay as they were, and the switch keys still work. *Exit* in rio's menu (right button on the grey) gives the console its text back.
 
-**Click in the shell window before typing.** Either of the two windows can end up as the current one; typing into `stats` does nothing (and `q` closes it).
+**In rio, click in the shell window before typing.** Either of the two windows can end up as the current one; typing into `stats` does nothing (and `q` closes it).
+
+To boot straight into rio as the stick did before, add a line `session=rio` to `plan9.ini` on the stick's FAT partition.
 
 To shut down, type `fshalt`, wait for "It's now safe to turn off your computer", and power off. hjfs can lose recent changes if the power just goes; write the image again to start clean.
 
@@ -79,7 +82,10 @@ Photograph the whole screen at the point where it stops; the last few lines say 
 | `panic: …` | Kernel bug | Photograph everything from `panic` down |
 | After 20 seconds: `usbroot: no USB disk with an fs partition`, a list of disks and `bootargs is (tcp, tls, il, local!device)[…]` | The kernel or `nusb/disk` did not find the stick | If the keyboard works, see below; photograph the list |
 | `bootargs is …` and the keyboard does nothing | USB keyboard not working | Another port or keyboard; nothing can be typed, so photograph |
-| rio appears but the pointer or keys do nothing | USB HID problem | Try the other device first; a working keyboard alone is enough to collect information if the shell window is current |
+| The white screen and prompt appear but keys do nothing | USB keyboard not working | Another port or keyboard; nothing can be typed, so photograph |
+| Still the kernel's framed console after `init: starting /bin/rc` | `vtfs` did not start (not seen so far, so what follows is not known) | Photograph; if a prompt appears, try typing there. `session=rio` in `plan9.ini` boots as before |
+| Ctl-Alt-Right does nothing | The keys did not reach `vtfs` | Try Ctl-Alt-2; note which keyboard. `cat /dev/vt/1/wctl` says `current` for the console shown |
+| rio appears but the pointer does nothing | USB HID problem | The keyboard alone is enough to collect information on a console: Ctl-Alt-2 |
 
 ### Reading the early stages
 
@@ -137,9 +143,9 @@ cat /dev/kmesg | sed 30q
 
 `cat /dev/usb/ctl` lists every USB device the kernel found, with class (`storage`, `hid`, `hub`), speed and the five-digit name. Leave the shell with `exit`; to boot by hand answer `local!/dev/sdUxxxxx/fs`.
 
-### Collecting information from rio
+### Collecting information from a shell
 
-In the shell window:
+On a console, or in rio's shell window:
 
 ```
 cat /dev/kmesg
@@ -147,7 +153,7 @@ cat /dev/usb/ctl
 cat /dev/sysstat
 ```
 
-`/dev/kmesg` is everything the kernel printed. The up and down arrow keys scroll a rio window. `pci -v` lists every PCI device with its vendor and device numbers and, where 9front knows them, names; the line whose type is `net` is the Ethernet chip a driver is needed for.
+`/dev/kmesg` is everything the kernel printed. PgUp and PgDn scroll a console; the up and down arrow keys scroll a rio window. Console 4 (Ctl-Alt-4) shows the kernel's messages as they come. `pci -v` lists every PCI device with its vendor and device numbers and, where 9front knows them, names; the line whose type is `net` is the Ethernet chip a driver is needed for.
 
 To take the text to another machine, save it on the stick's FAT partition, which Linux can mount:
 
@@ -171,8 +177,8 @@ The adapter at hand is the Realtek RTL8153 (`0bda:8153`) built into the USB hub 
 
 If you attach that hub to the test machine:
 
-1. Plug it into a blue (USB 3) port on the back of the board before power-on. Plugging it in once rio is up is the second thing to try, not the first: in QEMU the kernel then finds the adapter, loses it when it is unplugged and finds it again, but with two `nusbrc` listeners running by then, QEMU's adapter (a communications-class device) is taken by `nusb/serial` before `nusb/ether` gets it. The RTL8153 should not be offered to `nusb/serial`; that has not been tried.
-2. Boot to rio, click in the shell window and look:
+1. Plug it into a blue (USB 3) port on the back of the board before power-on. Plugging it in once the system is up is the second thing to try, not the first: in QEMU the kernel then finds the adapter, loses it when it is unplugged and finds it again, but with two `nusbrc` listeners running by then, QEMU's adapter (a communications-class device) is taken by `nusb/serial` before `nusb/ether` gets it. The RTL8153 should not be offered to `nusb/serial`; that has not been tried.
+2. Boot, and at a shell look:
 
    ```
    cat /dev/usb/ctl
@@ -224,9 +230,9 @@ To see why `nusb/ether` fails, start it by hand with the adapter's `N` from `/de
 nusb/ether -d N
 ```
 
-To see `nusb/usbd` attach the hub and the adapter step by step, add `usbdebug=-d` to `plan9.ini` on the stick; it prints a line per port event on the console at boot, so they are in the photograph or, if rio comes up, in what scrolls past before it.
+To see `nusb/usbd` attach the hub and the adapter step by step, add `usbdebug=-d` to `plan9.ini` on the stick; it prints a line per port event on the console at boot, so they are in the photograph, taken before the consoles replace that screen.
 
-Send back, saved as under "Collecting information from rio": `cat /dev/usb/ctl`, `cat /dev/kmesg`, `ls -l /net`, `cat /net/ndb`, `cat /net/etherU*/stats`, what `ip/ipconfig` and `nusb/ether -d N` printed, and from Linux on the development machine `lsusb -t` and `lsusb -v -d 0bda:8153` with the hub attached there (the configurations and endpoint sizes the chip really offers).
+Send back, saved as under "Collecting information from a shell": `cat /dev/usb/ctl`, `cat /dev/kmesg`, `ls -l /net`, `cat /net/ndb`, `cat /net/etherU*/stats`, what `ip/ipconfig` and `nusb/ether -d N` printed, and from Linux on the development machine `lsusb -t` and `lsusb -v -d 0bda:8153` with the hub attached there (the configurations and endpoint sizes the chip really offers).
 
 Things to know:
 
@@ -238,7 +244,7 @@ Things to know:
 
 `port/ether8125.zig` drives the board's Realtek RTL8125B. It has never run on the chip, so expect to send information back. With no other network card it is `ether0`.
 
-At boot, look for `#l0: rtl8125: 1000Mbps port 0xFCC10000 irq 255 ea …` (the speed reads 100 if the link is down at that moment; `irq 255` is normal). Then, in the shell window:
+At boot, look for `#l0: rtl8125: 1000Mbps port 0xFCC10000 irq 255 ea …` (the speed reads 100 if the link is down at that moment; `irq 255` is normal). Then, at a shell:
 
 ```
 ip/ipconfig
@@ -273,7 +279,7 @@ bootrc starts `kbdfs` and then `nusbrc` (which starts `nusb/kb`) before it asks 
 
 ## The test
 
-`zig build test-usb -Dref=ref -Ddisk=…` builds the image and boots it in QEMU (`tools/usbtest.sh`) with OVMF, `-machine q35,i8042=off`, an xHCI controller, the image as a USB mass-storage device and the only disk, a USB keyboard and a USB tablet. It waits for rio, clicks in the shell window, types commands on the USB keyboard, writes a file on the root and reads the pointer position.
+`zig build test-usb -Dref=ref -Ddisk=…` builds the image and boots it in QEMU (`tools/usbtest.sh`) with OVMF, `-machine q35,i8042=off`, an xHCI controller, the image as a USB mass-storage device and the only disk, a USB keyboard and a USB tablet. It waits for `vtfs` (Ctl-Alt-2 shows an empty console), goes back to console 1, types commands on the USB keyboard, writes a file on the root, reads the pointer position, runs the Zig programs' check, and last starts `rio -i window` on the console and types a command in its window.
 
 The image tested is the one for the stick, `plan9.ini` included. The test reads results from the serial line, which the real machine does not have: the kernel copies its console there, and the typed commands write to `/dev/eia0`. Nothing is sent over the serial line.
 
