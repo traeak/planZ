@@ -9,7 +9,8 @@ Background and failure tables are in `real-hardware.md`.
 
 ## 0. The consoles (new: never run on this machine)
 
-- [ ] The white screen with `cpu% ` appears, with no pointer on it.
+- [ ] The white screen with `cpu% ` appears, with no pointer on it
+      until the mouse is moved; typing a key hides it again.
 - [ ] Typing works: `echo hello`.
 - [ ] Ctl-Alt-2 shows an empty console with its own prompt; what is
       typed there stays there. Ctl-Alt-1 shows the first again, as it
@@ -20,9 +21,16 @@ Background and failure tables are in `real-hardware.md`.
       typed on console 1 appears there.
 - [ ] Delete interrupts `sleep 100`. PgUp and PgDn scroll after
       `cat /dev/kmesg`.
+- [ ] Dragging with the left button over some text marks it (white on
+      black); `cat /dev/snarf` prints it. A double click marks a word,
+      a triple click a line.
+- [ ] The middle button (the wheel pressed) types the copied text at
+      the prompt, also on another console.
 - [ ] `rio -i riostart` on console 2: the grey screen, the windows and
-      the pointer appear. Ctl-Alt-1 still shows console 1, with no
-      pointer; Ctl-Alt-2 shows rio again.
+      the pointer appear. Ctl-Alt-1 still shows console 1; Ctl-Alt-2
+      shows rio again.
+- [ ] Not tried in QEMU: text copied on a console pastes in a rio
+      window (rio's button 2 menu, *paste*), and the other way round.
 - [ ] *Exit* from rio's menu: console 2 is text again.
 
 ## 1. Keyboard and mouse

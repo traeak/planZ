@@ -19,7 +19,13 @@
 #     to rio's; what is typed on console 1 meanwhile does not reach
 #     rio, whose picture is the same afterwards; rio holds the
 #     console's kbd open (a second open is refused);
-#   - rio killed, console 2 shows its text again and its shell goes on.
+#   - rio killed, console 2 shows its text again and its shell goes on;
+#   - the mouse on console 3's text: button 1 dragged along the first
+#     line marks it (the picture changes) and it is in /dev/snarf; a
+#     double click on the second line takes its word; button 2 types
+#     it after what was typed; the pointer shows when the mouse
+#     moves and goes when a key is typed; /dev/snarf can be written.
+# The mouse positions are for a screen of 1280x800 and the 8x16 font.
 # Each console's text is read from /dev/vt/N/text on console 1.
 #
 # usage: vttest.sh timeout-seconds qemu-command...
@@ -107,6 +113,20 @@ visit="$visit && echo vt test: rio looks the same after console 1 && $qmp key ct
 # rio gone: console 2 is text again (mostly white), and its shell runs
 gone="sleep 3; $qmp key ctrl alt 2 && sleep 2 && $qmp shot $shots/text2.ppm && $pix frac $shots/text2.ppm ffffff 80 100"
 gone="$gone && $qmp type 'echo text^back\\n' && sleep 1 && $qmp key ctrl alt 1"
+# console 3 holds "cpu% echo three^three", "threethree" and a prompt.
+# Drag along the first line, from its start to far right of its end.
+drag="$qmp key ctrl alt 3 && sleep 1 && $qmp abs 153 492 && sleep 1 && $qmp shot $shots/unmarked.ppm"
+drag="$drag && $qmp btn left down , abs 20000 492 , abs 30743 492 && sleep 1 && $qmp shot $shots/marked.ppm"
+drag="$drag && $qmp btn left up && $pix diff $shots/unmarked.ppm $shots/marked.ppm 1500 && $qmp key ctrl alt 1"
+# A double click on the second line's word; then type, and button 2.
+word="$qmp key ctrl alt 3 && sleep 1 && $qmp abs 615 1148 , btn left click , btn left click && sleep 1"
+word="$word && $qmp type 'echo got^' , btn middle click , type '\\n' && sleep 1"
+# The pointer: none after a key, there once the mouse moves, gone
+# again with the next key (an x and its erasure: the same text).
+word="$word && $qmp shot $shots/noptr.ppm && $qmp abs 20000 20000 && sleep 1 && $qmp shot $shots/ptr.ppm"
+word="$word && $qmp type x , key backspace && sleep 1 && $qmp shot $shots/noptr2.ppm"
+word="$word && cmp -s $shots/noptr.ppm $shots/noptr2.ppm && ! cmp -s $shots/noptr.ppm $shots/ptr.ppm"
+word="$word && echo vt test: the pointer shows when the mouse moves and goes when a key is typed && $qmp key ctrl alt 1"
 
 sh "$here/bootchat.sh" "$timeout" \
 	"bootargs is" "" \
@@ -133,5 +153,10 @@ sh "$here/bootchat.sh" "$timeout" \
 	"kbdheld" "kill rio | rc; echo rio^killed" \
 	"riokilled" "@host $gone" \
 	"" "grep -s textback /dev/vt/2/text && echo text^ok" \
-	"textok" \
+	"textok" "@host $drag" \
+	"" "cat /dev/snarf | tr -d ' %^'; echo" \
+	"cpuechothreethree" "@host $word" \
+	"" "~ \`{cat /dev/snarf} three^three && grep -s got^three^three /dev/vt/3/text && echo paste^ok" \
+	"pasteok" "echo -n snarf^written >/dev/snarf; cat /dev/snarf; echo" \
+	"snarfwritten" \
 	-- "$@" $tablet -qmp "unix:$tmp/qmp,server=on,wait=off"

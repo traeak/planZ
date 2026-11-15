@@ -13,6 +13,14 @@
 //! scroll back and forth.  The font is $font, or
 //! /lib/font/bit/vga/unicode.font.
 //!
+//! The mouse on a console of text, as in an X11 terminal: button 1
+//! held and moved marks text, a double click a word (what is not
+//! white space), a triple click a line, and letting go copies what is
+//! marked; button 2 puts the copy where typing goes.  The copy is one
+//! for all the consoles and is the file snarf, so rio on a console
+//! shares it.  The pointer shows once the mouse moves and goes when a
+//! key is typed.
+//!
 //! -t: what is written to console 1 is written to file too: the serial
 //! line, as riostart's console window has it.
 //! -d: say on standard error what happens: each event, each mount.
@@ -35,6 +43,8 @@
 //!    kbd       read: kbdfs's messages, while the console is the
 //!              current one; while it is open, keys are not typed
 //!              into cons
+//!    snarf     the text last copied, as rio's: read, or written to
+//!              replace it when the file is closed
 //!    vt/       a directory of the consoles, 1 to 4, each with the
 //!              files above
 //!
@@ -165,18 +175,23 @@ fn paint(c: *Console) void {
             const ch = r[q];
             if (ch == '\n')
                 break;
+            // marked text: the colours the other way round
+            const marked = q >= t.s0 and q < t.s1;
+            const fg = if (marked) back else col;
+            const bg = if (marked) col else back;
             if (ch == '\t') {
                 const w = t.lay.runewidth(ch, x - textr.min.x);
-                D.draw(img, D.Rect(x, y, x + w, y + h), back, null, D.ZP);
+                D.draw(img, D.Rect(x, y, x + w, y + h), bg, null, D.ZP);
                 x += w;
                 q += 1;
                 continue;
             }
-            // a run with no tab or newline, as far as the cursor
+            // a run with no tab or newline, as far as the cursor or
+            // an end of the marked text
             var s = q + 1;
-            while (s < e and r[s] != '\t' and r[s] != '\n' and s != t.q0)
+            while (s < e and r[s] != '\t' and r[s] != '\n' and s != t.q0 and s != t.s0 and s != t.s1)
                 s += 1;
-            const pt = D.runestringnbg(img, D.Pt(x, y), col, D.ZP, font, r[q..s], @intCast(s - q), back, D.ZP);
+            const pt = D.runestringnbg(img, D.Pt(x, y), fg, D.ZP, font, r[q..s], @intCast(s - q), bg, D.ZP);
             x = pt.x;
             q = s;
         }
@@ -206,10 +221,78 @@ fn paint(c: *Console) void {
     c.dirty = false;
 }
 
+// ---- the mouse on a console of text
+
+var snarf: std.ArrayList(u8) = .empty; // the text last copied
+var tsnarf: std.ArrayList(u8) = .empty; // being written to the file snarf
+const MaxSnarf = 100 * 1024; // rio's
+
+var pointer = false; // shown: the mouse moved since a key was typed
+var prevb: i32 = 0; // the buttons at the last event
+var dragging = false;
+var anchor: [2]usize = .{ 0, 0 }; // what the click that began the drag took
+var nclick: u32 = 0;
+var clickmsec: u32 = 0;
+var clickpt: D.Point = .{ .x = 0, .y = 0 };
+
+fn showpointer(on: bool) void {
+    if (pointer == on)
+        return;
+    pointer = on;
+    setcursor();
+}
+
+/// A mouse event on console c, which no program has taken.
+fn textmouse(c: *Console, m: input.Mouse) void {
+    showpointer(true);
+    const was = prevb;
+    prevb = m.buttons;
+    const t = &c.t;
+    const h: i32 = font.height;
+    const row: usize = @intCast(std.math.clamp(@divFloor(m.y - textr.min.y, h), 0, @as(i32, @intCast(t.lay.maxlines)) - 1));
+    const q = t.charAt(row, m.x - textr.min.x);
+    const s = [2]usize{ t.s0, t.s1 };
+    if (m.buttons & 1 != 0 and was & 1 == 0) {
+        // a click: the first of one, two or three
+        const near = @abs(m.x - clickpt.x) < 4 and @abs(m.y - clickpt.y) < 4;
+        nclick = if (near and m.msec -% clickmsec < 500 and nclick < 3) nclick + 1 else 1;
+        clickmsec = m.msec;
+        clickpt = D.Pt(m.x, m.y);
+        anchor = switch (nclick) {
+            2 => t.wordAt(q),
+            3 => t.lineAt(q),
+            else => .{ q, q },
+        };
+        t.select(anchor[0], anchor[1]);
+        dragging = true;
+    } else if (m.buttons & 1 != 0 and dragging) {
+        t.select(@min(anchor[0], q), @max(anchor[1], q));
+    } else if (m.buttons & 1 == 0 and dragging) {
+        dragging = false;
+        if (t.s0 < t.s1) {
+            if (t.selection(a)) |b| {
+                snarf.deinit(a);
+                snarf = .fromOwnedSlice(b);
+            } else |_| {}
+        }
+    }
+    if (t.s0 != s[0] or t.s1 != s[1])
+        c.dirty = true;
+    if (m.buttons & 2 != 0 and was & 2 == 0 and c != &con[KCON]) {
+        var p: text.Partial = .{};
+        const rs = p.runes(a, snarf.items) catch return;
+        defer a.free(rs);
+        t.paste(rs) catch {};
+        c.dirty = true;
+    }
+}
+
 /// Show console n.
 fn switchto(n: usize) void {
     if (n == cur)
         return;
+    dragging = false;
+    prevb = 0;
     // the program on the old one sees its keys and buttons go up
     const o = &con[cur];
     if (o.kbdopen)
@@ -224,8 +307,8 @@ fn switchto(n: usize) void {
 }
 
 /// The current console's cursor: what its program wrote to cursor, or
-/// the kernel's arrow if it only reads the mouse; none on a console
-/// of text.
+/// the kernel's arrow if it only reads the mouse; on a console of
+/// text the arrow while the pointer is shown, and otherwise none.
 fn setcursor() void {
     if (cursorfd < 0)
         return;
@@ -233,7 +316,7 @@ fn setcursor() void {
     const empty: [CursorSize]u8 = @splat(0);
     if (c.cursor) |*p| {
         _ = libc.write(cursorfd, p) catch {};
-    } else if (c.mouseopen) {
+    } else if (c.mouseopen or pointer) {
         _ = libc.write(cursorfd, empty[0..1]) catch {}; // short: the arrow
     } else {
         _ = libc.write(cursorfd, &empty) catch {};
@@ -242,8 +325,8 @@ fn setcursor() void {
 
 // ---- the file tree
 
-const F = enum(u8) { dir, cons, consctl, label, text, winid, wctl, vt, winname, mouse, cursor, kbd };
-const files = [_]F{ .cons, .consctl, .cursor, .kbd, .label, .mouse, .text, .winid, .winname, .wctl, .vt };
+const F = enum(u8) { dir, cons, consctl, label, text, winid, wctl, vt, winname, mouse, cursor, kbd, snarf };
+const files = [_]F{ .cons, .consctl, .cursor, .kbd, .label, .mouse, .snarf, .text, .winid, .winname, .wctl, .vt };
 
 const Einuse = "file in use";
 const Ebadmouse = "bad format on /dev/mouse";
@@ -359,6 +442,10 @@ const Tree = struct {
                 c.kbdopen = true;
                 c.kq.reset();
             },
+            .snarf => {
+                if (mode & 3 == 1 or mode & 3 == 2)
+                    tsnarf.clearRetainingCapacity();
+            },
             else => {},
         }
         return null;
@@ -387,6 +474,15 @@ const Tree = struct {
             .kbd => {
                 c.kbdopen = false;
                 c.kq.reset();
+            },
+            // odd but as rio: what was written replaces the copy
+            // when the file is closed
+            .snarf => {
+                const m = f.omode.? & 3;
+                if (m == 1 or m == 2) {
+                    std.mem.swap(std.ArrayList(u8), &snarf, &tsnarf);
+                    tsnarf.clearRetainingCapacity();
+                }
             },
             else => {},
         }
@@ -424,6 +520,7 @@ const Tree = struct {
                 return .later;
             },
             .cursor => return .{ .err = "cursor read not implemented" },
+            .snarf => return .{ .data = from(snarf.items, r.offset) },
             .winid => return .{ .data = from(libc.sprint(&t.sbuf, "%11d ", .{qcon(f.qid) + 1}), r.offset) },
             .wctl => {
                 const w = c.win.r;
@@ -464,6 +561,11 @@ const Tree = struct {
                     c.cursor = data[0..CursorSize].*;
                 }
                 if (c == &con[cur]) setcursor();
+            },
+            .snarf => {
+                if (tsnarf.items.len > MaxSnarf)
+                    return .{ .err = "snarf buffer too long" };
+                tsnarf.appendSlice(a, data) catch return .{ .err = "out of memory" };
             },
             .mouse => {
                 // m x y: move the mouse there
@@ -662,8 +764,8 @@ pub fn main() void {
     D.initdraw(null, fontname, null) catch libc.sysfatal("initdraw: %r", .{});
     const d = D.display.?;
     font = D.font.?;
-    // The mouse is no use on a console of text: while vtfs holds
-    // /dev/cursor open with an empty cursor, the kernel draws none.
+    // While vtfs holds /dev/cursor open with an empty cursor, the
+    // kernel draws none: setcursor() says when there is one.
     // Without a mouse the consoles still work.
     cursorfd = libc.open("/dev/cursor", libc.OWRITE | libc.OCEXEC) catch -1;
     mousefd = libc.open("/dev/mouse", libc.ORDWR | libc.OCEXEC) catch -1;
@@ -751,6 +853,7 @@ pub fn main() void {
                             const c = &con[cur];
                             if (c.kbdopen)
                                 continue;
+                            showpointer(false);
                             if (cur == KCON and !isnav(kk.r))
                                 continue;
                             const act = c.t.key(kk.r, kk.shift) catch .none;
@@ -777,7 +880,9 @@ pub fn main() void {
                 // nothing read: the mouse is gone, the consoles go on
                 const m = input.parse(e.data) orelse continue;
                 if (con[cur].mouseopen)
-                    con[cur].mq.put(m);
+                    con[cur].mq.put(m)
+                else
+                    textmouse(&con[cur], m);
             },
             .started => {
                 var f: [2][]u8 = undefined;

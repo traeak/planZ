@@ -1,6 +1,6 @@
 //! A console's text: what was written to it, what is being typed, and
 //! which part of it is on the screen.  The line discipline of rio's
-//! text windows, without the mouse, the selection and the snarf buffer.
+//! text windows, without rio's mouse and its selection (see DIFF).
 //! From /sys/src/cmd/rio/wind.c (9front 11952): winsert, wdelete,
 //! wbswidth, wbacknl, wkeyctl, and winctl's cons write (WCwrite) and
 //! read (WCread); cvttorunes from util.c.
@@ -15,8 +15,14 @@
 //!     the way down; PgDn and Down stop when the end of the text is on
 //!     the last line.  Looking back for the start of a line stops after
 //!     MaxBack runes, as wbacknl calls 128 runes a line.
-//!   - No selection: q1 is q0, so typing cuts and snarfs nothing, and
-//!     ^F and Insert (file name completion) do nothing.
+//!   - No selection of rio's kind: q1 is q0, so typing cuts and snarfs
+//!     nothing, and ^F and Insert (file name completion) do nothing.
+//!     In its place, the selection of an X11 terminal: s0 to s1 is
+//!     text marked with the mouse, shown by the caller and copied by
+//!     it; it is apart from where typing goes, moves with the text
+//!     when text before it comes or goes, and is dropped when the
+//!     marked text itself changes.  charAt, wordAt and lineAt find
+//!     what the mouse points at; paste() is wpaste.
 //!   - Always scrolling (rio's -scroll): a write never waits.
 //!   - PgUp and PgDn do the same with Shift held (Linux's keys).
 //!   - Holding is drawn by the caller, which also sends the interrupt
@@ -98,6 +104,8 @@ pub const Text = struct {
     r: std.ArrayList(Rune) = .empty,
     raw: std.ArrayList(Rune) = .empty, // typed in raw mode, not shown
     q0: usize = 0, // where typing goes
+    s0: usize = 0, // marked with the mouse: s0 to s1
+    s1: usize = 0,
     qh: usize = 0, // the output point: before it, written or read
     org: usize = 0, // the first rune on the screen
     rawing: u32 = 0,
@@ -216,8 +224,24 @@ pub const Text = struct {
             t.q0 -|= m;
             t.r.replaceRangeAssumeCapacity(0, m, &.{});
             q0 -= m;
+            if (t.s0 < m) {
+                t.s0 = 0;
+                t.s1 = 0;
+            } else {
+                t.s0 -= m;
+                t.s1 -= m;
+            }
         }
         try t.r.insertSlice(t.a, q0, rs);
+        if (t.s0 < t.s1) {
+            if (q0 <= t.s0) {
+                t.s0 += n;
+                t.s1 += n;
+            } else if (q0 < t.s1) {
+                t.s0 = 0;
+                t.s1 = 0;
+            }
+        }
         // if output touches, advance selection, not qh; works best for keyboard and output
         if (q0 <= t.q0)
             t.q0 += n;
@@ -234,6 +258,15 @@ pub const Text = struct {
         if (n == 0)
             return;
         t.r.replaceRangeAssumeCapacity(q0, n, &.{});
+        if (t.s0 < t.s1) {
+            if (q1 <= t.s0) {
+                t.s0 -= n;
+                t.s1 -= n;
+            } else if (q0 < t.s1) {
+                t.s0 = 0;
+                t.s1 = 0;
+            }
+        }
         if (q0 < t.q0)
             t.q0 -= @min(n, t.q0 - q0);
         if (q1 < t.qh)
@@ -514,12 +547,95 @@ pub const Text = struct {
 
     /// The whole text as UTF-8, for the text file.
     pub fn bytes(t: *const Text, a: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+        return utf(a, t.r.items);
+    }
+
+    fn utf(a: std.mem.Allocator, rs: []const Rune) std.mem.Allocator.Error![]u8 {
         var n: usize = 0;
-        for (t.r.items) |c| n += libc.runelen(c);
+        for (rs) |c| n += libc.runelen(c);
         const s = try a.alloc(u8, n);
         var i: usize = 0;
-        for (t.r.items) |c| i += libc.runetochar(s[i..], c);
+        for (rs) |c| i += libc.runetochar(s[i..], c);
         return s;
+    }
+
+    // ---- the mouse's selection
+
+    /// The position the mouse points at: on screen line `row` (from
+    /// 0), x pixels from the left edge of the text.  A point in the
+    /// right half of a character is the position after it; past the
+    /// end of a line, the line's end; below the text, the text's end.
+    pub fn charAt(t: *const Text, row: usize, x: i32) usize {
+        var p = t.org;
+        for (0..row) |_|
+            p = t.nextLine(p) orelse return t.nr();
+        const e = t.nextLine(p) orelse t.nr();
+        var xx: i32 = 0;
+        var q = p;
+        while (q < e) : (q += 1) {
+            const c = t.r.items[q];
+            if (c == '\n')
+                return q;
+            const w = t.lay.runewidth(c, xx);
+            if (2 * (x - xx) < w)
+                return q;
+            xx += w;
+        }
+        return q;
+    }
+
+    fn isspace(c: Rune) bool {
+        return c == ' ' or c == '\t' or c == '\n';
+    }
+
+    /// The word at q, for a double click: the run of characters that
+    /// are not white space (a file name, a command's argument).
+    /// Nothing, at white space or the end.
+    pub fn wordAt(t: *const Text, q: usize) [2]usize {
+        const r = t.r.items;
+        if (q >= r.len or isspace(r[q]))
+            return .{ q, q };
+        var a = q;
+        var b = q;
+        while (a > 0 and !isspace(r[a - 1])) a -= 1;
+        while (b < r.len and !isspace(r[b])) b += 1;
+        return .{ a, b };
+    }
+
+    /// The line at q, for a triple click: from after the newline
+    /// before q to the next one, which is left out.
+    pub fn lineAt(t: *const Text, q_: usize) [2]usize {
+        const r = t.r.items;
+        const q = @min(q_, r.len);
+        var a = q;
+        var b = q;
+        while (a > 0 and r[a - 1] != '\n') a -= 1;
+        while (b < r.len and r[b] != '\n') b += 1;
+        return .{ a, b };
+    }
+
+    /// Mark the text from a to b.
+    pub fn select(t: *Text, a: usize, b: usize) void {
+        t.s0 = @min(@min(a, b), t.nr());
+        t.s1 = @min(@max(a, b), t.nr());
+    }
+
+    /// The marked text as UTF-8.
+    pub fn selection(t: *const Text, a: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+        return utf(a, t.r.items[t.s0..t.s1]);
+    }
+
+    /// Put rs where typing goes, as if typed but with no key's
+    /// meaning: a Delete in it interrupts nothing (wpaste).
+    pub fn paste(t: *Text, rs: []const Rune) std.mem.Allocator.Error!void {
+        if (rs.len == 0)
+            return;
+        if (t.rawing > 0 and t.q0 == t.nr()) {
+            try t.raw.appendSlice(t.a, rs);
+            return;
+        }
+        _ = try t.insert(rs, t.q0);
+        t.show(t.q0);
     }
 };
 
@@ -815,4 +931,98 @@ test "history is cut when it passes HiWater" {
     try put(&t, "yy");
     try std.testing.expectEqual(HiWater + 1 - (HiWater - LoWater), t.r.items.len);
     try std.testing.expectEqual(t.r.items.len, t.qh);
+}
+
+test "the mouse points between characters, at a line's end, at the text's end" {
+    var t = testText();
+    defer t.deinit();
+    try put(&t, "abc\ndefghijklmnop\n\tx");
+    // row 0: abc; row 1: defghijklm; row 2: nop; row 3: tab, x
+    try std.testing.expectEqual(0, t.charAt(0, 0));
+    try std.testing.expectEqual(1, t.charAt(0, 1));
+    try std.testing.expectEqual(3, t.charAt(0, 9)); // past the end: the newline
+    try std.testing.expectEqual(4, t.charAt(1, 0));
+    try std.testing.expectEqual(14, t.charAt(1, 50)); // a wrapped line: the next line's start
+    try std.testing.expectEqual(14, t.charAt(2, 0));
+    try std.testing.expectEqual(17, t.charAt(2, 7));
+    try std.testing.expectEqual(18, t.charAt(3, 1)); // in the tab's left half
+    try std.testing.expectEqual(19, t.charAt(3, 3)); // in its right half
+    try std.testing.expectEqual(20, t.charAt(3, 9));
+    try std.testing.expectEqual(20, t.charAt(7, 0)); // below the text
+}
+
+test "a double click takes a word, a triple click a line" {
+    var t = testText();
+    defer t.deinit();
+    try put(&t, "ls /bin/rc x\nnext");
+    try std.testing.expectEqual([2]usize{ 3, 10 }, t.wordAt(5));
+    try std.testing.expectEqual([2]usize{ 0, 2 }, t.wordAt(0));
+    try std.testing.expectEqual([2]usize{ 2, 2 }, t.wordAt(2)); // white space
+    try std.testing.expectEqual([2]usize{ 13, 17 }, t.wordAt(15));
+    try std.testing.expectEqual([2]usize{ 17, 17 }, t.wordAt(17)); // the end
+    try std.testing.expectEqual([2]usize{ 0, 12 }, t.lineAt(5));
+    try std.testing.expectEqual([2]usize{ 13, 17 }, t.lineAt(17));
+    t.select(10, 3);
+    const s = try t.selection(std.testing.allocator);
+    defer std.testing.allocator.free(s);
+    try std.testing.expectEqualStrings("/bin/rc", s);
+}
+
+test "the marked text moves with the text and is dropped when it changes" {
+    var t = testText();
+    defer t.deinit();
+    try put(&t, "one two\n");
+    t.select(4, 7);
+    try put(&t, "more\n"); // after it
+    try std.testing.expectEqual([2]usize{ 4, 7 }, [2]usize{ t.s0, t.s1 });
+    _ = try t.insert(&.{ 'a', 'b' }, 0); // before it
+    try std.testing.expectEqual([2]usize{ 6, 9 }, [2]usize{ t.s0, t.s1 });
+    t.delete(0, 2);
+    try std.testing.expectEqual([2]usize{ 4, 7 }, [2]usize{ t.s0, t.s1 });
+    t.delete(8, 9); // after it
+    try std.testing.expectEqual([2]usize{ 4, 7 }, [2]usize{ t.s0, t.s1 });
+    _ = try t.insert(&.{'x'}, 5); // inside it
+    try std.testing.expectEqual([2]usize{ 0, 0 }, [2]usize{ t.s0, t.s1 });
+    t.select(4, 7);
+    t.delete(6, 9); // overlapping it
+    try std.testing.expectEqual([2]usize{ 0, 0 }, [2]usize{ t.s0, t.s1 });
+}
+
+test "the marked text moves back when the history is cut" {
+    var t = testText();
+    defer t.deinit();
+    const a = std.testing.allocator;
+    const big = try a.alloc(Rune, HiWater - 1);
+    defer a.free(big);
+    @memset(big, 'x');
+    try t.write(big);
+    t.select(HiWater - 10, HiWater - 5);
+    t.org = t.bottom();
+    try put(&t, "yy");
+    const m = HiWater - LoWater;
+    try std.testing.expectEqual([2]usize{ HiWater - 10 - m, HiWater - 5 - m }, [2]usize{ t.s0, t.s1 });
+    // marked text that is cut away is no longer marked
+    try t.write(big[0 .. HiWater - t.r.items.len - 1]);
+    t.select(3, 9);
+    t.org = t.bottom();
+    try put(&t, "zz");
+    try std.testing.expectEqual([2]usize{ 0, 0 }, [2]usize{ t.s0, t.s1 });
+}
+
+test "pasting is typing without the keys' meanings" {
+    var t = testText();
+    defer t.deinit();
+    try put(&t, "% ");
+    try t.paste(&.{ 'l', 's', Kdel, Knack });
+    try std.testing.expectEqual(6, t.q0);
+    try std.testing.expect(!t.readable());
+    try t.paste(&.{'\n'});
+    try std.testing.expect(t.readable());
+    var b: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("ls\x7f\x15\n", b[0..t.read(&b)]);
+    // raw: not shown, read as typed
+    _ = try t.ctl("rawon");
+    try t.paste(&.{ 'a', 'b' });
+    try std.testing.expectEqualStrings("ab", b[0..t.read(&b)]);
+    try std.testing.expectEqual(7, t.r.items.len);
 }
