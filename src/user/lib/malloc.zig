@@ -8,8 +8,7 @@
 //! DIFF:
 //!   - No malloc tags (the C's two extra words per block, Npadlong) and
 //!     no setmalloctag/getmalloctag.
-//!   - The lock is a spin lock that sleeps after spinning a while, as
-//!     libc's lock does, but without its pid checks in plock/punlock.
+//!   - The lock is libc's, without the pid checks of plock/punlock.
 //!   - pprint writes to standard error; MALLOCFD is not looked at.
 //!   - ppanic prints and exits; the C aborts (a fault).
 //!   - The pool's 8-byte alignment is enough for malloc; allocator asks
@@ -44,24 +43,10 @@ pub fn sbrk(n: usize) ?[*]u8 {
     return @ptrFromInt(bl);
 }
 
-const Lock = struct {
-    val: u32 = 0,
-};
-
-fn lock(l: *Lock) void {
-    var i: u32 = 0;
-    while (@atomicRmw(u32, &l.val, .Xchg, 1, .acquire) != 0) {
-        i += 1;
-        if (i < 1000)
-            std.atomic.spinLoopHint()
-        else
-            _ = sys.sleep(0);
-    }
-}
-
-fn unlock(l: *Lock) void {
-    @atomicStore(u32, &l.val, 0, .release);
-}
+const lock_ = @import("lock.zig");
+const Lock = lock_.Lock;
+const lock = lock_.lock;
+const unlock = lock_.unlock;
 
 var sbrklock: Lock = .{};
 

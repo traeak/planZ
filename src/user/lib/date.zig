@@ -9,7 +9,6 @@
 //! DIFF:
 //!   - localtime and gmtime return the Tm, where the C returns a
 //!     pointer to a static one.
-//!   - No lock around the zones (see tm.zig).
 
 const std = @import("std");
 const libc = @import("libc.zig");
@@ -25,13 +24,21 @@ pub const tmfmtarg = tm_.tmfmtarg;
 pub const asctime = tm_.asctime;
 pub const ascraw = tm_.ascraw;
 
+var zlock: libc.QLock = .{};
 var zones: std.ArrayList(*Tzone) = .empty;
 
-fn seterr() void {
-    libc.werrstr("%s", .{tm_.errstr()});
+fn seterr(s: []const u8) void {
+    libc.werrstr("%s", .{s});
+}
+
+/// tm.zig's errors go to the error string as they happen.
+fn hook() void {
+    if (tm_.errhook == null)
+        tm_.errhook = seterr;
 }
 
 fn loadzone(tz: *Tzone, name: []const u8) bool {
+    hook();
     var buf: [tm_.Tzsize * 11 + 30]u8 = undefined;
     var pb: [128]u8 = undefined;
 
@@ -52,7 +59,6 @@ fn loadzone(tz: *Tzone, name: []const u8) bool {
     if (r >= buf.len)
         return false;
     tm_.parsezone(tz, name, buf[0..r]) catch {
-        seterr();
         return false;
     };
     return true;
@@ -63,6 +69,8 @@ fn loadzone(tz: *Tzone, name: []const u8) bool {
 /// read, with the reason in the error string.
 pub fn tzload(name: ?[]const u8) ?*const Tzone {
     const tzname = name orelse "GMT";
+    libc.qlock(&zlock);
+    defer libc.qunlock(&zlock);
     for (zones.items) |tz| {
         if (std.mem.eql(u8, tm_.name(&tz.stname), tzname))
             return tz;
@@ -94,18 +102,14 @@ pub fn tmnow(tm: *Tm, tz: ?*const Tzone) void {
 /// Print tm by format (null: ctime's) into f.  On error.Garbled the
 /// error string says so.
 pub fn tmfmt(f: *libc.fmt.Fmt, tm: *const Tm, format: ?[]const u8) error{Garbled}!void {
-    tm_.tmfmt(f, tm, format) catch |e| {
-        seterr();
-        return e;
-    };
+    hook();
+    return tm_.tmfmt(f, tm, format);
 }
 
 /// Parse str by format into tm; returns how much of str was used.
 pub fn tmparse(tm: *Tm, format: []const u8, str: []const u8, tz: ?*const Tzone) error{ Garbled, BadDate }!usize {
-    return tm_.tmparse(tm, format, str, tz, tzloadname) catch |e| {
-        seterr();
-        return e;
-    };
+    hook();
+    return tm_.tmparse(tm, format, str, tz, tzloadname);
 }
 
 // We have no way to report errors,

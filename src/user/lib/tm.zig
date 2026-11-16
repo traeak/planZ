@@ -14,8 +14,8 @@
 //!     nothing.  Tmfmt has fmt9 for use in a print, where a garbled
 //!     format prints what came before it.
 //!   - Errors are Zig errors; the C's werrstr text is in errstr().
-//!   - No lock around the zones (zlock): a program is one process
-//!     until the library has shared memory.
+//!   - The lock around the zones (zlock) is date.zig's, which keeps
+//!     them.
 //!   - loadzone() is split: parsezone() takes the file's text.
 //!   - A month or week day out of range prints as nothing where the C
 //!     reads past its tables.
@@ -85,7 +85,10 @@ fn setname(a: []u8, s: []const u8) void {
     a[n] = 0;
 }
 
-// The C's werrstr.
+// The C's werrstr: the text goes to errhook if there is one (date.zig
+// gives the process's error string), and is kept for errstr() if not
+// (the host tests; one process).
+pub var errhook: ?*const fn ([]const u8) void = null;
 var errbuf: [192]u8 = undefined;
 var errlen: usize = 0;
 
@@ -94,6 +97,11 @@ pub fn errstr() []const u8 {
 }
 
 fn werrstr(comptime format: []const u8, args: anytype) void {
+    if (errhook) |h| {
+        var buf: [192]u8 = undefined;
+        h(fmt.snprint(&buf, format, args));
+        return;
+    }
     errlen = fmt.snprint(&errbuf, format, args).len;
 }
 

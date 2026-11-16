@@ -13,7 +13,8 @@
 //!     Returning an error exits with the error string for error.Plan9
 //!     and with the error's name otherwise, after printing it to
 //!     standard error with the program's name.
-//!   - No _privates: privalloc is not ported.
+//!   - The per-process words (_privates) are in libc.Private, with the
+//!     buffer %r reads the error string into.
 //!   - No profiling (main9p.s).
 
 const std = @import("std");
@@ -34,6 +35,9 @@ pub fn _start() callconv(.naked) noreturn {
 
 export fn _callmain(sp: [*]usize, tos: *libc.Tos) callconv(.c) noreturn {
     libc.tos = tos;
+    // in this frame, so in the stack segment: each process has its own
+    var private: libc.Private = .{};
+    libc.private = &private;
     libc.fmt.doquote = @import("string.zig").needsrcquote;
     const argc = sp[0];
     const argvp: [*]const [*]const u8 = @ptrCast(sp + 1);

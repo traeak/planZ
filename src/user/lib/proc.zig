@@ -17,12 +17,30 @@ const std = @import("std");
 const sys = @import("sys.zig");
 const libc = @import("libc.zig");
 const string = @import("string.zig");
+const lock_ = @import("lock.zig");
 
 const Allocator = std.mem.Allocator;
 const Error = libc.Error;
 
 pub fn fork() Error!i32 {
     return libc.rfork(sys.RFPROC | sys.RFFDG | sys.RFREND);
+}
+
+/// Start a process that shares this one's memory (rfork with RFMEM,
+/// and flags besides: RFNOWAIT, RFFDG, RFNOTEG) and runs f(arg) there;
+/// it exits when f returns.  Returns its pid.
+///
+/// The new process has a copy of the stack, not the stack: what arg
+/// points to must be in the data or from the allocator to be shared.
+/// It never returns into the caller, whose defers would otherwise run
+/// a second time on the shared memory.
+pub fn spawn(flags: u32, comptime f: anytype, arg: anytype) Error!i32 {
+    const pid = try libc.rfork(sys.RFPROC | sys.RFMEM | flags);
+    if (pid == 0) {
+        f(arg);
+        libc.exits(null);
+    }
+    return pid;
 }
 
 pub fn getpid() u32 {
@@ -147,7 +165,7 @@ pub const Notefn = *const fn (ureg: *anyopaque, msg: []const u8) bool;
 
 const NFN = 33;
 var onnot: [NFN]?Notefn = @splat(null);
-var onnotlock: u32 = 0;
+var onnotlock: lock_.Lock = .{};
 var init = false;
 
 comptime {
@@ -179,12 +197,11 @@ export fn _libc_notifier(v: *anyopaque, s: [*]const u8) callconv(.c) void {
 }
 
 fn lock() void {
-    while (@atomicRmw(u32, &onnotlock, .Xchg, 1, .acquire) != 0)
-        _ = sys.sleep(0);
+    lock_.lock(&onnotlock);
 }
 
 fn unlock() void {
-    @atomicStore(u32, &onnotlock, 0, .release);
+    lock_.unlock(&onnotlock);
 }
 
 /// Add f to the note handlers (in), or remove it.  Returns whether it

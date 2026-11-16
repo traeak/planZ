@@ -103,9 +103,9 @@ Note which pin numbers worked, if any.
 
 planZ's user programs written in Zig are on the stick, in `zig/bin`:
 the commands ported so far (`build.zig`'s `zcmds` lists them), the
-`retest`, `fltest` and `tmtest` halves that compare libregexp, the
-float formats and the dates with stock libc, and `libctest`, which
-checks the library under them. The script copies them to `/tmp/zig` and runs each one beside the
+`retest`, `fltest`, `tmtest` and `locktest` halves that compare
+libregexp, the float formats, the dates and the locks with stock libc,
+and `libctest`, which checks the library under them. The script copies them to `/tmp/zig` and runs each one beside the
 stock 9front program of the same name. If anything differs, it shows
 how:
 

@@ -906,6 +906,53 @@ EOF
 	t srv
 	rm -f /tmp/zig.a /tmp/zig.b
 
+	# processes that share memory: the locks of the Zig library against
+	# stock libc's, which locktest.c is built with here (see
+	# tools/locktest.c)
+	if(@{cd $z && 6c -FTVw locktest.c && 6l -o locktest.stock locktest.6} >/tmp/zig.cc >[2=1]){
+		$Z^locktest >/tmp/zig.a >[2=1]
+		$z/locktest.stock >/tmp/zig.b >[2=1]
+		t locks
+		# and the lines themselves: on planZ's kernel both halves
+		# could be wrong alike
+		cat >/tmp/zig.b <<'EOF'
+canlock 1 0 1
+canqlock 1 0 1
+lock: counter 90000
+qlock: counter 90000
+canrlock 1 1 canwlock 0 1 canrlock 0 canwlock 0
+rwlock: a 8000 b 8000 bad 0
+writer waits: canrlock 0 canwlock 0 log W
+wunlock: readers 3 writer 0 queued 2 canrlock 0 log RRRWr
+queue: taken 2000 sum 3499000 bad 0 left 0
+rwakeup: none 0 all 3 none 0 woke 0 woke 3
+sem: release 5 got 5 sem 0 acquire 0 tsemacquire 0 release 2 acquire 1 tsemacquire 1 sem 0
+privalloc: 16 words
+own: stack 1 private 1 data 2 pid 1 0
+atexit: child's 1 taken back 0 first's 0
+errstr: bad 0 mine the first process
+malloc: bad 0
+tzload: bad 0 again 1 other 1 none 1
+along: 1 2 1 0 1 1 1 42
+avlong: 1 1099511627777 1099511627776 0 1099511627776 1099511627776 1 -42
+aptr: 1 0 1 1 1 1
+ainc: 6 5 5
+aincl: counter 0
+acasl: counter 0
+ainc: counter 0
+barrier: bad 0
+done
+atexit: the first process's ran, 1 time
+EOF
+		t lockvalues
+	}
+	if not {
+		echo DIFF locks: locktest.c did not build
+		cat /tmp/zig.cc
+		nbad=($nbad locks)
+	}
+	rm -f /tmp/zig.cc
+
 	if(! $Z^libctest)
 		nbad=($nbad libctest)
 	if(~ $#nbad 0)

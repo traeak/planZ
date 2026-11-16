@@ -81,6 +81,36 @@ comptime {
 }
 
 pub var tos: *Tos = undefined;
+
+/// What each process has of its own though the processes share their
+/// memory: it is in the stack segment, which rfork copies and never
+/// shares, so the one address holds each process's own (start.zig
+/// puts it in the frame under main).
+/// from libc/9sys/callmain.c (privates)
+pub const Private = struct {
+    /// The words privalloc gives out.
+    privates: [NPRIVATES]usize = @splat(0),
+    /// %r's copy of the error string.  DIFF: the C's %r reads the
+    /// string into the caller's frame.
+    errbuf: [ERRMAX]u8 = undefined,
+};
+pub const NPRIVATES = 16;
+pub var private: *Private = undefined;
+var nprivates: usize = NPRIVATES;
+var privlock: Lock = .{};
+
+/// A word that each process sharing memory has its own of: the same
+/// pointer in all of them, a different word behind it.  Null when the
+/// 16 are given out.  A new process starts with a copy of its parent's.
+/// from libc/9sys/privalloc.c
+pub fn privalloc() ?*usize {
+    lock(&privlock);
+    defer unlock(&privlock);
+    if (nprivates == 0)
+        return null;
+    nprivates -= 1;
+    return &private.privates[nprivates];
+}
 /// The program's arguments, argv[0] first.
 pub var argv: []const []const u8 = &.{};
 /// argv[0], for messages.
@@ -124,6 +154,49 @@ pub const atnotify = proc_.atnotify;
 pub const postnote = proc_.postnote;
 pub const PNPROC = proc_.PNPROC;
 pub const PNGROUP = proc_.PNGROUP;
+pub const spawn = proc_.spawn;
+
+// Locks and atomic operations, for processes that share memory
+
+const lock_ = @import("lock.zig");
+pub const Lock = lock_.Lock;
+pub const lock = lock_.lock;
+pub const canlock = lock_.canlock;
+pub const unlock = lock_.unlock;
+pub const QLock = lock_.QLock;
+pub const QLp = lock_.QLp;
+pub const qlock = lock_.qlock;
+pub const canqlock = lock_.canqlock;
+pub const qunlock = lock_.qunlock;
+pub const RWLock = lock_.RWLock;
+pub const rlock = lock_.rlock;
+pub const canrlock = lock_.canrlock;
+pub const runlock = lock_.runlock;
+pub const wlock = lock_.wlock;
+pub const canwlock = lock_.canwlock;
+pub const wunlock = lock_.wunlock;
+pub const Rendez = lock_.Rendez;
+pub const rsleep = lock_.rsleep;
+pub const rwakeup = lock_.rwakeup;
+pub const rwakeupall = lock_.rwakeupall;
+pub const qlockinit = lock_.qlockinit;
+pub const ainc = lock_.ainc;
+pub const adec = lock_.adec;
+pub const Along = lock_.Along;
+pub const Avlong = lock_.Avlong;
+pub const Aptr = lock_.Aptr;
+pub const agetl = lock_.agetl;
+pub const agetv = lock_.agetv;
+pub const agetp = lock_.agetp;
+pub const aswapl = lock_.aswapl;
+pub const aswapv = lock_.aswapv;
+pub const aswapp = lock_.aswapp;
+pub const aincl = lock_.aincl;
+pub const aincv = lock_.aincv;
+pub const acasl = lock_.acasl;
+pub const acasv = lock_.acasv;
+pub const acasp = lock_.acasp;
+pub const coherence = lock_.coherence;
 
 // Strings and arguments
 
@@ -250,11 +323,9 @@ pub fn werrstr(comptime format: []const u8, args: anytype) void {
     _ = sys.errstr(&buf);
 }
 
-var rbuf: [ERRMAX]u8 = undefined;
-
 /// For %r.
 pub fn errtext() []const u8 {
-    return rerrstr(&rbuf);
+    return rerrstr(&private.errbuf);
 }
 
 fn check(r: isize) Error!usize {
@@ -400,6 +471,34 @@ pub fn rfork(flags: u32) Error!i32 {
     return checkfd(sys.rfork(flags));
 }
 
+/// Meet the process that calls with the same tag (one that shares the
+/// rendezvous group): each gets the other's value.  Fails if a note
+/// interrupts the wait.
+pub fn rendezvous(tag: usize, val: usize) Error!usize {
+    const r = sys.rendezvous(tag, val);
+    if (r == ~@as(usize, 0))
+        return error.Plan9;
+    return r;
+}
+
+/// Take one from the semaphore at addr, waiting until it is above 0 if
+/// block is set.  Returns whether it was taken; fails if a note
+/// interrupts the wait.
+pub fn semacquire(addr: *i32, block: bool) Error!bool {
+    return try check(sys.semacquire(addr, block)) != 0;
+}
+
+/// As semacquire, waiting at most ms milliseconds.
+pub fn tsemacquire(addr: *i32, ms: u32) Error!bool {
+    return try check(sys.tsemacquire(addr, ms)) != 0;
+}
+
+/// Add count to the semaphore and wake those that wait for it; returns
+/// its new value.
+pub fn semrelease(addr: *i32, count: i32) Error!i32 {
+    return @intCast(try check(sys.semrelease(addr, count)));
+}
+
 /// Replace the program with name, giving it args (args[0] first).
 /// Returns only on failure.
 pub fn exec(name: []const u8, args: []const []const u8) (Error || std.mem.Allocator.Error) {
@@ -480,12 +579,11 @@ pub fn iounit(fd: i32) usize {
 }
 
 /// from libc/port/atexit.c
-/// DIFF: no lock (the library has no shared-memory processes yet) and
-/// no atexitdont.
 const Onex = struct {
     f: ?*const fn () void = null,
     pid: u32 = 0,
 };
+var onexlock: Lock = .{};
 var onex: [33]Onex = @splat(.{});
 
 fn onexit() void {
@@ -502,8 +600,11 @@ fn onexit() void {
     }
 }
 
-/// Have f called when the process exits through exits.
+/// Have f called when this process exits through exits: of the
+/// processes that share memory, only in the one that asked.
 pub fn atexit(f: *const fn () void) bool {
+    lock(&onexlock);
+    defer unlock(&onexlock);
     for (&onex) |*o| {
         if (o.f == null) {
             o.pid = proc_.getpid();
@@ -512,6 +613,15 @@ pub fn atexit(f: *const fn () void) bool {
         }
     }
     return false;
+}
+
+/// Take back what this process asked of atexit for f.
+pub fn atexitdont(f: *const fn () void) void {
+    const pid = proc_.getpid();
+    for (&onex) |*o| {
+        if (o.f == f and o.pid == pid)
+            o.f = null;
+    }
 }
 
 // Formatted output

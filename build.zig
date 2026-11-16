@@ -95,7 +95,7 @@ pub fn build(b: *std.Build) void {
         "sed",   "fltest",   "seq",       "factor",
         "primes", "grep",     "rc",    "fpstress", "srvtest",
         "drawtest", "vtfs",     "date",  "tmtest",   "bind",
-        "unmount", "ps",       "dd",    "xargs",
+        "unmount", "ps",       "dd",    "xargs",    "locktest",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
@@ -108,7 +108,7 @@ pub fn build(b: *std.Build) void {
     // stock libregexp, libc and libdraw, and the table retest reads
     // (see tools/retest.c, tools/fltest.c and tools/drawtest.c), and
     // rc's scripts
-    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "tmtest.c", "rccases" };
+    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "tmtest.c", "locktest.c", "rccases" };
     for (zdata) |name|
         user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
     // grep's pattern compiler and DFA, which take only the runes from
