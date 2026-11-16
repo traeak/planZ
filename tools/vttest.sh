@@ -26,7 +26,11 @@
 #     it after what was typed; the pointer shows when the mouse
 #     moves and goes when a key is typed; /dev/snarf can be written;
 #   - the wheel: with more than a screen of text on console 3, a notch
-#     up changes the picture and a notch down brings it back.
+#     up changes the picture and a notch down brings it back; with
+#     button 1 held over a notch, the lines that come under the mouse
+#     are marked and copied;
+#   - the copy is shared with rio: what console 1 wrote to /dev/snarf
+#     is read in rio's window, and what is written there read back.
 # The mouse positions are for a screen of 1280x800 and the 8x16 font.
 # Each console's text is read from /dev/vt/N/text on console 1.
 #
@@ -99,7 +103,7 @@ again="$qmp key ctrl alt 2 , type 'exit\\n' && sleep 3 && $qmp type 'echo again^
 # button 3 on the background, away from the window
 rio="$qmp key ctrl alt 2 , type 'rio -i window\\n' && sleep 6 && $qmp shot $shots/rio.ppm"
 rio="$rio && $pix frac $shots/rio.ppm 777777 20 100"
-rio="$rio && $qmp type 'echo rio^key >/tmp/vtrio\\n' && sleep 2"
+rio="$rio && $qmp type 'echo rio^key >/tmp/vtrio; cat /dev/snarf >/tmp/vtsn; echo -n from^rio >/dev/snarf\\n' && sleep 2"
 rio="$rio && $qmp abs 26000 26000 && sleep 1 && $qmp shot $shots/nomenu.ppm"
 rio="$rio && $qmp btn right down && sleep 1 && $qmp shot $shots/menu.ppm"
 rio="$rio && $qmp abs 30000 30000 , btn right up , abs 26000 26000 && sleep 1"
@@ -136,7 +140,12 @@ wheel="$qmp key ctrl alt 3 , type 'seq 1 150\\n' && sleep 2 && $qmp abs 21000 21
 wheel="$wheel && $qmp btn wheel-up click && sleep 1 && $qmp shot $shots/up.ppm"
 wheel="$wheel && $qmp btn wheel-down click && sleep 1 && $qmp shot $shots/down.ppm"
 wheel="$wheel && $pix diff $shots/bottom.ppm $shots/up.ppm 200 && cmp -s $shots/bottom.ppm $shots/down.ppm"
-wheel="$wheel && echo vt test: the wheel scrolls back and forth && $qmp key ctrl alt 1"
+wheel="$wheel && echo vt test: the wheel scrolls back and forth"
+# A drag over a turn of the wheel: the screen's lines are 103 and on;
+# button 1 goes down at the start of the 11th, 113; a notch up puts
+# 110 under the mouse, and the lines 110 to 112 are marked and copied.
+wheel="$wheel && $qmp abs 153 7045 , btn left down , btn wheel-up click && sleep 1"
+wheel="$wheel && $qmp btn left up , btn wheel-down click , key ctrl alt 1"
 
 sh "$here/bootchat.sh" "$timeout" \
 	"bootargs is" "" \
@@ -155,8 +164,10 @@ sh "$here/bootchat.sh" "$timeout" \
 	"" "echo after^int" \
 	"afterint" "@host $again" \
 	"" "grep -s againtwo /dev/vt/2/text && echo restart^ok" \
-	"restartok" "@host $rio && $qmp key ctrl alt 1" \
-	"" "cat /tmp/vtrio" \
+	"restartok" "echo -n from^vt >/dev/snarf; echo snarf^set" \
+	"snarfset" "@host $rio && $qmp key ctrl alt 1" \
+	"" "cat /tmp/vtsn /dev/snarf; echo" \
+	"fromvtfromrio" "cat /tmp/vtrio" \
 	"riokey" "@host $visit" \
 	"" "cat /tmp/vtone && ps | grep -s ' rio\$' && echo rio^runs" \
 	"rioruns" "cat /dev/vt/2/kbd >[2=1] | grep -c 'in use' | sed 's/^1\$/kbd/;s/\$/held/'" \
@@ -170,5 +181,6 @@ sh "$here/bootchat.sh" "$timeout" \
 	"pasteok" "echo -n snarf^written >/dev/snarf; cat /dev/snarf; echo" \
 	"snarfwritten" "@host $wheel" \
 	"" "grep -s '^150\$' /dev/vt/3/text && echo wheel^ok" \
-	"wheelok" \
+	"wheelok" "echo \`{cat /dev/snarf}" \
+	"110 111 112" \
 	-- "$@" $tablet -qmp "unix:$tmp/qmp,server=on,wait=off"
