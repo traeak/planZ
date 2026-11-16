@@ -23,6 +23,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 pub const fmt = @import("fmt");
+pub const pool = @import("pool");
 pub const fcall = @import("fcall");
 
 pub const sys = @import("sys.zig");
@@ -148,6 +149,7 @@ pub const fork = proc_.fork;
 pub const wait = proc_.wait;
 pub const waitpid = proc_.waitpid;
 pub const getpid = proc_.getpid;
+pub const getuser = proc_.getuser;
 pub const getenv = proc_.getenv;
 pub const putenv = proc_.putenv;
 pub const atnotify = proc_.atnotify;

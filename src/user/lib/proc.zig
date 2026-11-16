@@ -47,6 +47,18 @@ pub fn spawn(flags: u32, comptime f: anytype, arg: anytype) Error!i32 {
     return pid;
 }
 
+var user: [64]u8 = undefined;
+
+/// The user's name: the owner of this process's /proc files, or
+/// "none".  In a buffer the next call uses again.
+/// from libc/9sys/getuser.c
+pub fn getuser() []const u8 {
+    var name: [32]u8 = undefined;
+    var st = libc.dirstat(libc.allocator, libc.sprint(&name, "/proc/%ud/status", .{getpid()})) catch return "none";
+    defer st.deinit(libc.allocator);
+    return libc.sprint(&user, "%s", .{st.dir.uid});
+}
+
 pub fn getpid() u32 {
     return libc.tos.pid;
 }

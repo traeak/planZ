@@ -73,7 +73,9 @@ With the reference files (`D="-Dref=ref -Ddisk=ref/disk/9front-11952.amd64.qcow2
 Useful options include `-Dcpu=` (`SandyBridge` by default, also `max`
 and `Opteron_G4,+xsaveopt`), `-Dsmp=`, `-Dmem=`,
 `-Ddiskbus=virtio|nvme|ahci` and `-Doptimize=debug`. `-Dzigrc` boots
-9front's user programs with planZ's rc as `/bin/rc`. 9front boots to
+9front's user programs with planZ's rc as `/bin/rc`, and `-Dzigboot`
+with planZ's own in place of the stock programs that the boot script
+runs (so far `mntgen`). 9front boots to
 `vtfs`, four full-screen consoles switched with Ctl-Alt-Left/Right or
 Ctl-Alt-1…4 (three shells and the kernel's messages; `rio` typed at
 one of the shells runs on that console; the mouse copies and pastes

@@ -1029,6 +1029,312 @@ EOF
 	}
 	rm -f /tmp/zig.cc
 
+	# lib9p: ramfs and mntgen against the stock ones, each given the
+	# same 9P messages (aux/9pcon) and the same stock commands on a
+	# mount of it; and p9test, a threaded server built here on stock
+	# lib9p (see tools/p9test.c), for flush, the request queue and the
+	# command parser.  planZ's run under names of their own (zramfs,
+	# zmntgen), so that whether they have exited can be seen: nothing
+	# here goes by the names ramfs and mntgen, which the system's own
+	# have.  Times, pids, device numbers and mount points are taken
+	# out of what is compared.
+	rm -f /srv/^(zt.rs zt.rz zt.mgs zt.mgz zt.p9s zt.p9z)
+	cp $Z^ramfs $Z^zramfs
+	cp $Z^mntgen $Z^zmntgen
+	mkdir -p /tmp/zt.mgs /tmp/zt.mgz
+	cat >/tmp/zig.con <<'EOF'
+Tversion 8192 9P2000
+Tattach 1 -1 glenda ''
+Twalk 1 2
+Tcreate 2 testfile 0666 2
+Twrite 2 0 hello
+Tstat 2
+Tclunk 2
+Twalk 1 2 testfile
+Topen 2 0
+Tread 2 0 5
+Tread 2 2 100
+Twrite 2 0 x
+Tclunk 2
+Tclunk 2
+Twalk 1 3 nothere
+Twalk 1 3 testfile nothere
+Twalk 9 3
+Twalk 1 1 testfile testfile
+Topen 1 1
+Twalk 1 4
+Topen 4 0
+Tread 4 0 500
+Tread 4 7 500
+Twalk 4 5
+Tcreate 4 x 0666 0
+Tclunk 4
+Twalk 1 4 testfile
+Tcreate 4 x 0666 0
+Twstat 4 newname '' '' -1 -1 -1
+Tstat 4
+Tremove 4
+Twalk 1 4 newname
+Tversion 8192 9P2000
+Tflush 77
+Tattach 1 -1 glenda ''
+Tattach 6 -1 glenda spec
+Tauth 7 glenda ''
+Twalk 1 10
+Tcreate 10 dir 020000000777 0
+Twalk 1 11 dir
+Tcreate 11 f 0666 1
+Tclunk 11
+Twalk 1 12 dir
+Tremove 12
+Twalk 1 13 dir f
+Topen 13 64
+Tclunk 13
+Twalk 1 13 dir f
+Twalk 1 14
+Tcreate 14 ex 04000000666 1
+Twalk 1 15 ex
+Topen 15 0
+Tclunk 14
+Twalk 1 16
+Tcreate 16 ap 010000000666 1
+Twrite 16 0 aaa
+Twrite 16 0 bbb
+Tstat 16
+Twstat 16 '' '' '' 0644 -1 -1
+Twstat 16 '' '' '' -1 -1 2
+Twstat 16 '' '' sys -1 -1 -1
+Twstat 16 '' other '' -1 -1 -1
+Twstat 16 dir '' '' -1 -1 -1
+Twstat 16 '' '' '' 020000000777 -1 -1
+Tstat 16
+Twalk 1 17 ap
+Topen 17 17
+Tstat 17
+Tread 17 0 10
+Twrite 17 70000 zz
+Tstat 17
+Tclunk 17
+Twalk 1 18 ap
+Topen 18 0
+Tread 18 69998 10
+Tread 18 0 3
+EOF
+	fn ramcon {
+		{cat /tmp/zig.con; sleep 2} | aux/9pcon -c $1 >[2=1] | grep '<-' |
+			sed 's/ at [0-9]+ mt [0-9]+/ at T mt T/; s/(Rread tag [0-9]+ count [0-9]+) ''[0-9a-f]+ [0-9a-f ]+/\1/; s/ename .*ramfs:/ename ramfs:/'
+	}
+	ramcon 'ramfs -i' >/tmp/zig.b
+	ramcon $Z^'zramfs -i' >/tmp/zig.a
+	t ramfs9p
+
+	fn ramops {
+		echo hello >a; echo status $status
+		mkdir d d/e; echo more >d/e/f
+		cat a d/e/f
+		echo again >>a; cat a
+		echo short >a; cat a
+		chmod +a a; echo one >a; echo two >a; cat a; chmod -a a
+		mv a b; cat b; ls
+		cp b d/c; cmp b d/c; echo cmp $status
+		rm d; echo rm $status
+		rm -r d/e; ls d
+		dd -if /dev/zero -of big -bs 70000 -count 3 >[2]/dev/null
+		echo tail | dd -of big -bs 65536 -oseek 9 >[2]/dev/null
+		ls -l big | awk '{print $6}'; md5sum <big
+		dd -if big -bs 1000 -iseek 200 -count 20 >[2]/dev/null | md5sum
+		echo x >big; ls -l big | awk '{print $6}'
+		chmod 400 b; @{echo no >b} >[2]/dev/null; echo wr $status; chmod 600 b
+		# not here: an exclusive file opened again.  Whether it is
+		# locked depends on whether the kernel has yet clunked the fid
+		# chmod looked at it with (ramfs9p has the case by messages)
+		touch t; chgrp sys t; echo chgrp $status
+		mkdir p; chmod 555 p; touch p/x; echo create $status; chmod 777 p; rm p
+		cat nothere; echo cat $status
+		ls -lq | awk '{print $1, $2, $3, $4, $5, $7, $NF}'
+		ls -ldq . | awk '{print $1, $2, $3, $4, $5, $7}'
+		du -a . | sort +1
+	}
+	fn onram {
+		$1 -S zt.$2 && mount -c /srv/zt.$2 /n/zt.$2 &&
+			@{cd /n/zt.$2 && ramops} >[2=1] | sed 's/ [0-9]+:/:/; s/zt\.r[sz]/zt.r/g'
+		unmount /n/zt.$2
+		rm -f /srv/zt.$2
+	}
+	onram ramfs rs >/tmp/zig.b >[2=1]
+	onram $Z^zramfs rz >/tmp/zig.a >[2=1]
+	t ramfs
+
+	fn mgops {
+		m=$1
+		ls $m; echo ls $status
+		ls -ldq $m/abc $m/x $m/'a name' | awk '{print $1, $2, $3, $4, $5, $7}'
+		# a name is there while a fid is on it, and gone after.  The
+		# kernel clunks a file that was only looked at later, from a
+		# process of its own (cclose, closeproc), so wait for it.
+		# (mntgen cannot be given messages by 9pcon, which is
+		# refused a connection that has been mounted.)
+		sleep 1
+		ls $m; echo gone $status
+		@{cd $m/held && ls -q .. | awk '{print $1, $2, $3}' && ls -ld . | awk '{print $1,$4,$5,$6}'}
+		sleep 1
+		ls $m; echo gone $status
+		ls $m/a/b; echo nested $status
+		touch $m/f/g; echo touch $status
+		@{echo x >$m/file} >[2]/dev/null; echo write $status
+		cat $m/abc; echo cat $status
+		sleep 1
+		ls $m; echo gone $status
+	}
+	fn onmg {
+		$1 -s zt.$2 /tmp/zt.$2 && mgops /tmp/zt.$2 >[2=1] | sed 's/ [0-9]+:/:/; s/zt\.mg[sz]/zt.mg/g'
+		unmount /tmp/zt.$2
+		rm -f /srv/zt.$2
+	}
+	onmg mntgen mgs >/tmp/zig.b >[2=1]
+	onmg $Z^zmntgen mgz >/tmp/zig.a >[2=1]
+	t mntgen
+
+	if(@{cd $z && 6c -FTVw p9test.c && 6l -o p9test.stock p9test.6} >/tmp/zig.cc >[2=1]){
+		cat >/tmp/zig.con <<'EOF'
+Tversion 8192 9P2000
+Tattach 1 -1 glenda ''
+Twalk 1 2 ctl
+Topen 2 1
+Twrite 2 0 'set hello'
+Twrite 2 0 'add 3 4'
+Twrite 2 0 'add 3'
+Twrite 2 0 'bogus x'
+Twrite 2 0 'echo a b c d'
+Twrite 2 0 'echo it''s fine'
+Twalk 1 3 str
+Topen 3 0
+Tread 3 0 100
+Tread 3 5 4
+Twrite 3 0 x
+Twalk 1 4
+Topen 4 0
+Tread 4 0 1000
+Tread 4 0 60
+Tstat 3
+Tstat 4
+Twalk 1 5 nothere
+Twalk 3 5 ctl
+Twalk 1 5 str
+Twalk 5 6 x
+Twalk 1 7 slow
+Topen 7 0
+Tread 7 0 10
+Twalk 1 8 wait
+Topen 8 0
+Tread 8 0 10
+Twalk 1 9 wait
+Topen 9 0
+Tread 9 0 10
+Tflush 33
+Tflush 30
+Tflush 99
+EOF
+		fn onp9 {
+			$1 zt.$2
+			{cat /tmp/zig.con; sleep 1; echo Tread 8 0 10; sleep 1
+				echo Tflush 37; sleep 1; echo Tread 7 0 10; sleep 1
+				echo Tclunk 8; echo Tclunk 2; sleep 1} |
+				aux/9pcon /srv/zt.$2 >[2=1] | grep '<-'
+			mount /srv/zt.$2 /n/zt.$2
+			ls -lq /n/zt.$2 | awk '{print $1, $2, $3, $4, $7, $8}'
+			cat /n/zt.$2/str
+			echo set viafs >/n/zt.$2/ctl
+			cat /n/zt.$2/str /n/zt.$2/slow
+			@{echo bogus >/n/zt.$2/ctl} >[2=1] | sed 's/zt\.p9[sz]/zt.p9/'
+			unmount /n/zt.$2
+			rm -f /srv/zt.$2
+		}
+		onp9 $z/p9test.stock p9s >/tmp/zig.b >[2=1]
+		onp9 $Z^p9test p9z >/tmp/zig.a >[2=1]
+		t p9test
+		sed 42q /tmp/zig.a >/tmp/zig.c
+		mv /tmp/zig.c /tmp/zig.a
+		cat >/tmp/zig.b <<'EOF'
+	<- Rversion tag 65535 msize 8192 version '9P2000'
+	<- Rattach tag 1 qid (0000000000000000 0 d)
+	<- Rwalk tag 2 nwqid 1 0:(0000000000000001 0 ) 
+	<- Ropen tag 3 qid (0000000000000001 0 ) iounit 0 
+	<- Rwrite tag 4 count 9
+	<- Rwrite tag 5 count 7
+	<- Rerror tag 6 ename bad # args to command: "add 3"
+	<- Rerror tag 7 ename unknown control message: "bogus x"
+	<- Rerror tag 8 ename too many words (5): "echo a b c d"
+	<- Rwrite tag 9 count 14
+	<- Rwalk tag 10 nwqid 1 0:(0000000000000002 0 ) 
+	<- Ropen tag 11 qid (0000000000000002 0 ) iounit 0 
+	<- Rread tag 12 count 17 'word hello sum 7
+	<- Rread tag 13 count 4 'hell'
+	<- Rerror tag 14 ename 9P protocol botch
+	<- Rwalk tag 15 nwqid 0 
+	<- Ropen tag 16 qid (0000000000000000 0 d) iounit 0 
+	<- Rread tag 17 count 242 '3a000000 00000000 00000000 00010000 00000000 00b60100 00000000 00000000 00000000 00000000 00030063 746c0400 74657374 04007465 73740000 3a000000'
+	<- Rread tag 18 count 60 '3a000000 00000000 00000000 00010000 00000000 00b60100 00000000 00000000 00000000 00000000 00030063 746c0400 74657374 04007465 73740000'
+	<- Rstat tag 19  stat 'str' 'test' 'test' '' q (0000000000000002 0 ) m 0444 at 0 mt 0 l 7 t 0 d 0
+	<- Rstat tag 20  stat '/' 'test' 'test' '' q (0000000000000000 0 d) m 020000000555 at 0 mt 0 l 0 t 0 d 0
+	<- Rerror tag 21 ename no such file
+	<- Rerror tag 22 ename cannot clone open fid
+	<- Rwalk tag 23 nwqid 1 0:(0000000000000002 0 ) 
+	<- Rerror tag 24 ename walk in non-directory
+	<- Rwalk tag 25 nwqid 1 0:(0000000000000003 0 ) 
+	<- Ropen tag 26 qid (0000000000000003 0 ) iounit 0 
+	<- Rwalk tag 28 nwqid 1 0:(0000000000000004 0 ) 
+	<- Ropen tag 29 qid (0000000000000004 0 ) iounit 0 
+	<- Rwalk tag 31 nwqid 1 0:(0000000000000004 0 ) 
+	<- Ropen tag 32 qid (0000000000000004 0 ) iounit 0 
+	<- Rerror tag 33 ename interrupted
+	<- Rflush tag 34
+	<- Rerror tag 30 ename interrupted
+	<- Rflush tag 35
+	<- Rflush tag 36
+	<- Rread tag 27 count 6 'slept
+	<- Rerror tag 37 ename interrupted
+	<- Rflush tag 38
+	<- Rread tag 39 count 6 'slept
+	<- Rclunk tag 40
+	<- Rclunk tag 41
+EOF
+		t p9values
+	}
+	if not {
+		echo DIFF 9p: p9test.c did not build
+		cat /tmp/zig.cc
+		nbad=($nbad 9p)
+	}
+	rm -f /tmp/zig.cc /tmp/zig.con
+
+	# each of planZ's servers is gone once it is unmounted and its
+	# /srv file removed
+	sleep 1
+	if(ps | grep -s ' (zramfs|zmntgen|p9test)$'){
+		echo DIFF 9p: still running:
+		ps | grep ' (zramfs|zmntgen|p9test)$'
+		nbad=($nbad 9pexit)
+	}
+	if not
+		echo same 9p: the servers have exited
+
+	# booted with zig build -Dzigboot, the mntgens that serve /n, /mnt
+	# and /mnt/exportfs are planZ's: each one's text is that file
+	if(test -f /boot/mntgen){
+		nm=0
+		for(p in `{ps | awk '$NF == "mntgen" {print $2}'})
+			if(cmp -s /proc/$p/text /boot/mntgen)
+				nm=`{echo $nm + 1 | hoc}
+		if(~ $nm 3)
+			echo same boot: the 3 mntgens are /boot/mntgen
+		if not {
+			echo DIFF boot: $nm of the mntgens are /boot/mntgen, not 3
+			ps | grep ' mntgen$'
+			nbad=($nbad zigboot)
+		}
+	}
+
 	if(! $Z^libctest)
 		nbad=($nbad libctest)
 	if(~ $#nbad 0)
