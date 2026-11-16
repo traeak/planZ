@@ -34,6 +34,10 @@ pub fn fork() Error!i32 {
 /// points to must be in the data or from the allocator to be shared.
 /// It never returns into the caller, whose defers would otherwise run
 /// a second time on the shared memory.
+///
+/// Not for a thread of the thread library: a thread's stack is in the
+/// shared memory, and the two processes would both run on it.  There
+/// procs are made with proccreate.
 pub fn spawn(flags: u32, comptime f: anytype, arg: anytype) Error!i32 {
     const pid = try libc.rfork(sys.RFPROC | sys.RFMEM | flags);
     if (pid == 0) {

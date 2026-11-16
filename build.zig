@@ -61,6 +61,12 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // libthread for user programs.
+    const libthread = b.createModule(.{
+        .root_source_file = b.path("src/user/lib/thread/libthread.zig"),
+        .imports = &.{.{ .name = "libc", .module = libc }},
+    });
+
     // The kernel: freestanding, no floating point or vector registers
     // (they belong to user processes), no red zone (interrupts run on
     // the interrupted stack), linked in the top 2GiB.
@@ -96,10 +102,11 @@ pub fn build(b: *std.Build) void {
         "primes", "grep",     "rc",    "fpstress", "srvtest",
         "drawtest", "vtfs",     "date",  "tmtest",   "bind",
         "unmount", "ps",       "dd",    "xargs",    "locktest",
+        "tprimes",  "threadtest",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
-        zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc, libdraw);
+        zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc, libdraw, libthread);
         user_step.dependOn(&b.addInstallFile(zbins[i], b.fmt("user/bin/{s}", .{name})).step);
         if (zigrc and std.mem.eql(u8, name, "rc")) zigrc_bin = zbins[i];
         if (std.mem.eql(u8, name, "vtfs")) vtfs_bin = zbins[i];
@@ -108,7 +115,7 @@ pub fn build(b: *std.Build) void {
     // stock libregexp, libc and libdraw, and the table retest reads
     // (see tools/retest.c, tools/fltest.c and tools/drawtest.c), and
     // rc's scripts
-    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "tmtest.c", "locktest.c", "rccases" };
+    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "tmtest.c", "locktest.c", "threadtest.c", "rccases" };
     for (zdata) |name|
         user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
     // grep's pattern compiler and DFA, which take only the runes from
@@ -506,12 +513,13 @@ pub fn build(b: *std.Build) void {
 /// Build a user program on the library (src/user/lib): the library's
 /// root.zig is the root file and the program's file is the module
 /// "program".
-fn addLibcProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize, libc: *std.Build.Module, libdraw: *std.Build.Module) std.Build.LazyPath {
+fn addLibcProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize, libc: *std.Build.Module, libdraw: *std.Build.Module, libthread: *std.Build.Module) std.Build.LazyPath {
     const program = b.createModule(.{
         .root_source_file = b.path(root),
         .imports = &.{
             .{ .name = "libc", .module = libc },
             .{ .name = "draw", .module = libdraw },
+            .{ .name = "thread", .module = libthread },
         },
     });
     return addUserProgramRoot(b, name, "src/user/lib/root.zig", optimize, &.{

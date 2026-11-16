@@ -198,6 +198,15 @@ pub const acasv = lock_.acasv;
 pub const acasp = lock_.acasp;
 pub const coherence = lock_.coherence;
 
+// Random numbers
+
+const rand_ = @import("rand.zig");
+pub const srand = rand_.srand;
+pub const rand = rand_.rand;
+pub const lrand = rand_.lrand;
+pub const nrand = rand_.nrand;
+pub const lnrand = rand_.lnrand;
+
 // Strings and arguments
 
 pub const tokenize = string_.tokenize;
@@ -683,8 +692,15 @@ pub fn sysfatal(comptime format: []const u8, args: anytype) noreturn {
     var buf: [ERRMAX]u8 = undefined;
     const s = sprint(&buf, format, args);
     fprint(2, "%s: %s\n", .{ argv0, s });
+    if (fatalhook) |h|
+        h(s);
     exits(s);
 }
+
+/// How a program of several processes ends on sysfatal or a panic,
+/// after the message is printed: libthread sets it to end them all
+/// (the C's _sysfatal).
+pub var fatalhook: ?*const fn (msg: []const u8) noreturn = null;
 
 /// A std.Io.Writer that writes to a file descriptor, so that Zig's own
 /// formatting ({d}, {s}) can be used as well:
@@ -750,5 +766,7 @@ pub fn panicfn(msg: []const u8, _: ?usize) noreturn {
     fprint(2, "%s: panic: %s\n", .{ argv0, msg });
     var buf: [ERRMAX]u8 = undefined;
     const s = sprint(&buf, "panic: %s", .{msg});
+    if (fatalhook) |h|
+        h(s);
     exits(s);
 }

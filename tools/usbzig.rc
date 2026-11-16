@@ -36,6 +36,21 @@ fn t {
 	}
 }
 
+# wd seconds name command...: run the command and print its status; if
+# it still runs after that many seconds, say so and kill the processes
+# of that name
+fn wd {
+	wt=$1
+	wn=$2
+	shift
+	shift
+	{sleep $wt; echo HUNG $wn; kill $wn | rc} &
+	wp=$apid
+	$*
+	s
+	@{echo kill >/proc/$wp/ctl} >[2]/dev/null
+}
+
 # the exit status without "name pid: " in front
 fn s {
 	echo status `{echo $status | sed 's/^[^:]*: //'}
@@ -950,6 +965,67 @@ EOF
 		echo DIFF locks: locktest.c did not build
 		cat /tmp/zig.cc
 		nbad=($nbad locks)
+	}
+	rm -f /tmp/zig.cc
+
+	# libthread: the Zig port against stock libthread, which
+	# threadtest.c is built with here (see tools/threadtest.c); the
+	# lines themselves, as for the locks; and the library's own test,
+	# tprimes.c from the guest's sources, with threads and with procs.
+	# Its 1,024-byte stacks are made 8,192: with procs the stock
+	# program overflows them and dies in the allocator.
+	if(@{cd $z && 6c -FTVw threadtest.c && 6l -o threadtest.stock threadtest.6 &&
+		sed 's/1024/8192/g' /sys/src/libthread/tprimes.c >tprimes.c &&
+		6c -FTVw tprimes.c && 6l -o tprimes.stock tprimes.6} >/tmp/zig.cc >[2=1]){
+		wd 120 threadtest $Z^threadtest >/tmp/zig.a >[2=1]
+		wd 120 threadtest.stock $z/threadtest.stock >/tmp/zig.b >[2=1]
+		t threads
+		cat >/tmp/zig.b <<'EOF'
+order: main 1 ids 2 3 4 m a0 b0 c0 m a1 b1 c1 m a2 b2 c2 m
+ids: name kid 1 grp 0 7 7 id 1 data 11 5 name threadmain pid 1 1 -1
+unbuffered: s1 s2 r1 r2 s3 s4 r3 r4 s.
+buffered: 1 1 1 0 0 / 1 2 3 0 0 / 0 0
+waiters: y=1,10 z=1,20 x=1,30
+alt choice:111101110010000000110011
+alt: 2 1,6 0,5 1 0 0 0 -1
+close: -1 0 2 1,1 1 1,2 -1 0 -1 0 -1 0
+closed: 0 blocked=-1 alt 1 1 0 -1
+int: a:-1 woken 1 a:1,7 woken 2 killed: woken 2 pid -1 -1
+grp: intgrp 3 killgrp 3
+qlock: h1 w1 h2 h3 w2 m1 1 w3 1
+ref: 1 0 got 7-seven sent 1
+note: 1 1 test one 2 test two 1 0
+procs
+proc: 2 4 6 8 10 pid 1 1 1 data 5
+procs: sum 619800 bad 0
+procint: int -1 killed -1
+rfork: shared -1 own 1
+exec: echo ran
+procexec: pid 1 1 msg [] pid 1 1 failed 1 pid 0 err [file does not exist: '/no']
+io: write 5 read 5 hello readn 6 abcdef sleep 0 flush 0 open 1 close 0 open -1
+iointr: read -1 [interrupted] write 5 read 5 again
+done
+status bye
+EOF
+		t threadvalues
+		{
+			for(a in '100' '-b 3 60' '-p 30' '-p -b 2 40'){
+				echo tprimes $a
+				wd 60 tprimes $Z^tprimes `{echo $a}
+			}
+		} >/tmp/zig.a >[2=1]
+		{
+			for(a in '100' '-b 3 60' '-p 30' '-p -b 2 40'){
+				echo tprimes $a
+				wd 60 tprimes.stock $z/tprimes.stock `{echo $a}
+			}
+		} >/tmp/zig.b >[2=1]
+		t tprimes
+	}
+	if not {
+		echo DIFF threads: threadtest.c or tprimes.c did not build
+		cat /tmp/zig.cc
+		nbad=($nbad threads)
 	}
 	rm -f /tmp/zig.cc
 
