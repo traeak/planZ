@@ -425,6 +425,27 @@ pub const Biobuf = struct {
         }
     }
 
+    /// Brdstr with nulldelim set: what is read up to delim, without
+    /// it, in memory of a's; at the end of the file what is left, and
+    /// then null.
+    /// DIFF: read byte by byte through getc, where brdstr.c works on
+    /// the buffer; a read error ends the string as the end of the file
+    /// does, where the C calls Berror.
+    pub fn rdstr(bp: *Biobuf, a: std.mem.Allocator, delim: u8) std.mem.Allocator.Error!?[]u8 {
+        var l: std.ArrayList(u8) = .empty;
+        errdefer l.deinit(a);
+        var any = false;
+        while (bp.getc()) |c| {
+            any = true;
+            if (c == delim)
+                break;
+            try l.append(a, c);
+        }
+        if (!any)
+            return null;
+        return try l.toOwnedSlice(a);
+    }
+
     /// Brdline: the next line, delim included, as a slice of the buffer
     /// (valid until the next read), or null at end of file, on error, or
     /// when the line does not fit; linelen() then says how much is there.

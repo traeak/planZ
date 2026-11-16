@@ -94,7 +94,8 @@ pub fn build(b: *std.Build) void {
         "split", "du",       "test",      "retest",
         "sed",   "fltest",   "seq",       "factor",
         "primes", "grep",     "rc",    "fpstress", "srvtest",
-        "drawtest", "vtfs",
+        "drawtest", "vtfs",     "date",  "tmtest",   "bind",
+        "unmount", "ps",       "dd",    "xargs",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
@@ -107,7 +108,7 @@ pub fn build(b: *std.Build) void {
     // stock libregexp, libc and libdraw, and the table retest reads
     // (see tools/retest.c, tools/fltest.c and tools/drawtest.c), and
     // rc's scripts
-    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "rccases" };
+    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "tmtest.c", "rccases" };
     for (zdata) |name|
         user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
     // grep's pattern compiler and DFA, which take only the runes from
@@ -442,6 +443,16 @@ pub fn build(b: *std.Build) void {
         // libregexp, which needs only runes and fmt.
         const unit = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path("src/user/lib/regexp.zig"),
+            .target = b.graph.host,
+            .optimize = .safe,
+            .imports = &.{.{ .name = "fmt", .module = fmt }},
+        }) });
+        test_step.dependOn(&b.addRunArtifact(unit).step);
+    }
+    {
+        // the calendar and time zones, which need only fmt
+        const unit = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path("src/user/lib/tm.zig"),
             .target = b.graph.host,
             .optimize = .safe,
             .imports = &.{.{ .name = "fmt", .module = fmt }},

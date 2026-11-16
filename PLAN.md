@@ -262,7 +262,7 @@ Progress: the library is in `src/user/lib/` (module `libc`).
 - **Build.** A program is built with `src/user/lib/root.zig` as its root file and its own file as the module `program`. Zig analyses an imported file only as far as it is used, so this is where `_start` is exported and the panic handler is set. The panic handler prints `argv0: panic: msg` and exits with the message. `boot.zig` and `initcode.zig` stay their own roots and use `libc.sys` only; `initcode` is still one page with no data.
 
 Proof programs in `src/user/cmd/`: `echo`, `cat`, `wc` and `ls`, each from its 9front C file, plus `libctest` (more below).
-- `ls` has no `-l` or `-m` yet: they need `ctime`, the time zone and the `%M`/`%C` formats.
+- `ls` had no `-l` or `-m` at first: they came with the time functions ("More userland in Zig", step 1).
 - `zig build user` installs them in `zig-out/user/bin`.
 - `zig build test-zuser $D` (`tools/zusertest.sh`) fetches them into a booted stock 9front over HTTP and runs each beside the stock program with the same arguments. All 16 cases match byte for byte: standard output, and standard error for the failures.
 - `ls -tr` matches only because the library's `qsort` is 9front's algorithm, since `ls` breaks ties by the entries' addresses while `qsort` moves them.
@@ -593,8 +593,8 @@ Progress:
 
 **Decided:** Ctl-Alt-Left and Ctl-Alt-Right switch, and Ctl-Alt-1 … Ctl-Alt-4 go straight to a console; 4 consoles, shells on 1 to 3 and the kernel's messages on 4; `session=vt` replaces rio as the default. QEMU's own window takes Ctl-Alt-1, -2 … for its consoles, so there the digits reach the guest only through the monitor's `send-key` (as the tests send them); a real machine is unaffected.
 
-#### More userland in Zig: draft plan, not started
-The Zig library and about forty programs exist (libc, bio, regexp, srv, draw; the commands, `grep`, `sed`, `rc`, `vtfs`). This plan takes the next part: the programs that run between the kernel and the prompt. Drafted 2026-11-15; nothing below is built.
+#### More userland in Zig: step 1 done; the rest a draft
+The Zig library and about forty programs exist (libc, bio, regexp, srv, draw; the commands, `grep`, `sed`, `rc`, `vtfs`). This plan takes the next part: the programs that run between the kernel and the prompt. Drafted 2026-11-15; step 1 is built (see Progress at the end), the rest is not.
 
 **Where it stands, measured.** `ps` at the vtfs prompt (QEMU, the 9front disk, a USB keyboard) shows these user programs:
 
@@ -612,7 +612,7 @@ The Zig library and about forty programs exist (libc, bio, regexp, srv, draw; th
 | `ndb/cs`, `ndb/dns` | stock | 2,020; about 4,500 | libndb (1,768), libip (1,144), bio |
 | `aux/timesync` | stock | 1,387 | libip, libmp |
 
-The scripts on the way (`bootrc`, `local.rc`, `net.rc`, `nusbrc`, `termrc`, `fshalt`) name 60 programs of `/amd64/bin`. 16 are in Zig already (`cat chmod cp echo grep ls mkdir mv pwd rc read rm sed sleep test wc`). Of the others a boot from a local disk runs `bind`, `mount`, `unmount`, `dd`, `ps`, `awk`, `ip/ipconfig`, `nusb/disk`, `ramfs`, `dossrv` and those in the table.
+The scripts on the way (`bootrc`, `local.rc`, `net.rc`, `nusbrc`, `termrc`, `fshalt`) name 60 programs of `/amd64/bin`. 16 were in Zig when this was drafted (`cat chmod cp echo grep ls mkdir mv pwd rc read rm sed sleep test wc`); step 1 added `bind`, `unmount`, `dd` and `ps`. Of the others a boot from a local disk runs `mount`, `awk`, `ip/ipconfig`, `nusb/disk`, `ramfs`, `dossrv` and those in the table.
 
 **The cost is in the libraries.** Each program above is small; what they stand on is not in `src/user/lib`: processes that share memory and their locks, libthread (2,591), lib9p (2,804), libauth (1,448) and libauthsrv (1,413), libndb, libip, dial, the time functions, and for some libsec (23,599) and libmp (6,705). So the plan is library layers, each proved by the programs that need it.
 
@@ -641,6 +641,26 @@ Estimate for U1: about 39,000 lines of C read (15,600 of them step 8), perhaps 2
 **U2, the root file server, planned when U1 is done.** The test for a file server: the same operations against the stock and the Zig server, the trees compared; and the disk format both ways, stock reading what Zig wrote and Zig what stock wrote, before it is ever the root. **To decide (3):** hjfs or gefs.
 
 **Not in this plan.** The compilers and linkers (`6c`, `6l`, `cc`: 28,000), `rio` (6,382; vtfs covers the terminal), `sam`, `acme`, `mothra`, `awk` (5,889; **to decide (4)**), `factotum` and everything that needs libsec and libmp in full (TLS, `tlsclient`, `secstore`, `aux/wpa`), `dossrv`, `9660srv`, `cwfs`, `webfs`, audio, `upas`, `venti`, and the long tail of `/amd64/bin` (706 files). Stock binaries keep running for all of it.
+
+**Progress.**
+- **Step 1, done 2026-11-15.** Sources from 11952 (the ISO), which for these files are the checkout's, but for `ls.c`.
+  - **`src/user/lib/tm.zig`** (`date.c`: 990 lines, then host tests) is the calendar, the zones' text, `tmfmt` and `tmparse`, with nothing taken from the system; **`date.zig`** reads `/env/timezone` and `/adm/timezone`, the clock, and has `ctime`, `localtime`, `gmtime` (`ctime.c`) and `dir.zig` gains `dirmode` (`dirmodefmt.c`, the C's `%M`). The format is a function writing into a `Fmt` that returns `error.Garbled`, not a print verb; `Tmfmt` has `fmt9` for use in a print. No lock around the zones until step 2.
+  - **Kept from C**, each shown by the twin below: the leap day counted into `yday` from February 1st; `tmparse`'s zone text for `+hh:mm` (`%c%d02:%02d`, so `-05:30` is "-502:30"); `asctime`'s 29 bytes with no 0 written after them.
+  - **Fixed from C, read and not shown** (each needs a format that ends early, where the C reads past the format's 0): a format ending in `_`; `tmparse`'s ending in `?`; `[...\` with nothing after the backslash.
+  - **Commands**, each from its C file: `date`, `bind`, `unmount`, `ps`, `dd`, `xargs`; and `ls -l` and `-m`. `bio.zig` gains `rdstr` (Brdstr with the delimiter dropped, read through `getc`).
+  - **`ls.zig` followed the wrong `ls.c`.** It was ported from the checkout, which cleans the name and prints `dir/.` as given; 11952's, the one in the guest, compresses slashes only (`xcleanname`) and prints the directory's own name (`ls -d d/.` is "d/d"). The earlier cases did not tell them apart. It is 11952's now, with cases that do.
+  - **Host tests** (`zig build test`): the calendar and its round trip through `tmnorm` over 285 years, a zone either side of a change and on it, wrong zone files and their messages, every format letter and width, garbled formats, parsing with its errors.
+  - **In the guest** (`usbzig.rc`), against stock:
+    - `tools/tmtest.c`, built there with `6c` against stock libc, and `tmtest.zig` print the same lines: for no zone, the local one, one there is not, and 8 zone files (Australia, CET, GMT, Japan, NZ, two of the US), 38 fixed times each through 25 formats (garbled ones too), `asctime` and `tmnorm`; 89 strings through `tmparse` (the result, how much was used, the error text); 3,000 generated times each; then `ctime`, `localtime`, `gmtime`. 3,605,950 bytes, the same.
+    - `date`: 10,596 bytes the same: fixed seconds, the flags, a garbled format (fatal, nothing printed), and with `/env/timezone` set to each of those zones the seconds either side of 2025's changes and on them, and to four broken zone texts and none.
+    - `ls` (13,315 bytes): a directory made for it with files changed long ago, an hour ago, half a day and two days ahead (both forms of the date), quoted names, an append-only and an exclusive-use file; `/dev`, `/env`, `/srv` for `%C` and the device numbers (their dates masked: such files have the time now); and the names that tell 11952 from later.
+    - `ps` (49,512): each flag, for the processes older than the script, with the times, the states and `-p`'s current priority masked (the first full runs differed there: hjfs's priority had moved between the two).
+    - `bind` and `unmount` (970) in a name space of their own, with what `ls` shows after each; `dd` (9,148): sizes and their suffixes, `skip`, `iseek`, `oseek`, `count`, `trunc`, `files`, every `conv` (an EBCDIC round trip, `swab` on records of 1 to 9 bytes, `sync` on a short read), and each error; `xargs` (798).
+    - All the same on the first run, but one line of the twin: a byte of 0x80 or more in a format is printed as it is (I had it as a rune of its own).
+  - **Found on the way: `libctest`'s floating point check never ran right on a real processor.** Under KVM with the host's CPU (`test-zuser` uses TCG's SandyBridge) it failed twice over. Its `ldmxcsr`/`fldcw` were given the values as "m" operands and the compiler loaded the control words from the slots holding their addresses: TCG takes any mxcsr, a real processor refuses reserved bits (general protection). And bit 6 of the x87 control word, reserved, reads as 1 on a real processor (0x272) and as written under TCG (0x232). Both are in the test, not the kernel: the addresses now go in registers and either value passes. The stick's `zig/run` on the real machine would have failed here.
+  - **Seen under KVM, in the script:** the `mk` comparison differed once by the place of one `6c` line: mk runs several jobs at once and their lines come in any order. The script sorts mk's output now.
+  - The runs while writing this were one pass of the script under KVM with the host's CPU (a minute each); `test-zuser` itself, under TCG and with the second pass under planZ's rc, is the check.
+  - Not tested: `ls -lu` on files whose access time moves; `xargs -n 0` (the C forks for ever); `dd`'s short write.
 
 **To decide**, with what is proposed:
 1. **The end state.** Proposed: U1 as above. Others: only the commands the scripts run (steps 1 and 5's commands; small, and leaves every server stock), or everything including the file server and factotum in one plan (adds about 35,000 lines of C, most of it cryptography).

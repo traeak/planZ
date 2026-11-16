@@ -232,12 +232,16 @@ pub fn main() !void {
     const fpid = try libc.fork();
     if (fpid == 0) {
         _ = try libc.dup(fp[1], 1);
-        const mx: u32 = 0x7f80;
-        const cw: u16 = 0x0c7f;
-        asm volatile ("ldmxcsr %[m]; fldcw %[c]"
+        // The addresses go in registers: given the values as "m"
+        // operands the compiler loaded the control words from the
+        // slots holding their addresses, which QEMU's TCG takes and a
+        // real processor refuses (reserved bits of mxcsr).
+        var mx: u32 = 0x7f80;
+        var cw: u16 = 0x0c7f;
+        asm volatile ("ldmxcsr (%[m]); fldcw (%[c])"
             :
-            : [m] "m" (mx),
-              [c] "m" (cw),
+            : [m] "r" (&mx),
+              [c] "r" (&cw),
         );
         libc.exec(libc.argv0, &.{ libc.argv0, "fpu" }) catch {};
         libc.exits("exec failed");
@@ -247,7 +251,11 @@ pub fn main() !void {
     const fn_ = try libc.readn(fp[0], &fbuf);
     _ = try libc.wait();
     try libc.close(fp[0]);
-    if (!std.mem.eql(u8, fbuf[0..fn_], "mxcsr 0x1900 fcw 0x232\n")) {
+    // bit 6 of the x87 control word is reserved: a real processor
+    // (and KVM) reads it as 1, QEMU's TCG as it was written
+    if (!std.mem.eql(u8, fbuf[0..fn_], "mxcsr 0x1900 fcw 0x232\n") and
+        !std.mem.eql(u8, fbuf[0..fn_], "mxcsr 0x1900 fcw 0x272\n"))
+    {
         libc.werrstr("got '%s'", .{fbuf[0..fn_]});
         fail("exec fpu");
     }

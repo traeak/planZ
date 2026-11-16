@@ -224,3 +224,21 @@ pub fn dirreadall(a: Allocator, fd: i32) Error!Dirs {
     }
     return dirpackage(a, buf.items);
 }
+
+/// from libc/9sys/dirmodefmt.c: the C's %M.
+pub fn dirmode(buf: *[11]u8, m: u32) []const u8 {
+    const modes = [8]*const [3]u8{ "---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx" };
+    buf[0] = if (m & fcall.DMDIR != 0)
+        'd'
+    else if (m & fcall.DMAPPEND != 0)
+        'a'
+    else if (m & fcall.DMAUTH != 0)
+        'A'
+    else
+        '-';
+    buf[1] = if (m & fcall.DMEXCL != 0) 'l' else '-';
+    buf[2..5].* = modes[(m >> 6) & 7].*;
+    buf[5..8].* = modes[(m >> 3) & 7].*;
+    buf[8..11].* = modes[m & 7].*;
+    return buf;
+}

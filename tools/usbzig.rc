@@ -303,6 +303,192 @@ fn seqs {
 	$p^seq 1 2 3 4; s
 }
 
+# zones there are, of those the tests want
+zl=`{ls -p /adm/timezone | grep -e '^(US_Mountain|US_Eastern|Australia_NSW|Australia_Sydney|Australia_ACT|NZ|GMT|CET|Japan)$'}
+# seconds either side of the changes of 2025, and on them: US Mountain
+# and Eastern, New South Wales
+tl=(1741510799 1741510800 1741510801 1762070399 1762070400 1762070401 1741503599 1741503600 1741503601 1762063199 1762063200 1762063201 1743868799 1743868800 1743868801 1759593599 1759593600 1759593601)
+fn dates {
+	p=$1
+	$p^date 0; $p^date -u 0; $p^date -n 12345; $p^date -t 1763259907; $p^date -i 1763259907
+	$p^date -u -t 1763259907; $p^date -f 'YYYY/M/D WWW h:mm:ss a ZZ' 951782400
+	$p^date -u 0x7fffffff; $p^date -u -1; $p^date -u 010; $p^date -u 4102444800; $p^date -u -n -5
+	$p^date -u -f '[the] Do [of] MMMM, YY; __D ttt ?' 1763259907; $p^date -u 12abc
+	$p^date -f 'YYYY YYY' 0; s
+	$p^date -f; s
+	$p^date 1 2; s
+	$p^date -x; s
+	for(zn in $zl) @{
+		rfork e
+		cat /adm/timezone/$zn >/env/timezone
+		echo $zn
+		for(i in $tl){
+			$p^date $i; $p^date -t $i; $p^date -n $i
+		}
+	}
+	@{rfork e; echo junk >/env/timezone; $p^date 0; s; $p^date -u 0; s}
+	@{rfork e; echo AB 1 CD 2 >/env/timezone; $p^date 0; s}
+	@{rfork e; echo ABC 3600 DEF 7200 5 x >/env/timezone; $p^date 0; s}
+	@{rfork e; echo ABC 3600 DEF 7200 -100 100 >/env/timezone; $p^date 0; $p^date 200; s}
+	@{rfork e; rm /env/timezone; $p^date 0; s}
+}
+
+# ls -l and -m, in a directory made for it (see lsdir), and the names
+# 11952's ls prints
+fn lss {
+	p=$1
+	@{
+		cd /tmp/zig.ls
+		$p^ls -l; $p^ls -lm; $p^ls -m; $p^ls -lsqT; $p^ls -lQ; $p^ls -ln; $p^ls -lr; $p^ls -lt; $p^ls -lF
+		$p^ls -ld . d d/. d/x; $p^ls -d /tmp/../tmp /tmp/zig.ls/. d/.; $p^ls d//x d/ .//d///; $p^ls -d /tmp/ / //
+		$p^ls -l d d/x 'a b'; $p^ls -lp d /lib/namespace; $p^ls -m d//x
+		# devices' files have the time now (the kernel's atime, rio's
+		# both), so the date is masked here
+		{
+			$p^ls -l /dev /env/home /srv /lib/namespace /amd64/bin/ip; $p^ls -lu /dev/null /dev/cons
+			$p^ls -ld /dev /env /srv /proc /tmp/zig.ls /
+		} | sed 's/ [A-Z][a-z][a-z] [ 0-9][0-9] [ 0-9][0-9][:0-9][0-9][0-9] / DATE /'
+		$p^ls -lz; s
+		$p^ls -l /nope d; s
+	}
+}
+
+# a directory for ls -l: files changed long ago, an hour ago, half a
+# day ahead and two days ahead, names that need quotes, a directory,
+# an append-only and an exclusive-use file
+fn lsdir {
+	rm -rf /tmp/zig.ls
+	mkdir -p /tmp/zig.ls/d
+	@{
+		cd /tmp/zig.ls
+		now=`{date -n}
+		touch -t 1000000000 old
+		touch -t `{awk 'BEGIN{printf "%d", '$now'-3600}'} recent
+		touch -t `{awk 'BEGIN{printf "%d", '$now'+43200}'} soon
+		touch -t `{awk 'BEGIN{printf "%d", '$now'+172800}'} future
+		touch -t `{awk 'BEGIN{printf "%d", '$now'-200*86400}'} lastyear
+		touch 'a b' 'it''s' d/x
+		echo 0123456789 >ten
+		chmod 640 ten; chmod +a old; chmod +l recent; chmod 0 soon; chmod 755 d/x
+	}
+}
+
+# ps of the processes older than this script, with the times, the
+# states and -p's current priority masked: they change between two
+# runs
+fn pss {
+	p=$1
+	for(f in '' -a -n -p -r -anpr -x){
+		if(~ $f '')
+			$p^ps
+		if not
+			$p^ps $f
+	} | awk '$2+0 < '$pid | sed -e 's/ *[0-9]+(:[0-9][0-9])+/ T/g' -e 's/K ......../K STATE   /' -e 's/ [ 0-9][0-9]( +[0-9]+K STATE)/ PP\1/'
+}
+
+# bind and unmount, in a name space of their own
+fn binds {
+	p=$1
+	mkdir -p /tmp/zig.b1 /tmp/zig.b2
+	echo one >/tmp/zig.b1/f1; echo two >/tmp/zig.b2/f2
+	@{
+		rfork n
+		$p^bind /tmp/zig.b1 /tmp/zig.b2; s; ls -p /tmp/zig.b2
+		$p^unmount /tmp/zig.b2; s; ls -p /tmp/zig.b2
+		$p^bind -a /tmp/zig.b1 /tmp/zig.b2; s; ls -p /tmp/zig.b2
+		$p^unmount /tmp/zig.b1 /tmp/zig.b2; s; ls -p /tmp/zig.b2
+		$p^bind -bc /tmp/zig.b1 /tmp/zig.b2; s; ls -p /tmp/zig.b2
+		echo x >/tmp/zig.b2/new; ls -p /tmp/zig.b1
+		$p^unmount /tmp/zig.b1 /tmp/zig.b2; s; ls -p /tmp/zig.b2
+		$p^unmount /tmp/zig.b2; s
+		$p^bind -b /tmp/zig.b1 /tmp/zig.b2; s; $p^bind -a /lib/ndb /tmp/zig.b2; s; ls -p /tmp/zig.b2 | sed 4q
+		$p^unmount /tmp/zig.b2; s; ls -p /tmp/zig.b2; $p^unmount /tmp/zig.b2; s
+		$p^bind /nope /tmp/zig.b2; s
+		$p^bind /tmp/zig.b1 /nope; s
+		$p^bind /tmp/zig.b1/f1 /tmp/zig.b2; s
+		$p^bind -q /nope /tmp/zig.b2; s
+		$p^bind -ab /tmp/zig.b1 /tmp/zig.b2; s
+		$p^bind; s; $p^bind -x a b; s; $p^bind a; s; $p^bind a b c; s
+		$p^unmount; s; $p^unmount a b c; s; $p^unmount /nope; s; $p^unmount /nope /tmp/zig.b2; s
+	}
+	rm -rf /tmp/zig.b1 /tmp/zig.b2
+}
+
+fn dds {
+	p=$1
+	f=/lib/namespace
+	o=/tmp/zig.ddo
+	$p^dd -if $f; s
+	$p^dd -if $f -ibs 7 -obs 13 -count 20 -skip 3; s
+	$p^dd -if $f -bs 64 -iseek 2 -count 2 -quiet 1; s
+	$p^dd -if $f -ibs 64 -obs 64 -count 2; s
+	$p^dd -if $f -of $o -bs 50 -oseek 3 -count 2; s; xd -c $o | sed 6q
+	echo hello | $p^dd -of $o -trunc 0 -quiet 1; s; xd -c $o | sed 3q
+	echo hello | $p^dd -of $o -seek 1 -bs 4 -trunc 1; s; xd -c $o
+	rm -f $o
+	$p^dd -if $f -conv ucase -count 1; $p^dd -if $f -conv lcase,ucase -bs 40 -count 1; $p^dd -if $f -conv lcase -count 1 -quiet 1
+	for(n in 1 2 3 4 5 6 7 8 9) $p^dd -if $f -conv swab -bs $n -count 2
+	$p^dd -if $f -conv swab,ucase -ibs 11 -obs 5 -count 3
+	$p^dd -if $f -conv block -cbs 20 -count 1; s
+	$p^dd -if $f -conv block,lcase -cbs 5 -count 1 -obs 33; s
+	$p^dd -if $f -conv block -count 1 | xd -c | sed 3q
+	$p^dd -if $f -conv unblock -cbs 10 -count 1; s
+	echo 'a    b      c  ' | $p^dd -conv unblock -cbs 6 | xd -c
+	$p^dd -if $f -conv ebcdic -count 1 | xd | sed 6q
+	$p^dd -if $f -conv ibm -count 1 | xd | sed 6q
+	$p^dd -if $f -conv ebcdic,ucase -cbs 16 -count 1 | xd | sed 6q
+	$p^dd -if $f -conv ibm -cbs 16 -count 1 | xd | sed 6q
+	$p^dd -if $f -conv ebcdic -quiet 1 | $p^dd -conv ascii -quiet 1 | sum
+	$p^dd -if $f -conv ebcdic -cbs 30 -quiet 1 | $p^dd -conv ascii -cbs 30 -quiet 1
+	$p^dd -if $f -conv ebcdic -quiet 1 | $p^dd -conv ascii,lcase -cbs 8 -count 1
+	echo abc | $p^dd -conv sync -bs 16 | xd -c
+	echo abc | $p^dd -conv noerror,sync,,swab -ibs 8 -obs 3 | xd -c
+	echo abc | $p^dd -files 3 -bs 2; s
+	$p^dd -if $f -bs 1k -count 1 | wc -c; $p^dd -if $f -bs 2x3x4 -count 1 | wc -c
+	$p^dd -if $f -bs 1b -count 1 | wc -c; $p^dd -if $f -bs 1kx2 -count 1 | wc -c
+	$p^dd -if $f -bs 4x2junk -count 1 | wc -c; $p^dd -if $f -count 1m -bs 1mb | wc -c
+	$p^dd -if $f -skip 100 -count 1; s
+	$p^dd -if $f -count 0 -bs 1000 | wc -c
+	$p^dd -bs; s
+	$p^dd bs 1; s
+	$p^dd -zz 1; s
+	$p^dd -conv ucase,foo; s
+	$p^dd -ibs 0; s
+	$p^dd -obs 0; s
+	$p^dd -bs 0 -if $f -count 1 | wc -c
+	$p^dd -bs 5q; s
+	$p^dd -bs 3000000000; s
+	$p^dd -count 9223372036854775808; s
+	$p^dd -bs 2147483647x2; s
+	$p^dd -if /nope; s
+	$p^dd -if $f -of /nope/x; s
+	$p^dd -if $f -of /nope/x -trunc 0; s
+	$p^dd -if /lib/ndb -count 1 -quiet 1 | wc -c; s
+}
+
+fn xargss {
+	p=$1
+	seq 1 25 | $p^xargs echo; s
+	seq 1 25 | $p^xargs -n 7 echo x y; s
+	seq 1 5 | $p^xargs -n 1 /bin/echo; s
+	seq 1 21 | $p^xargs -n 10 echo; s
+	seq 1 20 | $p^xargs -n 10 echo; s
+	echo -n 'a b
+c ''d''
+e' | $p^xargs -n 2 echo; s
+	echo -n | $p^xargs echo none; s
+	$p^xargs echo </dev/null; s
+	seq 1 3 | $p^xargs nosuchcmd; s
+	seq 1 3 | $p^xargs -n 2 ./nope; s
+	seq 1 3 | $p^xargs /nope/x; s
+	seq 1 12 | $p^xargs -p 3 -n 2 echo | sort; s
+	seq 1 40 | $p^xargs -p 4 -n 1 echo | sort | wc; s
+	seq 1 6 | $p^xargs -n 3 rc -c 'echo $*; exit bad'; s
+	$p^xargs; s
+	$p^xargs -x echo; s
+	$p^xargs -n; s
+}
+
 fn factors {
 	p=$1
 	$p^factor 1 2 12 97 1001 123456789 600851475143 9007199254740991 1.5
@@ -477,7 +663,11 @@ fn mks {
 			dircp /sys/src/cmd/$d /tmp/zig.mk
 			@{
 				cd /tmp/zig.mk
-				mk >[2=1]; s
+				# mk runs several jobs at once, and the order of
+				# their lines changes from run to run
+				mk >/tmp/zig.mko >[2=1]; s
+				sort /tmp/zig.mko
+				rm -f /tmp/zig.mko
 				for(f in `{ls})
 					if(test -f $f)
 						sha1sum $f
@@ -553,11 +743,14 @@ fn checks {
 	# sysfatal and some usage messages print argv0, which is /tmp/zig/x
 	# for planZ's programs: it is cut on both sides
 	inputs
-	for(c in mtime strings freq comm read unicode tr xd du test sed seq factor primes grep){
+	lsdir
+	for(c in mtime strings freq comm read unicode tr xd du test sed seq factor primes grep date ls ps bind dd xargs){
 		$c^s $Z >[2=1] | sed 's;/tmp/zig/;;g' >/tmp/zig.a
 		$c^s '' >[2=1] | sed 's;/tmp/zig/;;g' >/tmp/zig.b
 		t $c
 	}
+
+	rm -rf /tmp/zig.ls
 
 	# g, the script, running each grep
 	@{rfork n; bind $z/grep /bin/grep; g -i yyerror /sys/src/cmd/grep} >/tmp/zig.a >[2=1]
@@ -628,6 +821,22 @@ fn checks {
 		echo DIFF float: fltest.c did not build
 		cat /tmp/zig.cc
 		nbad=($nbad float)
+	}
+	rm -f /tmp/zig.cc
+
+	# dates: the Zig port against stock libc, which tmtest.c is built
+	# with here (see tools/tmtest.c), in no zone, the local one, one
+	# there is not, and the others
+	if(@{cd $z && 6c -FTVw tmtest.c && 6l -o tmtest.stock tmtest.6} >/tmp/zig.cc >[2=1]){
+		$Z^tmtest nil local nosuchzone $zl >/tmp/zig.a >[2=1]
+		$z/tmtest.stock nil local nosuchzone $zl >/tmp/zig.b >[2=1]
+		t dates
+		echo zones: local, $zl
+	}
+	if not {
+		echo DIFF dates: tmtest.c did not build
+		cat /tmp/zig.cc
+		nbad=($nbad dates)
 	}
 	rm -f /tmp/zig.cc
 

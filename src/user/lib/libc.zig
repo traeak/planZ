@@ -109,6 +109,7 @@ pub const dirfwstat = dir_.dirfwstat;
 pub const dirread = dir_.dirread;
 pub const dirreadall = dir_.dirreadall;
 pub const nulldir = dir_.nulldir;
+pub const dirmode = dir_.dirmode;
 
 // Processes
 
@@ -157,6 +158,25 @@ pub const NaN = flt_.NaN;
 pub const Inf = flt_.Inf;
 pub const isNaN = flt_.isNaN;
 pub const isInf = flt_.isInf;
+
+// Dates and times (tm.zig, date.zig)
+
+const date_ = @import("date.zig");
+pub const Tm = date_.Tm;
+pub const Tzone = date_.Tzone;
+pub const tzload = date_.tzload;
+pub const tmnow = date_.tmnow;
+pub const tmtime = date_.tmtime;
+pub const tmtimens = date_.tmtimens;
+pub const tmnorm = date_.tmnorm;
+pub const tmfmt = date_.tmfmt;
+pub const tmfmtarg = date_.tmfmtarg;
+pub const tmparse = date_.tmparse;
+pub const localtime = date_.localtime;
+pub const gmtime = date_.gmtime;
+pub const asctime = date_.asctime;
+pub const ctime = date_.ctime;
+pub const ascraw = date_.ascraw;
 
 /// atof: strtod's value.
 pub fn atof(s: []const u8) f64 {
