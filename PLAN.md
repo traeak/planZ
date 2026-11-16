@@ -593,9 +593,65 @@ Progress:
 
 **Decided:** Ctl-Alt-Left and Ctl-Alt-Right switch, and Ctl-Alt-1 … Ctl-Alt-4 go straight to a console; 4 consoles, shells on 1 to 3 and the kernel's messages on 4; `session=vt` replaces rio as the default. QEMU's own window takes Ctl-Alt-1, -2 … for its consoles, so there the digits reach the guest only through the monitor's `send-key` (as the tests send them); a real machine is unaffected.
 
+#### More userland in Zig: draft plan, not started
+The Zig library and about forty programs exist (libc, bio, regexp, srv, draw; the commands, `grep`, `sed`, `rc`, `vtfs`). This plan takes the next part: the programs that run between the kernel and the prompt. Drafted 2026-11-15; nothing below is built.
+
+**Where it stands, measured.** `ps` at the vtfs prompt (QEMU, the 9front disk, a USB keyboard) shows these user programs:
+
+| Program | Is | C lines | Libraries beyond libc |
+|---|---|---|---|
+| `vtfs` | Zig | | |
+| `rc` (the consoles' and `bootrc`'s) | stock; Zig with `-Dzigrc` | | |
+| `init` | stock | 255 | libauth (`newns`) |
+| `mntgen` (3 of them) | stock | 242 | lib9p (`postmountsrv`) |
+| `aux/kbdfs` | stock | 1,924 | libthread (5 threads, 6 procs, 11 channels), lib9p |
+| `nusb/usbd`, `nusb/kb` | stock | 1,505 + 1,198, and `nusb/lib` 1,356 | libthread, lib9p |
+| `paqfs` | stock | 1,790 | libflate (2,548), `sha1` |
+| `auth/factotum` | stock | 7,022 | libthread, lib9p, libauthsrv, libsec, libmp |
+| `hjfs` | stock | 4,371 | libthread (1 thread, 4 procs, 5 channels), lib9p, `sha1` |
+| `ndb/cs`, `ndb/dns` | stock | 2,020; about 4,500 | libndb (1,768), libip (1,144), bio |
+| `aux/timesync` | stock | 1,387 | libip, libmp |
+
+The scripts on the way (`bootrc`, `local.rc`, `net.rc`, `nusbrc`, `termrc`, `fshalt`) name 60 programs of `/amd64/bin`. 16 are in Zig already (`cat chmod cp echo grep ls mkdir mv pwd rc read rm sed sleep test wc`). Of the others a boot from a local disk runs `bind`, `mount`, `unmount`, `dd`, `ps`, `awk`, `ip/ipconfig`, `nusb/disk`, `ramfs`, `dossrv` and those in the table.
+
+**The cost is in the libraries.** Each program above is small; what they stand on is not in `src/user/lib`: processes that share memory and their locks, libthread (2,591), lib9p (2,804), libauth (1,448) and libauthsrv (1,413), libndb, libip, dial, the time functions, and for some libsec (23,599) and libmp (6,705). So the plan is library layers, each proved by the programs that need it.
+
+**End state proposed (U1).** A terminal booted from a local disk to the vtfs prompt runs no stock program but the root file server (`hjfs`) and `factotum`. The check is the table above: `ps` in `test-vt`, compared with a list. The file server is a second plan (U2, below), and `factotum` waits for the cryptography.
+
+**Rules, as for everything ported so far.**
+- Each program and library file is ported from its 9front C file, in the C's function order, with `// DIFF:` where it departs and "Fixed from C" where the C is wrong and stock shows it.
+- The API is Zig's: slices and no NUL-terminated strings, error unions, tagged unions.
+- Each step is tested before the next. A command is compared with the stock one in `usbzig.rc` (output, exit status, messages). A server is given the same operations as the stock server and the results are compared.
+- **Nothing on the way to the prompt is replaced by default until it is proven.** Each replacement comes in through a build option that puts it on the boot volume, as `-Dzigrc` does for rc; a boot with the option is a test of its own, and the default changes only after that and a run on the real machine. A failed replacement here leaves no shell.
+- **Sources.** The guest's binaries are 9front 11952; `../9front` is 190 commits later (2026-11-10). As for libdraw, each port is taken from 11952, unpacked from the ISO into `ref/src`. The line counts in this plan are from the later tree and are approximate.
+
+**Steps.**
+1. **Time, and the last small commands.** `date.c` and `tm` from libc (about 1,100 lines: `tmnow`, `tmfmt`, time zones from `/env/timezone`), which `ls -l`, `date`, `ps` and `seq`'s remaining formats wait for. Then `bind` (52), `unmount` (31), `dd` (678), `ps` (182), `date` (67), `xargs` (72), and `ls -l`/`-m`. In `usbzig.rc`. Estimate: 1,500 lines of Zig.
+2. **Processes that share memory.** `rfork(RFMEM)` with a stack of its own, `Lock` (`lock.c`, 41), `QLock`, `RWLock`, `Rendez` (`qlock.c`, 367), `rendezvous` and `semacquire` (the calls exist in `sys.zig`), the atomic operations, and per-process data: today the error string and `argv0` are one per program. Proof: `locktest`, some processes over one counter and one queue, in the guest with 4 processors. This is what gefs is written on, and what libthread stands on. Estimate: 700 lines.
+3. **libthread** (2,591): procs, threads within a proc (a context switch in assembly for amd64), channels with `alt`, `threadmain`, `procexec`, `threadnotify`. Proof: a port of the C tests of channel order, in the guest. **To decide (2).**
+4. **lib9p** (2,804) on `fcall.zig`: `Srv` with `Req`, `Fid`, `File` and `Tree`, `postmountsrv` and the threaded forms, the flush and walk rules. `srv.zig` stays for vtfs. Proof: `ramfs` (516) and `mntgen` (242), each against the stock one under the same script (the file-operations sequence of `usbzig.rc`, and a tree compare). `mntgen` is the first replacement on the way to the prompt (`-Dzigboot`, with each later one added to it).
+5. **libauth, the client half** (`newns`, `addns`, `amount`, `auth_proxy`, `auth_getkey`; about 1,400): then `mount` (120), `srv` (249) and `init` (255). `init` under the option. Test: the name space after `init`, `ns` compared with stock's.
+6. **`aux/kbdfs`** (1,924). Test: the keyboard tests there are (`test-vt`, `test-rio`, `test-text`, `test-usb`) with the option, and its `kbmap` and `kbdin` files compared with stock's. Known in the C: a rune is dropped when a line passes 256 (found in the libc plan); to fix as "Fixed from C" and show.
+7. **`nusb/lib`, `usbd`, `kb`, `disk`** (6,568). Test: `test-usb` with the option; then the stick on the real machine, which is the only place a hub with transaction translators is.
+8. **The network's programs**: `dial` and `announce` (libc, about 500), libndb (1,768), libip (1,144); then `ip/ipconfig` (4,271), `ndb/cs` (2,020), `ndb/dns` (about 4,500), `aux/timesync` (1,387). Test: `test-net` with the option, and `ndb/query`, `ndb/dnsquery` answers compared with stock's. Needs from libmp only what `timesync` uses; to be read.
+9. **`paqfs`** (1,790) with libflate's inflate and `sha1`. Test: the same `bootfs.paq` mounted by both, the trees compared.
+
+Estimate for U1: about 39,000 lines of C read (15,600 of them step 8), perhaps 28,000 of Zig. Steps 1, 2 and 8's libraries do not depend on 3 and 4 and can go in any order.
+
+**U2, the root file server, planned when U1 is done.** The test for a file server: the same operations against the stock and the Zig server, the trees compared; and the disk format both ways, stock reading what Zig wrote and Zig what stock wrote, before it is ever the root. **To decide (3):** hjfs or gefs.
+
+**Not in this plan.** The compilers and linkers (`6c`, `6l`, `cc`: 28,000), `rio` (6,382; vtfs covers the terminal), `sam`, `acme`, `mothra`, `awk` (5,889; **to decide (4)**), `factotum` and everything that needs libsec and libmp in full (TLS, `tlsclient`, `secstore`, `aux/wpa`), `dossrv`, `9660srv`, `cwfs`, `webfs`, audio, `upas`, `venti`, and the long tail of `/amd64/bin` (706 files). Stock binaries keep running for all of it.
+
+**To decide**, with what is proposed:
+1. **The end state.** Proposed: U1 as above. Others: only the commands the scripts run (steps 1 and 5's commands; small, and leaves every server stock), or everything including the file server and factotum in one plan (adds about 35,000 lines of C, most of it cryptography).
+2. **libthread: port it, or write each server on reader processes and one loop, as vtfs is.** Proposed: port it. kbdfs, hjfs, nusb and factotum are written on its channels, and a port file by file can be compared with the C only if the structure is kept. Against: a context switch in assembly per architecture, and a library the Zig programs written new do not need.
+3. **hjfs or gefs first.** "Later" below says gefs. But the disk image and the stick's root are hjfs, so a gefs port cannot be the root in any test without a gefs image made by stock 9front first, and the real machine's stick would change format. hjfs is a third the size (4,371 against 11,906) and can be tested as root on the image there is; it needs libthread and lib9p, which U1 brings. gefs needs neither (it is on step 2's locks and its own 9P loop). Proposed: hjfs first, as the root's replacement under the option; gefs after, as the file server to move to.
+4. **awk.** `bootrc` and `termrc` use it in a few lines. Proposed: leave it stock; the alternative is its 5,889 lines (a yacc grammar; `tools/yacc2zig.py` is there from rc).
+5. **How much of libsec.** Proposed: only the digests the steps name (`sha1`), each from its C file with the test vectors; no ciphers, no TLS.
+
 ### Later
 - aarch64 port (QEMU `virt` first: GIC, PL011, virtio-mmio or PCI).
-- Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail. The first step, a minimal libc, is planned above under M9; the rest is still to be examined as a topic of its own. `src/user` already shows that Zig can produce Plan 9 a.out binaries without a host tool.
+- Userland in Zig: libc, `boot`, `rc`, core utilities, file servers, then the long tail. The library, the commands, rc and vtfs are done (above, under M9); what follows is drafted there as "More userland in Zig". `src/user` already shows that Zig can produce Plan 9 a.out binaries without a host tool.
 - File servers are user programs, so `gefs`, `cwfs` and `hjfs` run unmodified as stock binaries from M7 and need no port for the kernel to use them. When userland is ported, `gefs` (about 12K lines of C) is the file server to do first.
 
 ## Future additions
