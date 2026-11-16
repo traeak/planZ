@@ -203,6 +203,11 @@ const Ab = 0x00000008; // Accept Broadcast
 const Ar = 0x00000010; // Accept Runt
 const Aer = 0x00000020; // Accept Error
 const RxcfgConfig8125b = 0x41000C00; // (RGE_RXCFG_CONFIG_8125B)
+// On the RTL8125B (macv 0x64100000, rev 5) Rcr reads back with bit 17
+// (0x00020000) set whatever is written: ifstat shows rcr 0x41020c0e
+// for want 0x41000c0e.  No driver names the bit: rge and Linux's
+// r8169 change Rcr by reading it first, and Realtek's r8125 keeps the
+// chip's bits 17 to 22 (its RxConfigMask, 0xff7e5880) when it writes.
 
 // Cr9346
 const Eem0 = 0x40; // Operating Mode
