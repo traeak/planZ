@@ -427,13 +427,28 @@ Steps, each tested before the next:
 
 Estimate: about 900 lines of Zig with tests.
 
-Progress, steps 1–5 (step 6, timing, not done):
+Progress, steps 1–6:
 - **`src/user/cmd/grep/re.zig`** (the lexer, recursive-descent parser, graph, classes and DFA; 740 lines, then the host tests) and **`src/user/cmd/grep.zig`** (main and the byte loop, 260 lines). States are arena pointers with `next: [256]?*State`, as in C; nodes are a tagged union linked by index. The parser gives "empty pattern" for any first token that cannot start an expression (yacc's first state reduces the empty program by default), so `grep ')'` and `grep '[abc'` say "empty pattern", as stock does.
 - **Host tests** (`zig build test`): the grammar and its messages, "class too big" at 100 entries and "class too long", 300 random rune ranges as classes and negated classes against the runes' encodings, and 3,000 random patterns (alternatives by `|` and newline, groups, `* + ?`, classes, `^`/`$`) each over 200 lines in one run, against a backtracking matcher.
 - **In the guest** (`usbzig.rc`): about 150 grep runs compared with stock, output and exit status, all the same (200,420 bytes), and stock's `g` script running each grep (same).
 - **Found in the C, both Fixed from C** and checked in `usbzig.rc` against what is right (stock's output is printed beside):
   1. The trailing `\`, confirmed: stock `grep 'a' '('` reads on into the next argument and fails with "syntax error"; the Zig's pattern ends there, as plain `a` would.
   2. **The generation wraps.** Nodes are marked visited with a `ushort` generation, one more per new DFA transition; after 65536 transitions a node last visited exactly that many before looks visited and is skipped. `tools/grepwrap.zig` (run on the host by `build.zig`) drives the port, which makes the C's transitions in the C's order, to build a pattern ("zz", or `a` and 15 of `(a|b)`) and a 322K input where that happens on the last line: stock prints 5,267 lines and misses line 8168, which ends in "zz"; awk finds 5,268. The Zig's generation is 32 bits.
+- **Step 6, timing** (`tools/greptime.sh`, not part of `zig build`; 2026-11-15). planZ boots the 9front disk under KVM with one processor and `session=text`; `tools/greptime.rc` in the guest repeats the manual pages to 32MB (1,577,108 lines) in a ramfs, and each run reads it 8 times (256MB). Before timing, both programs run each case once over the text and the outputs are compared: all the same. Each case then runs under `time` with stock and with planZ's grep in turn, 5 rounds; the table is each program's fastest round, since other work on the host only adds time (a first run, on a loaded host, had rounds three times slower for both). planZ's grep is built ReleaseSafe. `time` counts in hundredths, so the real times are the steadier column.
+
+  | case | arguments | lines | stock real | planZ real | stock/planZ |
+  |---|---|---|---|---|---|
+  | none | `-c xyzzyq` | 0 | 0.47 | 0.38 | 1.24 |
+  | word | `-c the` | 246,298 | 0.49 | 0.41 | 1.20 |
+  | fold | `-ci plan` | 5,785 | 0.71 | 0.39 | 1.82 |
+  | class | `-c '[A-Z][a-z]+ [0-9]+'` | 6,721 | 0.47 | 0.38 | 1.24 |
+  | alt | `-c '(read\|write\|open\|close)\('` | 1,001 | 0.65 | 0.42 | 1.55 |
+  | dots | `-c 'a.*b.*c.*d'` | 27,144 | 0.47 | 0.38 | 1.24 |
+  | invert | `-vc e` | 752,505 | 0.50 | 0.40 | 1.25 |
+  | print | `the` (to `/dev/null`) | 246,298 | 0.60 | 0.47 | 1.28 |
+  | number | `-n the` | 246,298 | 0.70 | 0.53 | 1.32 |
+
+  planZ's grep is faster in every case, by a fifth to a quarter in most; with `-i` by 1.8. Two earlier runs gave the same real times within 0.02s, but for `alt`, where stock had 0.47 (ratio 1.21 to 1.24). The times include reading the ramfs through 9P, the same for both. Not looked at: where the difference comes from (the compiler or the code).
 - The `follow` bound (suspicion 2) is kept as the C's check over a list that grows, so the port is safe either way; whether the C's array can overflow was not settled.
 - Kept from the C and tested: `[^ab]` matches a raw 0xff byte where `[^a]` does not; `.` and classes never match bytes that are not UTF-8; `x^` matches a line after one ending in x; `-f` before `-e` makes the `-e` read the (finished) file, so it fails with "empty pattern".
 - Seen while testing, not from grep: during `usbzig.rc`'s sed cases the guest printed `rc: can't open: file does not exist: '/env//tmp'` outside every compared output. Found in rc step 7: the case `$p^sed = $u` had a bare `=`, so rc took it for an assignment to a variable named `/tmp/zig/sed` (`sed` on the stock side), which it could not write to `/env`, and `sed =` never ran. It is quoted now.

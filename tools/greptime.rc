@@ -1,0 +1,54 @@
+#!/bin/rc
+# Time planZ's grep against stock grep; run in the guest by
+# tools/greptime.sh, which reads the lines this prints.
+#
+# usage: greptime.rc zig-grep rounds
+#
+# The text is the manual, repeated to 32MB or more, in a ramfs, and
+# each run reads it 8 times.  Each case runs with both programs in
+# turn, rounds times, under time(1); before that, both run once over
+# the text and their outputs are compared.
+
+z=$1
+rounds=$2
+ramfs -m /n/gt || exit ramfs
+cp $z /n/gt/zgrep && chmod +x /n/gt/zgrep
+cat /sys/man/[1-8]/* >/n/gt/one >[2]/dev/null
+n=`{ls -l /n/gt/one | awk '{print int(32000000/$6)+1}'}
+{
+	for(i in `{seq 1 $n})
+		cat /n/gt/one
+} >/n/gt/big
+rm /n/gt/one
+echo gt text `{ls -l /n/gt/big | awk '{print $6}'} bytes `{wc -l </n/gt/big} lines
+f=/n/gt/big
+ff=($f $f $f $f $f $f $f $f)
+
+fn case {
+	name=$1
+	shift
+	grep $* $f >/n/gt/a >[2=1]
+	/n/gt/zgrep $* $f >/n/gt/b >[2=1]
+	if(cmp -s /n/gt/a /n/gt/b)
+		echo gt same $name `{wc -l </n/gt/a} lines `{sed 1q /n/gt/a | awk '{print substr($0, 1, 30)}'}
+	if not
+		echo gt differ $name
+	rm /n/gt/a /n/gt/b
+	for(i in `{seq 1 $rounds}){
+		echo gt run $name stock
+		time grep $* $ff >/dev/null
+		echo gt run $name zig
+		time /n/gt/zgrep $* $ff >/dev/null
+	}
+}
+
+case none -c xyzzyq
+case word -c the
+case fold -ci plan
+case class -c '[A-Z][a-z]+ [0-9]+'
+case alt -c '(read|write|open|close)\('
+case dots -c 'a.*b.*c.*d'
+case invert -vc e
+case print the
+case number -n the
+echo gt done

@@ -119,8 +119,9 @@ original.
 ## Performance
 
 `tools/kbench.sh` boots stock 9front's kernel and planZ in identical
-KVM machines and runs the same benchmark binary on both. Results and
-caveats are in PLAN.md.
+KVM machines and runs the same benchmark binary on both.
+`tools/greptime.sh` times planZ's `grep` against the stock one in the
+guest. Results and caveats are in PLAN.md.
 
 ## License
 
