@@ -12,8 +12,7 @@
 //! the error.  The library checks the fids, the modes and the walks,
 //! and answers what the server leaves out.
 //!
-//! Not ported yet: auth.c (auth9p and the rest: step 5, with libauth)
-//! and listen.c (listensrv: with dial and announce).
+//! Not ported yet: listen.c (listensrv: with dial and announce).
 //!
 //! DIFF (all files):
 //!   - Strings are slices; an error is `?[]const u8`, null for none.
@@ -292,6 +291,13 @@ pub const OMASK = 3;
 pub const readstr = util_.readstr;
 pub const readbuf = util_.readbuf;
 pub const walkandclone = srv_.walkandclone;
+
+const auth_ = @import("auth.zig");
+pub const auth9p = auth_.auth9p;
+pub const authread = auth_.authread;
+pub const authwrite = auth_.authwrite;
+pub const authdestroy = auth_.authdestroy;
+pub const authattach = auth_.authattach;
 
 pub const srvacquire = srv_.srvacquire;
 pub const srvrelease = srv_.srvrelease;

@@ -58,6 +58,101 @@ fn qtoken(buf: []u8, start: usize) struct { end: usize, next: usize } {
     return .{ .end = end, .next = t };
 }
 
+fn etoken(s: []u8, t0: usize, seps: []const u8) usize {
+    // move to end of next token
+    var t = t0;
+    var quoting = false;
+    while (t < s.len and s[t] != 0 and (quoting or std.mem.indexOfScalar(u8, seps, s[t]) == null)) {
+        if (s[t] != '\'') {
+            t += 1;
+            continue;
+        }
+        // s[t] is a quote
+        if (!quoting) {
+            quoting = true;
+            t += 1;
+            continue;
+        }
+        // quoting and we're on a quote
+        if (t + 1 >= s.len or s[t + 1] != '\'') {
+            // end of quoted section; absorb closing quote
+            t += 1;
+            quoting = false;
+            continue;
+        }
+        // doubled quote; fold one quote into two
+        t += 2;
+    }
+    return t;
+}
+
+/// Split s into at most args.len fields separated by the bytes of seps,
+/// which are not separators inside rc-style quotes; unlike tokenize the
+/// quotes stay in the fields.  The fields are slices of s, in which
+/// the separators before each field are set to 0.  A NUL ends the
+/// string.  Returns the number of fields.
+/// from libc/port/tokenize.c (gettokens)
+/// DIFF: seps is bytes, not runes.
+pub fn gettokens(s: []u8, args: [][]u8, seps: []const u8) usize {
+    var p: usize = 0;
+    var nargs: usize = 0;
+    while (nargs < args.len) : (nargs += 1) {
+        while (p < s.len and s[p] != 0 and std.mem.indexOfScalar(u8, seps, s[p]) != null) {
+            s[p] = 0;
+            p += 1;
+        }
+        if (p >= s.len or s[p] == 0)
+            break;
+        const e = etoken(s, p, seps);
+        args[nargs] = s[p..e];
+        p = e;
+    }
+    return nargs;
+}
+
+/// Split str at the bytes of set into at most args.len fields, which
+/// are slices of str; each separator found is set to 0, as in C.
+/// With mflag, runs of separators count as one and empty fields are
+/// not made.  A NUL ends the string.  Returns the number of fields.
+/// from libc/port/getfields.c
+/// DIFF: set is bytes, not runes.
+pub fn getfields(str: []u8, args: [][]u8, mflag: bool, set: []const u8) usize {
+    if (args.len == 0)
+        return 0;
+
+    // as the C does, each field's start is noted first; where each
+    // ends is where a 0 was put, or the end of the string
+    var narg: usize = 0;
+    args[narg] = str[0..0];
+    if (!mflag)
+        narg += 1;
+    var intok = false;
+    var i: usize = 0;
+    while (i < str.len and str[i] != 0) : (i += 1) {
+        if (std.mem.indexOfScalar(u8, set, str[i]) != null) {
+            if (narg >= args.len)
+                break;
+            str[i] = 0;
+            intok = false;
+            args[narg] = str[i + 1 .. i + 1];
+            if (!mflag)
+                narg += 1;
+        } else {
+            if (!intok and mflag)
+                narg += 1;
+            intok = true;
+        }
+    }
+    for (args[0..narg]) |*a| {
+        const st = @intFromPtr(a.ptr) - @intFromPtr(str.ptr);
+        var e = st;
+        while (e < str.len and str[e] != 0)
+            e += 1;
+        a.* = str[st..e];
+    }
+    return narg;
+}
+
 /// Split s into at most args.len fields separated by white space, with
 /// rc-style quoting.  The fields are slices of s, which is edited in
 /// place.  A NUL ends the string.  Returns the number of fields.

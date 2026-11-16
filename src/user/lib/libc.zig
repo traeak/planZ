@@ -212,6 +212,8 @@ pub const lnrand = rand_.lnrand;
 // Strings and arguments
 
 pub const tokenize = string_.tokenize;
+pub const gettokens = string_.gettokens;
+pub const getfields = string_.getfields;
 pub const atoi = string_.atoi;
 pub const cleanname = string_.cleanname;
 pub const needsrcquote = string_.needsrcquote;

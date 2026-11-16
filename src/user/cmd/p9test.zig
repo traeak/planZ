@@ -5,7 +5,10 @@
 //! The twin of tools/p9test.c, which is built in the guest against
 //! stock lib9p and is the same server.
 //!
-//! usage: p9test srvname
+//! usage: p9test [-a] srvname
+//!
+//! With -a its clients must authenticate (auth9p and the rest of
+//! lib9p's auth.zig, with factotum).
 //!
 //! The files: ctl takes "set word", "add a b" and "echo ..."; str
 //! reads back what they left; slow answers a read after 200ms and
@@ -90,11 +93,17 @@ fn fsclone(_: *Fid, _: *Fid) ?[]const u8 {
     return null;
 }
 
-fn fsdestroyfid(_: *Fid) void {
+fn fsdestroyfid(fid: *Fid) void {
     nclunk += 1;
+    if (doauth)
+        p9.authdestroy(fid);
 }
 
+var doauth = false;
+
 fn fsattach(r: *Req) void {
+    if (doauth and !p9.authattach(r))
+        return;
     r.ofcall.qid = .{ .path = Qroot, .vers = 0, .type = fcall.QTDIR };
     r.fid.?.qid = r.ofcall.qid;
     respond(r, null);
@@ -118,6 +127,10 @@ fn slowread(r: *Req) void {
 fn fsread(r: *Req) void {
     var buf: [128]u8 = undefined;
 
+    if (r.fid.?.qid.type & fcall.QTAUTH != 0) {
+        p9.authread(r);
+        return;
+    }
     switch (r.fid.?.qid.path) {
         Qroot => {
             p9.dirread9p(r, dirgen, null);
@@ -133,6 +146,10 @@ fn fsread(r: *Req) void {
 }
 
 fn fswrite(r: *Req) void {
+    if (r.fid.?.qid.type & fcall.QTAUTH != 0) {
+        p9.authwrite(r);
+        return;
+    }
     if (r.fid.?.qid.path != Qctl) {
         respond(r, "not the ctl file");
         return;
@@ -179,9 +196,15 @@ var fs: p9.Srv = .{
     .end = fsend,
 };
 
-pub fn threadmain(argv: []const []const u8) void {
+pub fn threadmain(argv_: []const []const u8) void {
+    var argv = argv_;
+    if (argv.len == 3 and std.mem.eql(u8, argv[1], "-a")) {
+        doauth = true;
+        fs.auth = p9.auth9p;
+        argv = argv[1..];
+    }
     if (argv.len != 2)
-        libc.sysfatal("usage: p9test srvname", .{});
+        libc.sysfatal("usage: p9test [-a] srvname", .{});
     q = p9.reqqueuecreate();
     p9.threadpostmountsrv(&fs, argv[1], null, 0);
     thread.threadexits(null);

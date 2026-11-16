@@ -117,11 +117,11 @@ fn boot() !noreturn {
     // configuration lists under bootdir, the script that starts what
     // runs after boot (tools/session), planZ's rc (zig build -Dzigrc),
     // vtfs (session=vt), and the programs of 9front's boot that planZ's
-    // replace (zig build -Dzigboot): mntgen.
+    // replace (zig build -Dzigboot): mntgen and init.
     const boot_pages = try allocPages(1);
     const boot_files: [*]bootinfo.BootFile = @ptrCast(@alignCast(boot_pages.ptr));
     var nboot: usize = 0;
-    inline for (.{ "boot", "paqfs", "factotum", "bootfs.paq", "session", "rc", "vtfs", "mntgen" }) |name| {
+    inline for (.{ "boot", "paqfs", "factotum", "bootfs.paq", "session", "rc", "vtfs", "mntgen", "init" }) |name| {
         const path = std.unicode.utf8ToUtf16LeStringLiteral("boot\\" ++ name);
         if (try readFile(root, path)) |data| {
             var f: bootinfo.BootFile = .{ .name = @splat(0), .base = @intFromPtr(data.ptr), .len = data.len };

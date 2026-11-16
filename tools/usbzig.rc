@@ -1319,6 +1319,201 @@ EOF
 	if not
 		echo same 9p: the servers have exited
 
+	# libauth: authtest against stock libauth, which authtest.c is built
+	# with here (see tools/authtest.c): the attribute lists, and the
+	# name space newns and addns make of /lib/namespace and of files
+	# written for it.  Each run is in a name space and an environment
+	# of its own (rfork ne): what addns and chdev do cannot be undone.
+	rm -f /srv/zt.^(m e q b c bad as)
+	cat >/tmp/zt.ns1 <<'EOF'
+# a name space for the test
+mount -aC #s/boot /root $rootspec
+bind -a $rootdir /
+bind -c $rootdir/mnt /mnt
+bind #c /dev
+bind -b '#e' /env
+bind '#p' /proc
+bind -c '#s' /srv
+bind /$cputype/bin /bin
+	# a comment after a tab
+  bind -a /rc/bin /bin
+bind -c /usr/$user/tmp /tmp
+bind -a '/n/a b$user' /nonexistent
+bind /lib/'$user' '/n/it''s'
+bind $nosuchvar/lib$nosuch.x /n/y
+bind a b c
+bind
+unmount /rc/bin /bin
+unmount /n/nothere
+bind -a /rc/bin /bin
+mount /srv/nothere /n/q
+mount -b #s/boot /n/again
+mount #s/boot /n/spec main/active extra
+. /tmp/zt.ns2
+. /tmp/nothere
+1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
+bogus line
+cd /usr/$user
+bind /lib /n/lastline
+EOF
+	echo -n 'bind /lib /n/nonewline' >>/tmp/zt.ns1
+	cat >/tmp/zt.ns2 <<'EOF'
+bind -b /lib /n/included
+chdev -r A
+EOF
+	cat >/tmp/zt.ns3 <<'EOF'
+bind #c /dev
+bind '#p' /proc
+clear
+bind '#e' /env
+cd /nothere
+EOF
+	if(@{cd $z && 6c -FTVw authtest.c && 6l -o authtest.stock authtest.6} >/tmp/zig.cc >[2=1]){
+		fn nst {
+			$1 attr
+			$1 newns
+			$1 newns /tmp/zt.ns1
+			$1 newns /tmp/zt.ns3
+			$1 newns /tmp/nothere
+			$1 addns /tmp/zt.ns2
+			$1 addns
+			$1 addns /tmp/nothere
+		}
+		@{rfork ne; nst $z/authtest.stock} >/tmp/zig.b >[2=1]
+		@{rfork ne; nst $Z^authtest} >/tmp/zig.a >[2=1]
+		t libauth
+	}
+	if not {
+		echo DIFF libauth: authtest.c did not build
+		cat /tmp/zig.cc
+		nbad=($nbad libauth)
+	}
+	rm -f /tmp/zig.cc /tmp/zt.ns1 /tmp/zt.ns2 /tmp/zt.ns3
+
+	# mount and srv against the stock ones, on stock ramfs; srv only
+	# with -e (a command) and on a /srv file that is there: planZ's
+	# has no dial yet
+	fn mnts {
+		m=$1
+		ramfs -S zt.m
+		for(f in '' -a -b -c -C -ac -bC -n -q '-k x=y'){
+			$m `{echo $f} /srv/zt.m /n/zt.m1; s
+			ns | grep 'zt\.m'
+			unmount /n/zt.m1
+		}
+		$m /srv/zt.m /n/zt.m1 aspec; s; ns | grep 'zt\.m'; unmount /n/zt.m1
+		$m -a -b /srv/zt.m /n/zt.m1; s
+		$m; s
+		$m a; s
+		$m a b c d; s
+		$m -x a b; s
+		$m -k; s
+		$m /srv/nothere /n/zt.m1; s
+		$m -q /srv/nothere /n/zt.m1; s
+		$m /srv/zt.m /n/zt.m1/no/such; s
+		$m -q /srv/zt.m /n/zt.m1/no/such; s
+		$m /tmp /n/zt.m1; s
+		@{$m -N /srv/zt.m /n/zt.m1; s; cat /dev/user; echo}
+		ns | grep 'zt\.m'; unmount /n/zt.m1
+		rm -f /srv/zt.m
+	}
+	fn srvs {
+		x=$1
+		$x -c -e 'ramfs -i' zt.e /n/zt.e; s
+		echo hi >/n/zt.e/f; cat /n/zt.e/f; ns | grep 'zt\.e'
+		$x -e 'ramfs -i' zt.e; s
+		$x -e 'ramfs -i' zt.e /n/zt.e2; s
+		cat /n/zt.e2/f; ns | grep 'zt\.e'
+		$x -q -e 'ramfs -i' zt.q; s
+		ls /srv/zt.q; ns | grep 'zt\.q'
+		$x -bn -e 'ramfs -i' zt.b /n/zt.e; s
+		ns | grep 'zt\.[be]'
+		$x -m -e 'ramfs -i' zt.c; s
+		ns | grep 'ramfs'
+		$x -e 'echo not 9p; exit 1' zt.bad /n/zt.bad; s
+		$x -a -b x; s
+		$x; s
+		$x a b c d; s
+		$x -z a; s
+		unmount /n/zt.e; unmount /n/zt.e; unmount /n/zt.e2; unmount '/n/ramfs -i'
+		rm -f /srv/zt.^(e q b c bad)
+	}
+	@{rfork n; mnts mount} >[2=1] | sed 's/ pc=0x[0-9a-f]+//' >/tmp/zig.b
+	@{rfork n; mnts $Z^mount} >[2=1] | sed 's|/tmp/zig/||g; s/ pc=0x[0-9a-f]+//' >/tmp/zig.a
+	t mount
+	@{rfork n; srvs srv} >[2=1] | sed 's/ pc=0x[0-9a-f]+//' >/tmp/zig.b
+	@{rfork n; srvs $Z^srv} >[2=1] | sed 's|/tmp/zig/||g; s/ pc=0x[0-9a-f]+//' >/tmp/zig.a
+	t srv9p
+
+	# authentication: a server that asks for it (p9test -a: lib9p's
+	# auth.c) and mount, each stock and planZ's, with a key given to
+	# factotum for the test and taken back.  The key is there before
+	# anything asks, so factotum never has to ask on the console.
+	if(test -x $z/p9test.stock && echo 'key proto=dp9ik dom=zt.test user='$user' !password=ztpassword1' >/mnt/factotum/ctl){
+		fn auths {
+			$1 -a zt.as; s
+			$2 -k 'dom=zt.test' /srv/zt.as /n/zt.as; s
+			cat /n/zt.as/str; s
+			unmount /n/zt.as
+			$2 -n /srv/zt.as /n/zt.as; s
+			# not here: a key factotum has not got.  It would ask for
+			# it on the console (auth_getkey) and wait for typing.
+			cat /n/zt.as/str; s
+			rm -f /srv/zt.as
+		}
+		cat >/tmp/zig.b <<'EOF'
+status
+status
+word none sum 0
+status
+mount: mount /n/zt.as: not authenticated
+status mount
+cat: can't open /n/zt.as/str: file does not exist: '/n/zt.as/str'
+status can't open /n/zt.as/str: file does not exist: '/n/zt.as/str'
+EOF
+		for(srv in $z/p9test.stock $Z^p9test) for(m in mount $Z^mount){
+			@{rfork n; auths $srv $m} >[2=1] | sed 's|/tmp/zig/||g' >/tmp/zig.a
+			t auth-^`{basename $srv}^-^`{echo $m | sed 's|.*/zig/mount|zmount|'}
+		}
+		echo 'delkey proto=dp9ik dom=zt.test' >/mnt/factotum/ctl
+	}
+	if not {
+		echo DIFF auth: no p9test.stock, or factotum did not take the key
+		nbad=($nbad auth)
+	}
+
+	# init, as an ordinary program with a command: it makes the name
+	# space and runs rc -c, and again without the command for ever, so
+	# only the first round is compared and then it is killed, by pid
+	# and by a name of its own (never by the name init)
+	cp /$cputype/init $Z^sinit
+	cp $Z^init $Z^zinit
+	fn inits {
+		x=$1
+		for(f in -t -m){
+			@{rfork ne; $x $f 'echo cmd ran; echo $service $objtype $user $home; sum </env/timezone; ns | sed 12q; wc -l </proc/$pid/fd' </dev/null >/tmp/zig.i >[2=1]} &
+			p=$apid
+			sleep 5
+			@{echo kill >/proc/$p/ctl} >[2]/dev/null
+			for(q in `{ps | awk '$NF == "'^`{basename $x}^'" {print $2}'})
+				@{echo kill >/proc/$q/ctl} >[2]/dev/null
+			awk '/init: starting/{c++} c<2' /tmp/zig.i
+		}
+		rm -f /tmp/zig.i
+	}
+	inits $Z^sinit >/tmp/zig.b >[2=1]
+	inits $Z^zinit >[2=1] | sed 's/zinit/sinit/g' >/tmp/zig.a
+	t init
+
+	# a stick made with zig build -Dzigboot says so (the file zigboot,
+	# beside the programs): each program it names must be in /boot
+	if(test -f $z/zigboot)
+		for(n in `{cat $z/zigboot})
+			if(! test -f /boot/$n){
+				echo DIFF boot: made with -Dzigboot, and there is no /boot/$n
+				nbad=($nbad zigboot-$n)
+			}
+
 	# booted with zig build -Dzigboot, the mntgens that serve /n, /mnt
 	# and /mnt/exportfs are planZ's: each one's text is that file
 	if(test -f /boot/mntgen){
@@ -1332,6 +1527,21 @@ EOF
 			echo DIFF boot: $nm of the mntgens are /boot/mntgen, not 3
 			ps | grep ' mntgen$'
 			nbad=($nbad zigboot)
+		}
+	}
+
+	# and init, the one process of that name, is /boot/init
+	if(test -f /boot/init){
+		ni=0
+		for(p in `{ps | awk '$NF == "init" {print $2}'})
+			if(cmp -s /proc/$p/text /boot/init)
+				ni=`{echo $ni + 1 | hoc}
+		if(~ $ni 1 && ~ `{ps | grep -c ' init$'} 1)
+			echo same boot: init is /boot/init
+		if not {
+			echo DIFF boot: init is not /boot/init
+			ps | grep ' init$'
+			nbad=($nbad zigbootinit)
 		}
 	}
 

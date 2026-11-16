@@ -8,7 +8,10 @@
  * compiled in the guest by tools/usbzig.rc:
  *	6c -FTVw p9test.c && 6l -o p9test.stock p9test.6
  *
- * usage: p9test srvname
+ * usage: p9test [-a] srvname
+ *
+ * With -a its clients must authenticate (auth9p and the rest of
+ * lib9p's auth.c, with factotum).
  *
  * The files: ctl takes "set word", "add a b" and "echo ..."; str
  * reads back what they left; slow answers a read after 200ms and
@@ -18,6 +21,7 @@
 #include <libc.h>
 #include <fcall.h>
 #include <thread.h>
+#include <auth.h>
 #include <9p.h>
 
 enum {
@@ -45,6 +49,7 @@ Cmdtab cmds[] = {
 };
 
 char word[64] = "none";
+int doauth;
 int sum, nclone, nclunk;
 Reqqueue *q;
 
@@ -95,14 +100,18 @@ fsclone(Fid*, Fid*)
 }
 
 void
-fsdestroyfid(Fid*)
+fsdestroyfid(Fid *fid)
 {
 	nclunk++;
+	if(doauth)
+		authdestroy(fid);
 }
 
 void
 fsattach(Req *r)
 {
+	if(doauth && authattach(r) < 0)
+		return;
 	r->ofcall.qid = (Qid){Qroot, 0, QTDIR};
 	r->fid->qid = r->ofcall.qid;
 	respond(r, nil);
@@ -134,6 +143,10 @@ fsread(Req *r)
 {
 	char buf[128];
 
+	if(r->fid->qid.type & QTAUTH){
+		authread(r);
+		return;
+	}
 	switch((int)r->fid->qid.path){
 	case Qroot:
 		dirread9p(r, dirgen, nil);
@@ -159,6 +172,10 @@ fswrite(Req *r)
 	Cmdbuf *cb;
 	Cmdtab *ct;
 
+	if(r->fid->qid.type & QTAUTH){
+		authwrite(r);
+		return;
+	}
 	if(r->fid->qid.path != Qctl){
 		respond(r, "not the ctl file");
 		return;
@@ -220,8 +237,14 @@ int mainstacksize = 32*1024;
 void
 threadmain(int argc, char **argv)
 {
+	if(argc == 3 && strcmp(argv[1], "-a") == 0){
+		doauth = 1;
+		fs.auth = auth9p;
+		argv++;
+		argc--;
+	}
 	if(argc != 2)
-		sysfatal("usage: p9test srvname");
+		sysfatal("usage: p9test [-a] srvname");
 	q = reqqueuecreate();
 	threadpostmountsrv(&fs, argv[1], nil, 0);
 	threadexits(nil);

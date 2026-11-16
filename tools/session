@@ -25,8 +25,14 @@
 # root's /bin/rc too, in init's name space, and every rc after that is
 # planZ's.
 #
+# With zig build -Dzigboot the loader also brings planZ's init as
+# /boot/init, which is then the init run here, not the root's.
+#
 # A terminal only.
 
+initprog=/$cputype/init
+if(/$cputype/bin/test -x /boot/init)
+	initprog=/boot/init
 zigrc=''
 if(/$cputype/bin/test -x /boot/rc)
 	zigrc='bind /boot/rc /bin/rc && '
@@ -48,4 +54,4 @@ case *
 		then='service=con; . ./lib/profile; exec /boot/vtfs'^$tee
 	}
 }
-exec /$cputype/init -t $zigrc^'exec /bin/rc -c ''. /rc/bin/termrc; home=/usr/$user; cd && '^$then^''''
+exec $initprog -t $zigrc^'exec /bin/rc -c ''. /rc/bin/termrc; home=/usr/$user; cd && '^$then^''''
