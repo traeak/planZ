@@ -1,0 +1,31 @@
+# caps lock (scan code 58 made Kcaps) and a mouse button (59 made M1)
+okbd
+sc 3a
+kbd 1
+sc ba
+kbd 1
+sc 1e
+kbd 2
+sc 9e
+kbd 1
+sc 02
+kbd 2
+sc 82
+kbd 1
+sc 3a
+kbd 1
+sc ba
+kbd 1
+sc 1e
+kbd 2
+sc 9e
+kbd 1
+sc 3b
+kbd 0
+sc bb
+kbd 0
+sc 2a
+kbd 1
+sc aa
+kbd 1
+ckbd

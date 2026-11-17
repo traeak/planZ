@@ -1,0 +1,220 @@
+# the keys held and the characters, read from kbd
+okbd
+sc 1e
+kbd 2
+sc 9e
+kbd 1
+# shift
+sc 2a
+kbd 1
+sc 1e
+kbd 2
+sc 9e
+kbd 1
+sc aa
+kbd 1
+# two keys held, let go in the other order
+sc 1e
+kbd 2
+sc 30
+kbd 2
+sc 9e
+kbd 1
+sc b0
+kbd 1
+# a key that repeats while held
+sc 1e
+kbd 2
+sc 1e
+kbd 1
+sc 9e
+kbd 1
+# ctl
+sc 1d
+kbd 1
+sc 2e
+kbd 2
+sc ae
+kbd 1
+sc 9d
+kbd 1
+# compose: alt , c and alt x e 9 ;
+sc 38
+kbd 1
+sc b8
+kbd 1
+sc 33
+kbd 1
+sc b3
+kbd 1
+sc 2e
+kbd 2
+sc ae
+kbd 1
+sc 38
+kbd 1
+sc b8
+kbd 1
+sc 2d
+kbd 1
+sc ad
+kbd 1
+sc 12
+kbd 1
+sc 92
+kbd 1
+sc 0a
+kbd 1
+sc 8a
+kbd 1
+sc 27
+kbd 2
+sc a7
+kbd 1
+# compose with a letter that is in no sequence, and with three keys
+sc 38
+kbd 1
+sc b8
+kbd 1
+sc 10
+kbd 1
+sc 90
+kbd 1
+sc 10
+kbd 1
+sc 90
+kbd 1
+sc 1e
+kbd 2
+sc 9e
+kbd 1
+# ctl and alt together are not a compose
+sc 1d
+kbd 1
+sc 38
+kbd 1
+sc 1e
+kbd 2
+sc 9e
+kbd 1
+sc b8
+kbd 1
+sc 9d
+kbd 1
+# escaped codes: the arrows, and ctl alt del (no reboot with -d)
+sc e0 48
+kbd 2
+sc e0 c8
+kbd 1
+sc 1d
+kbd 1
+sc 38
+kbd 1
+sc e0 53
+kbd 2
+sc e0 d3
+kbd 1
+sc b8
+kbd 1
+sc 9d
+kbd 1
+# the number pad without and with num lock, and a three byte escape
+sc 47
+kbd 2
+sc c7
+kbd 1
+sc 45
+kbd 1
+sc c5
+kbd 1
+sc 47
+kbd 2
+sc c7
+kbd 1
+sc 45
+kbd 1
+sc c5
+kbd 1
+sc e1 1d 45
+kbd 0
+sc 1e
+kbd 2
+sc 9e
+kbd 1
+# codes with nothing in the table
+sc 59
+kbd 0
+sc 00
+kbd 0
+# messages through kbdin: rune down and up, a character, one of no known kind
+in rA
+kbd 2
+in RA
+kbd 1
+in r%
+kbd 2
+in R%
+kbd 1
+in cZ
+kbd 1
+in Xhello
+kbd 1
+in rq|Rq
+kbd 3
+# the old format: characters only
+old xyz
+kbd 3
+ckbd
+# kbd closed: lines cooked for cons
+sc 1e 9e 30 b0 1c 9c
+cons
+# erase a character, a word, the line
+sc 1e 9e 30 b0 1d 23 a3 9d 2e ae 1c 9c
+cons
+sc 1e 9e 39 b9 30 b0 2e ae 1d 11 91 9d 20 a0 1c 9c
+cons
+sc 1e 9e 30 b0 1d 16 96 9d 2e ae 1c 9c
+cons
+sc 1d 23 a3 23 a3 9d 1e 9e 1c 9c
+cons
+# end of file with and without characters before it
+sc 1e 9e 30 b0 1d 20 a0 9d
+cons
+sc 1d 20 a0 9d
+cons
+# delete throws the line away
+sc 2d ad 2d ad e0 53 e0 d3 15 95 1c 9c
+cons
+# a read of fewer bytes than the line has
+sc 1e 9e 30 b0 2e ae 20 a0 12 92 21 a1 1c 9c
+cons 3
+cons 3
+cons
+# composed characters and the old format, cooked
+sc 38 b8 33 b3 2e ae 1c 9c
+cons
+old hello there
+sc 1c 9c
+cons
+in cq|cr
+sc 1c 9c
+cons
+# raw
+octl
+ctl rawon
+sc 1e
+cons
+sc 9e e0 48
+cons
+sc e0 c8 1d 2e ae 9d
+cons
+ctl rawoff
+sc 1e 9e 1c 9c
+cons
+ctl bogus
+ctl rawon
+cctl
+sc 30 b0 1c 9c
+cons
+# output
+wcons written to cons

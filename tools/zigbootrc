@@ -1,0 +1,11 @@
+#!/bin/rc
+# With zig build -Dzigboot the loader puts this in the kernel's /boot
+# as bootrc.  9front's boot program runs /bin/bootrc, and /boot is
+# ahead of the boot file system in /bin, so it is this file that runs:
+# it binds planZ's programs over the stock ones that the real bootrc
+# starts by a path with a directory in it (/boot has none, so a file
+# there cannot take their place by its name, as mntgen's does), and
+# then runs the real bootrc.
+if(test -x /boot/kbdfs)
+	bind /boot/kbdfs /bin/aux/kbdfs
+exec /rc/bin/bootrc $*

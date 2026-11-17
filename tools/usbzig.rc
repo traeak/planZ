@@ -1505,6 +1505,139 @@ EOF
 	inits $Z^zinit >[2=1] | sed 's/zinit/sinit/g' >/tmp/zig.a
 	t init
 
+	# kbdfs against the stock one, each started on a directory of its own
+	# (-m), with -d (no reboot, no priority) and in a note group of its
+	# own (it sends hangup and interrupt to the group it starts in), and
+	# under a name of its own (skbdfs, zkbdfs: nothing here goes by the
+	# name kbdfs, which the system's has).  kbtest, planZ's, is the
+	# client of both: it writes scan codes and messages and prints what
+	# kbd and cons give back.  The directory has files named mousectl
+	# and mousein, which get what kbdfs writes to the mouse.
+	rm -f /srv/zt.kb?
+	cp /bin/aux/kbdfs $Z^skbdfs
+	cp $Z^kbdfs $Z^zkbdfs
+	fn kb {
+		d=/tmp/zt.kb$2
+		rm -rf $d
+		mkdir $d
+		>$d/mousectl
+		>$d/mousein
+		@{rfork s; $1 -d -q -s zt.kb$2 -m $d >/tmp/zt.echo$2 >[2=1]}
+		echo started $status
+		ls $d | sed 's/zt\.kb./zt.kb/'
+		# the tables: as it starts, then with each of /sys/lib/kbmap
+		sum <$d/kbmap
+		for(f in /sys/lib/kbmap/*){
+			cat $f >$d/kbmap
+			echo $f $status `{sum <$d/kbmap}
+		}
+		cat /sys/lib/kbmap/ascii >$d/kbmap
+		for(l in bogus none 'none x 1' 'none 200 1' '99 1 1' 'none 1 zzz' 'none 1 ^a' 'none 1 M9' '3 0x10 ''q' 'shift 16 ^A' 'none 16 0x41' 'esc 16 M2' '# a comment' ''){
+			@{echo $l >>$d/kbmap} >[2=1] | sed 's/zt\.kb./zt.kb/'
+		}
+		# a line written in two pieces
+		{echo -n 'none 17 '; sleep 1; echo 0x7a} >>$d/kbmap
+		sum <$d/kbmap
+		sed -n '17,18p;145p;273p;401p' $d/kbmap
+		cat /sys/lib/kbmap/ascii >$d/kbmap
+		$Z^kbtest $d $z/kbtest.txt
+		echo 'none 58 0xf864' >>$d/kbmap
+		echo 'none 59 M1' >>$d/kbmap
+		$Z^kbtest $d $z/kbtest2.txt
+		echo echo:
+		xd -c /tmp/zt.echo$2
+		echo mousectl `{sed 's/twitch//g' $d/mousectl} twitched `{grep -c twitch $d/mousectl | sed 's/^[1-9][0-9]*$/yes/'}
+		echo mousein `{cat $d/mousein}
+		unmount $d
+		rm -f /srv/zt.kb$2 /tmp/zt.echo$2
+		sleep 1
+
+	}
+	kb $Z^skbdfs s >/tmp/zig.b >[2=1]
+	kb $Z^zkbdfs z >/tmp/zig.a >[2=1]
+	t kbdfs
+
+	# the compose table: 9front's mklatin, built here, on the guest's
+	# /lib/keyboard, and planZ's table printed the same way
+	if(@{cd $z && cp /sys/src/cmd/aux/kbdfs/mklatin.c . && 6c -FTVw mklatin.c && 6l -o mklatin.stock mklatin.6} >/tmp/zig.cc >[2=1]){
+		$z/mklatin.stock -r /lib/keyboard >/tmp/zig.b >[2=1]
+		$Z^kbtest -l >/tmp/zig.a >[2=1]
+		t latin1
+	}
+	if not {
+		echo DIFF latin1: mklatin.c did not build
+		cat /tmp/zig.cc
+		nbad=($nbad latin1)
+	}
+	rm -f /tmp/zig.cc
+
+	# Fixed from C: a line of more than 256 characters.  Stock can lose
+	# the 257th: its line thread is sending the first 256 on when it
+	# comes, and the rune is offered without waiting.  planZ's waits and
+	# has them all.  300 characters and a newline, three times each;
+	# stock's counts are printed and not judged (it loses the character
+	# when the next one is already there, which depends on the timing).
+	fn long {
+		d=/tmp/zt.kb$2
+		rm -rf $d
+		mkdir $d
+		@{rfork s; $1 -d -q -s zt.kb$2 -m $d >/dev/null >[2=1]}
+		for(i in 1 2 3){
+			echo -n $long >$d/kbdin
+			echo >$d/kbdin
+			read <$d/cons | tr -d '
+' | wc -c | awk '{print $1}'
+		}
+		unmount $d
+		rm -f /srv/zt.kb$2
+		rm -rf $d
+	}
+	long=`{seq 100 199 | tr -d '
+'}
+	long $Z^zkbdfs z >/tmp/zig.a >[2=1]
+	{echo 300; echo 300; echo 300} >/tmp/zig.b
+	t kbdfs-long-line
+	long $Z^skbdfs s >/tmp/zig.a >[2=1]
+	echo stock kbdfs, of 300 characters, three times: `{cat /tmp/zig.a}
+
+	# The serial line: what comes on it is typed, \r\n and \r are
+	# newlines, and when it ends kbdfs goes.  The same fault shows
+	# here, so stock's lines are printed and not judged: it can lose
+	# the first character after a newline.
+	fn serial {
+		d=/tmp/zt.kb$2
+		rm -rf $d
+		mkdir $d
+		@{rfork s; $1 -d -q -s zt.kb$2 -m $d <{echo one; echo -n two; awk 'BEGIN{printf "\r\nthree\rfour\n"}'; sleep 4} >/dev/null >[2=1]}
+		for(i in 1 2 3 4)
+			read <$d/cons
+		sleep 5
+		echo after the line ended `{ls $d >[2]/dev/null | wc -l} files
+		unmount $d
+		rm -f /srv/zt.kb$2
+		rm -rf $d
+	}
+	serial $Z^zkbdfs z >/tmp/zig.a >[2=1]
+	cat >/tmp/zig.b <<'EOF'
+one
+two
+three
+four
+after the line ended 0 files
+EOF
+	t kbdfs-serial
+	serial $Z^skbdfs s >/tmp/zig.a >[2=1]
+	echo stock kbdfs, the four lines from the serial line: `{sed 4q /tmp/zig.a}
+
+	sleep 1
+	if(ps | grep -s ' [sz]kbdfs$'){
+		echo DIFF kbdfs: still running:
+		ps | grep ' [sz]kbdfs$'
+		nbad=($nbad kbdfsexit)
+	}
+	if not
+		echo same kbdfs: the servers have exited
+
 	# a stick made with zig build -Dzigboot says so (the file zigboot,
 	# beside the programs): each program it names must be in /boot
 	if(test -f $z/zigboot)
@@ -1542,6 +1675,24 @@ EOF
 			echo DIFF boot: init is not /boot/init
 			ps | grep ' init$'
 			nbad=($nbad zigbootinit)
+		}
+	}
+
+	# and kbdfs: every process of that name is /boot/kbdfs
+	if(test -f /boot/kbdfs){
+		nk=0
+		no=0
+		for(p in `{ps | awk '$NF == "kbdfs" {print $2}'}){
+			if(cmp -s /proc/$p/text /boot/kbdfs)
+				nk=`{echo $nk + 1 | hoc}
+			if not
+				no=`{echo $no + 1 | hoc}
+		}
+		if(! ~ $nk 0 && ~ $no 0)
+			echo same boot: the $nk processes of kbdfs are /boot/kbdfs
+		if not {
+			echo DIFF boot: of the processes named kbdfs $nk are /boot/kbdfs and $no are not
+			nbad=($nbad zigbootkbdfs)
 		}
 	}
 

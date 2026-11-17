@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
     disk_image = b.option([]const u8, "disk", "Disk image to attach as a virtio disk, e.g. ref/disk/9front-11952.amd64.qcow2 (never written: changes are discarded)");
     disk_bus = b.option([]const u8, "diskbus", "How the disk image is attached: virtio (default), nvme or ahci") orelse "virtio";
     const ref = b.option([]const u8, "ref", "Directory of 9front reference files, e.g. ref");
-    const zigboot = b.option(bool, "zigboot", "Boot 9front with planZ's programs in place of the stock ones that the boot runs: mntgen and init (see PLAN.md, More userland in Zig)") orelse false;
+    const zigboot = b.option(bool, "zigboot", "Boot 9front with planZ's programs in place of the stock ones that the boot runs: mntgen, init and kbdfs (see PLAN.md, More userland in Zig)") orelse false;
     const zigrc = b.option(bool, "zigrc", "Boot 9front's user programs with planZ's rc as /bin/rc (see tools/session)") orelse false;
     session = b.option([]const u8, "session", "session= for the boot volumes' plan9.ini that do not set it: what runs after boot, vt (the default), rio or text (see tools/session)");
     const usb_esp_mb = b.option(u32, "usbesp", "Size in MiB of the boot volume of the USB image (default 40)") orelse 40;
@@ -121,6 +121,7 @@ pub fn build(b: *std.Build) void {
         "unmount", "ps",       "dd",    "xargs",    "locktest",
         "tprimes",  "threadtest", "ramfs",    "mntgen",   "p9test",
         "mount",    "srv",      "init",     "authtest",
+        "kbdfs",    "kbtest",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
@@ -130,12 +131,13 @@ pub fn build(b: *std.Build) void {
         if (std.mem.eql(u8, name, "vtfs")) vtfs_bin = zbins[i];
         if (zigboot and std.mem.eql(u8, name, "mntgen")) zigboot_mntgen = zbins[i];
         if (zigboot and std.mem.eql(u8, name, "init")) zigboot_init = zbins[i];
+        if (zigboot and std.mem.eql(u8, name, "kbdfs")) zigboot_kbdfs = zbins[i];
     }
     // retest's, fltest's and drawtest's other halves, built in the guest against
     // stock libregexp, libc and libdraw, and the table retest reads
     // (see tools/retest.c, tools/fltest.c and tools/drawtest.c), and
     // rc's scripts
-    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "tmtest.c", "locktest.c", "threadtest.c", "p9test.c", "authtest.c", "rccases" };
+    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "tmtest.c", "locktest.c", "threadtest.c", "p9test.c", "authtest.c", "kbtest.txt", "kbtest2.txt", "rccases" };
     for (zdata) |name|
         user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
     // grep's pattern compiler and DFA, which take only the runes from
@@ -333,6 +335,9 @@ pub fn build(b: *std.Build) void {
 
             // The default session: vtfs's consoles, switched with keys.
             const vchat = b.addSystemCommand(&.{ "sh", "tools/vttest.sh", "300" });
+            // with -Dzigboot the test first runs /boot/zigcheck: the
+            // boot must be on planZ's init, mntgen and kbdfs
+            if (zigboot) vchat.setEnvironmentVariable("ZIGBOOT", "1");
             vchat.addArgs(qemu_args);
             vchat.addArgs(&.{ "-display", "none" });
             addEsp(b, vchat, loader, kernel, ini9, dir);
@@ -385,6 +390,11 @@ pub fn build(b: *std.Build) void {
                 if (vtfs_bin) |v| mk.addPrefixedFileArg("boot/vtfs=", v);
                 if (zigboot_mntgen) |v| mk.addPrefixedFileArg("boot/mntgen=", v);
                 if (zigboot_init) |v| mk.addPrefixedFileArg("boot/init=", v);
+                if (zigboot_kbdfs) |v| {
+                    mk.addPrefixedFileArg("boot/kbdfs=", v);
+                    mk.addPrefixedFileArg("boot/bootrc=", b.path("tools/zigbootrc"));
+                    mk.addPrefixedFileArg("boot/zigcheck=", b.path("tools/zigcheck"));
+                }
                 mk.addPrefixedFileArg("boot/boot=", b.path(b.pathJoin(&.{ dir, "boot/boot" })));
                 mk.addPrefixedFileArg("boot/bootfs.paq=", b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })));
                 mk.addPrefixedFileArg("boot/paqfs=", b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })));
@@ -402,7 +412,7 @@ pub fn build(b: *std.Build) void {
                 // this a boot that fell back to the stock programs
                 // would pass
                 if (zigboot)
-                    mk.addPrefixedFileArg("zig/bin/zigboot=", b.addWriteFiles().add("zigboot", "mntgen init\n"));
+                    mk.addPrefixedFileArg("zig/bin/zigboot=", b.addWriteFiles().add("zigboot", "mntgen init kbdfs bootrc\n"));
                 mk.has_side_effects = true;
                 if (usb_write) |w| mk.step.dependOn(&w.step);
                 usb_write = usb_write orelse mk;
@@ -613,6 +623,11 @@ fn addEsp(
         if (vtfs_bin) |v| _ = esp.addCopyFile(v, "boot/vtfs");
         if (zigboot_mntgen) |v| _ = esp.addCopyFile(v, "boot/mntgen");
         if (zigboot_init) |v| _ = esp.addCopyFile(v, "boot/init");
+        if (zigboot_kbdfs) |v| {
+            _ = esp.addCopyFile(v, "boot/kbdfs");
+            _ = esp.addCopyFile(b.path("tools/zigbootrc"), "boot/bootrc");
+            _ = esp.addCopyFile(b.path("tools/zigcheck"), "boot/zigcheck");
+        }
     }
     run.addArg("-drive");
     run.addPrefixedDirectoryArg("format=raw,file=fat:rw:", esp.getDirectory());
@@ -644,6 +659,9 @@ var zigboot_mntgen: ?std.Build.LazyPath = null;
 /// planZ's init, likewise: tools/session runs /boot/init when it is
 /// there.
 var zigboot_init: ?std.Build.LazyPath = null;
+/// planZ's kbdfs, likewise, with tools/zigbootrc as boot/bootrc, which
+/// binds it over the stock one before the real bootrc runs.
+var zigboot_kbdfs: ?std.Build.LazyPath = null;
 /// -Dsession: session= for the boot volumes' plan9.ini.
 var session: ?[]const u8 = null;
 

@@ -24,6 +24,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 pub const fmt = @import("fmt");
 pub const pool = @import("pool");
+pub const keyboard = @import("keyboard.zig");
 pub const fcall = @import("fcall");
 
 pub const sys = @import("sys.zig");

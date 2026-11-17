@@ -147,10 +147,15 @@ wheel="$wheel && echo vt test: the wheel scrolls back and forth"
 wheel="$wheel && $qmp abs 153 7045 , btn left down , btn wheel-up click && sleep 1"
 wheel="$wheel && $qmp btn left up , btn wheel-down click , key ctrl alt 1"
 
+# with zig build -Dzigboot (ZIGBOOT set by build.zig) the programs that
+# option replaces must be the ones running: /boot/zigcheck says so
+first="  echo go^on"
+[ -n "$ZIGBOOT" ] && first="  /boot/zigcheck && echo go^on"
+
 sh "$here/bootchat.sh" "$timeout" \
 	"bootargs is" "" \
 	"user[" "" \
-	"cpu% " "  echo go^on" \
+	"cpu% " "$first" \
 	"goon" "if(! ps | grep -s ' rio\$') echo no^rio" \
 	"norio" "ps | grep -s ' vtfs\$' && echo vt^runs" \
 	"vtruns" "@host $qmp type 'echo key^ok\\n'" \

@@ -1,0 +1,25 @@
+#!/bin/rc
+# With zig build -Dzigboot the loader puts this in the kernel's /boot.
+# It says whether the programs that option replaces are the ones
+# running: every process named init, mntgen or kbdfs must have the
+# text of the file of that name in /boot, and there must be one at
+# least.  The boot tests run it, so that a boot which fell back to the
+# stock programs does not pass.
+bad=()
+for(n in init mntgen kbdfs){
+	c=0
+	for(p in `{ps | awk '$NF == "'$n'" {print $2}'}){
+		if(cmp -s /proc/$p/text /boot/$n)
+			c=`{echo $c + 1 | hoc}
+		if not
+			bad=($bad $n)
+	}
+	if(~ $c 0)
+		bad=($bad $n)
+}
+if(~ $#bad 0){
+	echo zigboot: init, mntgen and kbdfs are the files in /boot
+	exit ''
+}
+echo zigboot: not the files in /boot: $bad
+exit bad
