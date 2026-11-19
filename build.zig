@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
     disk_image = b.option([]const u8, "disk", "Disk image to attach as a virtio disk, e.g. ref/disk/9front-11952.amd64.qcow2 (never written: changes are discarded)");
     disk_bus = b.option([]const u8, "diskbus", "How the disk image is attached: virtio (default), nvme or ahci") orelse "virtio";
     const ref = b.option([]const u8, "ref", "Directory of 9front reference files, e.g. ref");
-    const zigboot = b.option(bool, "zigboot", "Boot 9front with planZ's programs in place of the stock ones that the boot runs: mntgen, init and kbdfs (see PLAN.md, More userland in Zig)") orelse false;
+    const zigboot = b.option(bool, "zigboot", "Boot 9front with planZ's programs in place of the stock ones that the boot runs: mntgen, init, kbdfs, and the USB programs usbd, kb and disk (see PLAN.md, More userland in Zig)") orelse false;
     const zigrc = b.option(bool, "zigrc", "Boot 9front's user programs with planZ's rc as /bin/rc (see tools/session)") orelse false;
     session = b.option([]const u8, "session", "session= for the boot volumes' plan9.ini that do not set it: what runs after boot, vt (the default), rio or text (see tools/session)");
     const usb_esp_mb = b.option(u32, "usbesp", "Size in MiB of the boot volume of the USB image (default 40)") orelse 40;
@@ -74,6 +74,14 @@ pub fn build(b: *std.Build) void {
         .imports = &.{.{ .name = "libc", .module = libc }},
     });
 
+    // The library of the USB programs (nusb/lib).
+    const libusb = b.createModule(.{
+        .root_source_file = b.path("src/user/lib/usb/usb.zig"),
+        .imports = &.{
+            .{ .name = "libc", .module = libc },
+            .{ .name = "thread", .module = libthread },
+        },
+    });
     // lib9p for user programs.
     const lib9p = b.createModule(.{
         .root_source_file = b.path("src/user/lib/9p/lib9p.zig"),
@@ -121,23 +129,27 @@ pub fn build(b: *std.Build) void {
         "unmount", "ps",       "dd",    "xargs",    "locktest",
         "tprimes",  "threadtest", "ramfs",    "mntgen",   "p9test",
         "mount",    "srv",      "init",     "authtest",
-        "kbdfs",    "kbtest",
+        "kbdfs",    "kbtest",   "usbd",     "usbkb",
+        "usbdisk",  "usbfake",  "usbtest",
     };
     var zbins: [zcmds.len]std.Build.LazyPath = undefined;
     for (zcmds, 0..) |name, i| {
-        zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc, libdraw, libthread, lib9p, libauth);
+        zbins[i] = addLibcProgram(b, name, b.fmt("src/user/cmd/{s}.zig", .{name}), optimize, libc, libdraw, libthread, lib9p, libauth, libusb);
         user_step.dependOn(&b.addInstallFile(zbins[i], b.fmt("user/bin/{s}", .{name})).step);
         if (zigrc and std.mem.eql(u8, name, "rc")) zigrc_bin = zbins[i];
         if (std.mem.eql(u8, name, "vtfs")) vtfs_bin = zbins[i];
         if (zigboot and std.mem.eql(u8, name, "mntgen")) zigboot_mntgen = zbins[i];
         if (zigboot and std.mem.eql(u8, name, "init")) zigboot_init = zbins[i];
         if (zigboot and std.mem.eql(u8, name, "kbdfs")) zigboot_kbdfs = zbins[i];
+        if (zigboot) for (zigboot_usbnames, &zigboot_usb) |n, *v| {
+            if (std.mem.eql(u8, name, n)) v.* = zbins[i];
+        };
     }
     // retest's, fltest's and drawtest's other halves, built in the guest against
     // stock libregexp, libc and libdraw, and the table retest reads
     // (see tools/retest.c, tools/fltest.c and tools/drawtest.c), and
     // rc's scripts
-    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "tmtest.c", "locktest.c", "threadtest.c", "p9test.c", "authtest.c", "kbtest.txt", "kbtest2.txt", "rccases" };
+    const zdata = [_][]const u8{ "retest.c", "retest.txt", "fltest.c", "drawtest.c", "tmtest.c", "locktest.c", "threadtest.c", "p9test.c", "authtest.c", "kbtest.txt", "kbtest2.txt", "usbtest.c", "rccases" };
     for (zdata) |name|
         user_step.dependOn(&b.addInstallFile(b.path(b.fmt("tools/{s}", .{name})), b.fmt("user/bin/{s}", .{name})).step);
     // grep's pattern compiler and DFA, which take only the runes from
@@ -319,7 +331,7 @@ pub fn build(b: *std.Build) void {
             b.step("test-audio", "Boot stock 9front from the disk image and play a tone through the HDA driver").dependOn(&achat.step);
 
             // planZ's Zig programs beside the stock ones they copy.
-            const zchat = b.addSystemCommand(&.{ "sh", "tools/zusertest.sh", "900", "zig-out/user/bin" });
+            const zchat = b.addSystemCommand(&.{ "sh", "tools/zusertest.sh", "1800", "zig-out/user/bin" });
             zchat.addArgs(qemu_args);
             zchat.addArgs(&.{ "-display", "none" });
             addEsp(b, zchat, loader, kernel, ini9rio, dir);
@@ -336,7 +348,7 @@ pub fn build(b: *std.Build) void {
             // The default session: vtfs's consoles, switched with keys.
             const vchat = b.addSystemCommand(&.{ "sh", "tools/vttest.sh", "300" });
             // with -Dzigboot the test first runs /boot/zigcheck: the
-            // boot must be on planZ's init, mntgen and kbdfs
+            // boot must be on planZ's init, mntgen, kbdfs and USB programs
             if (zigboot) vchat.setEnvironmentVariable("ZIGBOOT", "1");
             vchat.addArgs(qemu_args);
             vchat.addArgs(&.{ "-display", "none" });
@@ -395,6 +407,9 @@ pub fn build(b: *std.Build) void {
                     mk.addPrefixedFileArg("boot/bootrc=", b.path("tools/zigbootrc"));
                     mk.addPrefixedFileArg("boot/zigcheck=", b.path("tools/zigcheck"));
                 }
+                for (zigboot_usbnames, zigboot_usb) |n, bin| {
+                    if (bin) |v| mk.addPrefixedFileArg(b.fmt("boot/{s}=", .{n}), v);
+                }
                 mk.addPrefixedFileArg("boot/boot=", b.path(b.pathJoin(&.{ dir, "boot/boot" })));
                 mk.addPrefixedFileArg("boot/bootfs.paq=", b.path(b.pathJoin(&.{ dir, "boot/bootfs.paq" })));
                 mk.addPrefixedFileArg("boot/paqfs=", b.path(b.pathJoin(&.{ dir, "root/amd64/bin/paqfs" })));
@@ -412,7 +427,7 @@ pub fn build(b: *std.Build) void {
                 // this a boot that fell back to the stock programs
                 // would pass
                 if (zigboot)
-                    mk.addPrefixedFileArg("zig/bin/zigboot=", b.addWriteFiles().add("zigboot", "mntgen init kbdfs bootrc\n"));
+                    mk.addPrefixedFileArg("zig/bin/zigboot=", b.addWriteFiles().add("zigboot", "mntgen init kbdfs bootrc usbd usbkb usbdisk\n"));
                 mk.has_side_effects = true;
                 if (usb_write) |w| mk.step.dependOn(&w.step);
                 usb_write = usb_write orelse mk;
@@ -422,7 +437,7 @@ pub fn build(b: *std.Build) void {
 
             // Boot that image in QEMU as the only disk, on USB, with a
             // USB keyboard and pointer and no PS/2 controller.
-            const utest = b.addSystemCommand(&.{ "sh", "tools/usbtest.sh", "900", usb_image });
+            const utest = b.addSystemCommand(&.{ "sh", "tools/usbtest.sh", "1500", usb_image });
             utest.addArgs(qemu_args);
             utest.addArgs(&.{ "-display", "none" });
             utest.step.dependOn(&usb_check.step);
@@ -550,7 +565,7 @@ pub fn build(b: *std.Build) void {
 /// Build a user program on the library (src/user/lib): the library's
 /// root.zig is the root file and the program's file is the module
 /// "program".
-fn addLibcProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize, libc: *std.Build.Module, libdraw: *std.Build.Module, libthread: *std.Build.Module, lib9p: *std.Build.Module, libauth: *std.Build.Module) std.Build.LazyPath {
+fn addLibcProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: std.lang.Optimize, libc: *std.Build.Module, libdraw: *std.Build.Module, libthread: *std.Build.Module, lib9p: *std.Build.Module, libauth: *std.Build.Module, libusb: *std.Build.Module) std.Build.LazyPath {
     const program = b.createModule(.{
         .root_source_file = b.path(root),
         .imports = &.{
@@ -559,6 +574,7 @@ fn addLibcProgram(b: *std.Build, name: []const u8, root: []const u8, optimize: s
             .{ .name = "thread", .module = libthread },
             .{ .name = "9p", .module = lib9p },
             .{ .name = "auth", .module = libauth },
+            .{ .name = "usb", .module = libusb },
         },
     });
     return addUserProgramRoot(b, name, "src/user/lib/root.zig", optimize, &.{
@@ -628,6 +644,9 @@ fn addEsp(
             _ = esp.addCopyFile(b.path("tools/zigbootrc"), "boot/bootrc");
             _ = esp.addCopyFile(b.path("tools/zigcheck"), "boot/zigcheck");
         }
+        for (zigboot_usbnames, zigboot_usb) |n, bin| {
+            if (bin) |v| _ = esp.addCopyFile(v, b.fmt("boot/{s}", .{n}));
+        }
     }
     run.addArg("-drive");
     run.addPrefixedDirectoryArg("format=raw,file=fat:rw:", esp.getDirectory());
@@ -662,6 +681,12 @@ var zigboot_init: ?std.Build.LazyPath = null;
 /// planZ's kbdfs, likewise, with tools/zigbootrc as boot/bootrc, which
 /// binds it over the stock one before the real bootrc runs.
 var zigboot_kbdfs: ?std.Build.LazyPath = null;
+/// planZ's USB programs, likewise: usbd, and nusb/kb and nusb/disk
+/// under names that hide nothing in /bin (a file /boot/disk would hide
+/// the directory /bin/disk).  tools/zigbootrc binds each over the
+/// stock one in /bin/nusb.
+const zigboot_usbnames = [_][]const u8{ "usbd", "usbkb", "usbdisk" };
+var zigboot_usb: [zigboot_usbnames.len]?std.Build.LazyPath = @splat(null);
 /// -Dsession: session= for the boot volumes' plan9.ini.
 var session: ?[]const u8 = null;
 

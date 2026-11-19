@@ -270,7 +270,8 @@ fn verb(f: *Fmt, comptime r: u8, arg: anytype) void {
             f.pad(buf[0..runetochar(&buf, runearg(arg))]);
         },
         's' => sfmt(f, str(arg)),
-        'q' => qfmt(f, str(arg)),
+        // a nil string is <nil> without quotes (fmtquote.c)
+        'q' => if (@typeInfo(T) == .optional and arg == null) sfmt(f, "<nil>") else qfmt(f, str(arg)),
         else => @compileError("fmt: unknown verb %" ++ [1]u8{r} ++ " for " ++ @typeName(T)),
     }
 }
@@ -606,6 +607,17 @@ test "quoting" {
     try expect("'two words'", "%q", .{"two words"});
     try expect("'it''s'", "%q", .{"it's"});
     try expect("'plain'", "%#q", .{"plain"});
+    // a nil string is not quoted, though < is a character that rc
+    // has quoted
+    const S = struct {
+        fn dq(c: u8) bool {
+            return c == '<';
+        }
+    };
+    doquote = S.dq;
+    defer doquote = null;
+    const none: ?[]const u8 = null;
+    try expect("<nil> '<nil>'", "%q %q", .{ none, "<nil>" });
 }
 
 test "custom verb and flush" {

@@ -730,6 +730,445 @@ fn srvs {
 	test -e /srv/$n; s
 }
 
+# The USB programs' part of checks, in a function of its own: checks is
+# as long as it may be.  rc keeps a function in /env as text, and every
+# rc that starts reads it there; an rc that then runs a command writes
+# the functions it read back.  A function of more than 32768 bytes is
+# written in two pieces, and an rc starting between them reads a
+# function that stops in the middle ("token EOF: syntax error", seen
+# once here when checks had grown to 36K).  So a new group of tests gets
+# a function, called from checks.
+fn usbchecks {
+	# The USB programs: nusb's library, usbd, kb and disk, each beside
+	# 9front's on usbfake, a USB bus made of files that is mounted over
+	# /dev/usb in a name space of its own (the system's usbd and
+	# drivers, which may be under the root, are not touched; nothing
+	# here goes by the names usbd, kb or disk: the programs are tusbd,
+	# tkb and tdisk, in a directory for each side, so that the names in
+	# their messages are the same).  The record usbfake keeps (each ctl
+	# message, control request and disk command it got) is part of what
+	# is compared.  9front's usbd and the library's test are built here
+	# from the system's sources, usbd with its share named zt (planZ's
+	# has -m for that): the system's has the name usbd in usb.
+	us=/tmp/zt.us
+	uz=/tmp/zt.uz
+	rm -rf $us $uz
+	mkdir $us $uz
+	cp /bin/nusb/kb $us/tkb
+	cp /bin/nusb/disk $us/tdisk
+	cp $Z^usbkb $uz/tkb
+	cp $Z^usbdisk $uz/tdisk
+	cp $Z^usbd $uz/tusbd
+	cp $Z^usbtest $uz/tusbtest
+	usbok=yes
+	@{
+		cd $us &&
+		cp /sys/src/cmd/nusb/lib/^(usb.h dev.c dump.c parse.c) . &&
+		cp /sys/src/cmd/nusb/usbd/^(dat.h fns.h hname.c hub.c) . &&
+		cp $z/usbtest.c . &&
+		sed 's/"usb", "usbd"/"zt", "usbd"/' /sys/src/cmd/nusb/usbd/usbd.c >usbd.c &&
+		grep -s '"zt", "usbd"' usbd.c &&
+		6c -FTVw usbtest.c dev.c dump.c parse.c usbd.c hub.c hname.c &&
+		6l -o tusbtest usbtest.6 dev.6 dump.6 parse.6 &&
+		6l -o tusbd usbd.6 hub.6 hname.6 dev.6 dump.6 parse.6
+	} >/tmp/zig.cc >[2=1] || usbok=no
+
+	# wait until usbfake's record has stopped growing (or usbfake is
+	# gone: the watchdog below kills it)
+	fn quiet {
+		qa=a
+		qb=b
+		while(! ~ $qa $qb && test -e /dev/usb/ctl){
+			qa=$qb
+			sleep 1
+			qb=`{wc -c </dev/usb/ctl >[2]/dev/null}
+			if(~ $#qb 0)
+				qb=gone
+		}
+	}
+	# mode, owner, group, length and name of the files
+	fn lsl {
+		ls -l $* | awk '{print $1, $4, $5, $6, $10}'
+	}
+
+	# the library: what it makes of each device of the scene
+	fn usblib {
+		@{
+			rfork ne
+			$Z^usbfake -m /dev/usb desc
+			./tusbtest | sum
+			./tusbtest | sed -n '1,22p;60p;220p;240p;255,256p'
+			for(i in `{seq 231 247})
+				./tusbtest $i
+			./tusbtest 231:name /dev/usb/ep232.0 /dev/usb/ep233.0:other:one 999 abc 232: /dev/usb/ep239.0:a/b /dev/usb/nothing
+			echo record
+			cat /dev/usb/ctl
+		}
+	}
+
+	# the bytes of a file, one to a line, with e0 and what follows it
+	# on one; a run of the same is said once, as many if over two
+	fn keys {
+		xd -b $1 | awk '{for(i = 2; i <= NF; i++) print $i}' |
+			awk '$1 == "e0" {e = 1; next} {if(e) print "e0", $1; else print $1; e = 0}' |
+			uniq -c | awk '{if($1 > 2) $1 = "many"; print}'
+	}
+
+	fn usbhid {
+		@{
+			rfork ne
+			$Z^usbfake -m /dev/usb hid
+			bind /tmp/zt.kbin /dev/kbin
+			bind /tmp/zt.mousein /dev/mousein
+			for(i in `{seq 211 220}){
+				echo device $i
+				>/tmp/zt.kbin
+				>/tmp/zt.mousein
+				./tkb $i:zt$i
+				s
+				quiet
+				f='#σ/usb/hidUzt'^$i^ctl
+				if(test -e $f){
+					lsl $f
+					cat $f
+					echo delay 60000 >$f
+					echo repeat 70000 >$f
+					cat $f
+					for(m in bogus delay 'delay 1 2' 'debug 0' 'repeat -5' 'repeat 70000'){
+						echo $m >$f
+						s
+					}
+					{echo -n rawon; echo -n abc; echo -n rawoff; echo delay 60001} >$f
+					s
+					cat $f
+					if(~ $i 217){
+						echo delay 400 >$f
+						echo repeat 100 >$f
+					}
+				}
+				echo go >/dev/usb/ctl
+				quiet
+				if(~ $i 217){
+					sleep 2
+					echo go >/dev/usb/ctl
+					quiet
+					sleep 2
+					echo go >/dev/usb/ctl
+					quiet
+				}
+				# the device with two endpoints: one at a time, or the
+				# two processes' last words come in any order
+				if(~ $i 216){
+					echo end $i 1 >/dev/usb/ctl
+					quiet
+				}
+				echo end $i >/dev/usb/ctl
+				quiet
+				echo kbin
+				if(~ $i 217)
+					keys /tmp/zt.kbin
+				if not
+					xd -b /tmp/zt.kbin
+				echo mousein
+				cat /tmp/zt.mousein
+				echo
+				rm -f '#σc/usb/zt'^$i^.hid
+			}
+			# (where the reads were is not part of it: two endpoints'
+			# lines come in either order)
+			echo record
+			grep -v ' (held|reports done)$' /dev/usb/ctl
+		}
+	}
+
+	fn usbdisk {
+		@{
+			rfork ne
+			$Z^usbfake -m /dev/usb disk
+			for(i in `{seq 221 226}){
+				echo device $i
+				./tdisk $i:zt$i
+				s
+			}
+			d='#σ/usb'
+			lsl $d | grep sdUzt
+			for(l in $d/sdUzt*){
+				echo lun $l
+				lsl $l
+				cat $l/ctl
+			}
+
+			l=$d/sdUzt221.0
+			echo reads
+			dd -quiet 1 -if $l/data -bs 512 -count 4 | sum
+			dd -quiet 1 -if $l/data -bs 100 -iseek 7 -count 3 | sum
+			dd -quiet 1 -if $l/data -bs 8192 -iseek 3 -count 2 | sum
+			dd -quiet 1 -if $l/data -bs 32768 -iseek 1 -count 1 | sum
+			dd -quiet 1 -if $l/data -bs 512 -iseek 296 -count 8 | sum
+			dd -quiet 1 -if $l/data -bs 512 -iseek 2047 -count 4 | sum
+			dd -quiet 1 -if $l/data -bs 512 -iseek 2048 -count 1 | sum
+			dd -quiet 1 -if $l/data -bs 512 -iseek 5000 -count 1 | sum
+			dd -quiet 1 -if $l/data -bs 700 -iseek 1497 -count 4 | sum
+			echo writes
+			echo hello world | dd -quiet 1 -of $l/data -bs 512 -oseek 10 -conv sync
+			s
+			dd -quiet 1 -if $l/data -bs 512 -iseek 10 -count 1 | xd | sed 3q
+			awk 'BEGIN{for(i = 0; i < 30; i++) printf "0123456789"}' | dd -quiet 1 -of $l/data -bs 100 -oseek 53
+			s
+			dd -quiet 1 -if $l/data -bs 512 -iseek 10 -count 2 | sum
+			dd -quiet 1 -if /dev/zero -of $l/data -bs 512 -oseek 299 -count 3
+			s
+			dd -quiet 1 -if /dev/zero -of $l/data -bs 512 -oseek 2047 -count 3
+			s
+			dd -quiet 1 -if /dev/zero -of $l/data -bs 300 -oseek 3412 -count 3
+			s
+			dd -quiet 1 -if $l/data -bs 512 -iseek 2040 -count 8 | sum
+			echo parts
+			for(m in 'part p1 100 200' 'part p1 100 200' 'part p1 100 201' 'part p2 300 200' 'part p3 0 99999' 'part p3 -1 5' 'part p2' 'delpart' 'delpart nope' 'delpart data' 'delpart ctl' bogus 'part p2 0x10 020' 'part p4 2048 2048' '   '){
+				echo $m >$l/ctl
+				s
+			}
+			cat $l/ctl
+			lsl $l
+			dd -quiet 1 -if $l/p1 -bs 512 -count 1 | sum
+			dd -quiet 1 -if $l/data -bs 512 -iseek 100 -count 1 | sum
+			dd -quiet 1 -if $l/p1 -bs 512 -iseek 98 -count 4 | sum
+			dd -quiet 1 -if $l/p4 -bs 512 -count 1 | sum
+			echo into p1 | dd -quiet 1 -of $l/p1 -bs 512 -oseek 99 -conv sync
+			s
+			echo past p1 | dd -quiet 1 -of $l/p1 -bs 512 -oseek 100 -conv sync
+			s
+			dd -quiet 1 -if $l/data -bs 512 -iseek 199 -count 2 | sum
+			echo delpart p1 >$l/ctl
+			s
+			dd -quiet 1 -if $l/p1 -bs 512 -count 1 | sum
+			for(i in 1 2 3 4 5 6 7 8 9 10 11 12 13){
+				echo part q$i $i 50 >$l/ctl
+				s
+			}
+			lsl $l
+			cat $l/ctl
+
+			echo raw
+			$Z^usbtest -r $l/raw w:120000002400 r:36 r:20
+			$Z^usbtest -r $l/raw r:10 w:1200 w:000000000000 r:0 r:20 r:20
+			$Z^usbtest -r $l/raw w:ff0000000000 r:10 r:20 w:030000001200 r:18 r:20
+			$Z^usbtest -r $l/raw w:250000000000000000 w:25000000000000000000 r:8 w:00 r:20
+			$Z^usbtest -r $l/raw w:2800000000140000020000 w:28000000001400000200 r:1024 r:3 r:20
+
+			echo the other luns
+			l=$d/sdUzt221.1
+			dd -quiet 1 -if $l/data -bs 2048 -count 2 | sum
+			dd -quiet 1 -if $l/data -bs 512 -iseek 3 -count 1 | sum
+			dd -quiet 1 -if $l/data -bs 512 -iseek 255 -count 4 | sum
+			echo no | dd -quiet 1 -of $l/data -bs 2048 -conv sync
+			s
+			l=$d/sdUzt221.2
+			dd -quiet 1 -if $l/data -bs 512 -count 1 | sum
+			l=$d/sdUzt222
+			dd -quiet 1 -if $l/data -bs 4096 -iseek 255 -count 2 | sum
+			dd -quiet 1 -if $l/data -bs 1000 -iseek 5 -count 9 | sum
+			echo four k | dd -quiet 1 -of $l/data -bs 512 -oseek 9 -conv sync
+			s
+			dd -quiet 1 -if $l/data -bs 4096 -iseek 1 -count 1 | sum
+			l=$d/sdUzt223
+			dd -quiet 1 -if $l/data -bs 512 -iseek 99 -count 2 | sum
+			l=$d/sdUzt226
+			dd -quiet 1 -if $l/data -bs 512 -count 1 | sum
+			echo x | dd -quiet 1 -of $l/data -bs 512 -conv sync
+			s
+			cat $l/ctl
+
+			# a read that the device does not finish, and the server
+			# meanwhile: it answers the others
+			echo held
+			l=$d/sdUzt221.0
+			dd -quiet 1 -if $l/data -bs 512 -iseek 400 -count 1 | sum &
+			quiet
+			sed 2q $l/ctl
+			sed 2q $d/sdUzt222/ctl
+			lsl $d/sdUzt221.1
+			echo go >/dev/usb/ctl
+			wait
+
+			for(i in `{seq 221 226})
+				rm -f '#σc/usb/'^$i^.disk
+			echo record
+			cat /dev/usb/ctl
+		}
+	}
+
+	# usbd: $* is the command
+	fn usbhub {
+		@{
+			rfork ne
+			$Z^usbfake -m /dev/usb hub
+			echo plug 1 1 kbd >/dev/usb/ctl
+			echo plug 1 2 hub4 >/dev/usb/ctl
+			echo plug 2 1 hub3s >/dev/usb/ctl
+			$*
+			s
+			if(test -e /env/usbbusy)
+				echo usbbusy is there
+			cat '#σ/zt/usbevent' >/tmp/zt.ev >[2=1] &
+			evpid=$apid
+			quiet
+			if(! test -e /env/usbbusy)
+				echo usbbusy is gone
+			lsl '#σ/zt'
+			echo plug 4 1 disk3 >/dev/usb/ctl
+			echo plug 4 3 mouse >/dev/usb/ctl
+			echo plug 4 4 hub7 >/dev/usb/ctl
+			quiet
+			echo plug 8 7 touch >/dev/usb/ctl
+			echo plug 8 2 kbd >/dev/usb/ctl
+			echo plug 8 1 kbd >/dev/usb/ctl
+			echo plug 5 1 sdisk >/dev/usb/ctl
+			echo plug 5 2 usb3 >/dev/usb/ctl
+			quiet
+			for(f in /dev/usb/ep*){
+				echo $f
+				cat $f/ctl
+			}
+			echo a second reader
+			# (each read of the file is an event: rc's read, a byte at
+			# a time, is not for it)
+			sed 3q <'#σ/zt/usbevent'
+			echo hubctl
+			hn=`{sed -n 2p /dev/usb/ep8.0/ctl | awk '{print $(NF-1)}'}
+			for(m in 'portpower 1 1 off' 'portpower 1 1 on' 'portindicator '^$hn^' 3 on' 'portindicator '^$hn^' 3 0' 'portindicator 4 1 on' 'portpower 5 1 off' 'portpower 99 1 on' 'portpower 1 9 on' 'portpower 1 0 on' 'bogus 1 1 on' 'portpower 1 1' 'portpower 1 2 7'){
+				echo $m >'#σ/zt/usbhubctl'
+				s
+			}
+			# (dd, not echo with >: what rc says of a file it cannot
+			# open does not go where the function's output goes)
+			dd -quiet 1 -if /dev/null -of '#σ/zt/usbevent'
+			s
+			cat '#σ/zt/usbhubctl'
+			s
+			echo failures
+			echo plug 1 3 badaddr >/dev/usb/ctl
+			quiet
+			echo plug 1 4 dead >/dev/usb/ctl
+			quiet
+			echo unplug 1 4 >/dev/usb/ctl
+			quiet
+			echo plug 1 4 badconf >/dev/usb/ctl
+			quiet
+			echo plug 4 2 tinyhub >/dev/usb/ctl
+			quiet
+			echo unplug 4 2 >/dev/usb/ctl
+			quiet
+			echo plug 8 3 badhub >/dev/usb/ctl
+			quiet
+			echo unplugged
+			echo unplug 8 2 >/dev/usb/ctl
+			quiet
+			echo unplug 1 2 >/dev/usb/ctl
+			echo unplug 2 1 >/dev/usb/ctl
+			quiet
+			echo plug 2 2 usb3 >/dev/usb/ctl
+			quiet
+			# the reader goes first: while it has the file open the
+			# server is not told that it is no longer mounted
+			@{echo kill >/proc/$evpid/ctl} >[2]/dev/null
+			wait
+			rm -f '#σc/zt/usbd'
+			sleep 1
+			echo events
+			cat /tmp/zt.ev
+			echo record
+			cat /dev/usb/ctl
+		}
+		rm -rf '#σc/zt'
+	}
+
+	# Each run has ten minutes (wd): then usbfake is killed, which ends
+	# every read and write that waits on it, and the run is a
+	# difference.
+	if(~ $usbok yes){
+		>/tmp/zt.kbin
+		>/tmp/zt.mousein
+		cd $uz
+		wd 600 usbfake usblib >/tmp/zig.a >[2=1]
+		cd $us
+		wd 600 usbfake usblib >/tmp/zig.b >[2=1]
+		t usblib
+		cd $uz
+		wd 600 usbfake usbhid >/tmp/zig.a >[2=1]
+		cd $us
+		wd 600 usbfake usbhid >/tmp/zig.b >[2=1]
+		t usbkb
+		# what the first keyboard's keys came to, said here too: both
+		# sides run on one kernel and one usbfake
+		sed -n '/^device 211$/,/^device 212$/p' /tmp/zig.a | sed -n '/^kbin$/,/^mousein$/p' | sed 's/ $//' >/tmp/zig.c
+		mv /tmp/zig.c /tmp/zig.a
+		cat >/tmp/zig.b <<'EOF'
+kbin
+0000000  1e 9e 2a 1e 30 9e aa b0 e0 4d e0 4b e0 48 e0 50
+0000010  e0 47 e0 4f e0 cd e0 cb e0 c8 e0 d0 e0 c7 e0 cf
+0000020  1d 38 e0 1d e0 38 9d b8 e0 9d e0 b8 2a e0 5b 36
+0000030  e0 7e 1c aa e0 db b6 e0 fe e0 74 e0 7f e0 63 e0
+0000040  77 e0 71 9c e0 f4 e0 ff e0 e3 e0 f7 e0 f1 2c ac
+0000050
+0000050
+mousein
+EOF
+		t usbkbvalues
+		cd $uz
+		wd 600 usbfake usbdisk >/tmp/zig.a >[2=1]
+		cd $us
+		wd 600 usbfake usbdisk >/tmp/zig.b >[2=1]
+		t usbdisk
+		cd $uz
+		wd 600 usbfake usbhub ./tusbd -m zt >/tmp/zig.a >[2=1]
+		cd $us
+		wd 600 usbfake usbhub ./tusbd >/tmp/zig.b >[2=1]
+		t usbd
+		# and the events, with the names usbd gave the devices
+		sed -n '/^events$/,/^record$/p' /tmp/zig.a >/tmp/zig.c
+		mv /tmp/zig.c /tmp/zig.a
+		cat >/tmp/zig.b <<'EOF'
+events
+attach 3 046d c31c 010103 307f6
+attach 6 0781 5567 500608 cc43e
+attach 7 046d c077 020103 0956c
+attach 9 0eef 0005 000003 c6df8
+attach 10 046d c31c 010103 307f61
+attach 11 046d c31c 010103 307f62
+attach 12 0781 5581 500608 15ce3
+attach 13 abcd 0009 0000ff 5b660
+detach 10 046d c31c 010103 307f61
+detach 6 0781 5567 500608 cc43e
+detach 7 046d c077 020103 0956c
+detach 11 046d c31c 010103 307f62
+detach 9 0eef 0005 000003 c6df8
+detach 12 0781 5581 500608 15ce3
+detach 13 abcd 0009 0000ff 5b660
+attach 34 abcd 0009 0000ff 5b660
+record
+EOF
+		t usbdvalues
+		cd /tmp
+		sleep 1
+		if(ps | grep -s ' (tkb|tdisk|tusbd|tusbtest|usbfake)$'){
+			echo DIFF usb: still running:
+			ps | grep ' (tkb|tdisk|tusbd|tusbtest|usbfake)$'
+			nbad=($nbad usbexit)
+		}
+		if not
+			echo same usb: the programs and usbfake have exited
+		rm -f /tmp/zt.kbin /tmp/zt.mousein /tmp/zt.ev
+	}
+	if not {
+		echo DIFF usb: 9front''s usbd and the library''s test did not build
+		cat /tmp/zig.cc
+		nbad=($nbad usbbuild)
+	}
+	rm -f /tmp/zig.cc
+	rm -rf $us $uz
+}
+
 fn checks {
 	nbad=()
 	Z=$z/
@@ -1544,6 +1983,9 @@ EOF
 		echo 'none 58 0xf864' >>$d/kbmap
 		echo 'none 59 M1' >>$d/kbmap
 		$Z^kbtest $d $z/kbtest2.txt
+		# kbdfs writes to the mouse's files after it has answered
+		# kbtest: on a loaded machine the last were once not there yet
+		sleep 1
 		echo echo:
 		xd -c /tmp/zt.echo$2
 		echo mousectl `{sed 's/twitch//g' $d/mousectl} twitched `{grep -c twitch $d/mousectl | sed 's/^[1-9][0-9]*$/yes/'}
@@ -1638,6 +2080,8 @@ EOF
 	if not
 		echo same kbdfs: the servers have exited
 
+	usbchecks
+
 	# a stick made with zig build -Dzigboot says so (the file zigboot,
 	# beside the programs): each program it names must be in /boot
 	if(test -f $z/zigboot)
@@ -1693,6 +2137,31 @@ EOF
 		if not {
 			echo DIFF boot: of the processes named kbdfs $nk are /boot/kbdfs and $no are not
 			nbad=($nbad zigbootkbdfs)
+		}
+	}
+
+	# and the USB programs: every process named usbd, kb or disk is
+	# /boot/usbd, /boot/usbkb or /boot/usbdisk.  This script comes from
+	# the stick, so there is a usbd and a disk at least.
+	if(test -f /boot/usbd){
+		for(n in usbd kb disk){
+			f=/boot/$n
+			if(! ~ $n usbd)
+				f=/boot/usb$n
+			nk=0
+			no=0
+			for(p in `{ps | awk '$NF == "'$n'" {print $2}'}){
+				if(cmp -s /proc/$p/text $f)
+					nk=`{echo $nk + 1 | hoc}
+				if not
+					no=`{echo $no + 1 | hoc}
+			}
+			if(~ $no 0 && {! ~ $nk 0 || ~ $n kb})
+				echo same boot: the $nk processes of $n are $f
+			if not {
+				echo DIFF boot: of the processes named $n $nk are $f and $no are not
+				nbad=($nbad zigboot$n)
+			}
 		}
 	}
 

@@ -5,7 +5,16 @@
 # it binds planZ's programs over the stock ones that the real bootrc
 # starts by a path with a directory in it (/boot has none, so a file
 # there cannot take their place by its name, as mntgen's does), and
-# then runs the real bootrc.
+# then runs the real bootrc.  The USB drivers are in /boot as usbkb and
+# usbdisk: a file named disk there would hide the directory /bin/disk.
+# The rc that nusbrc leaves reading usbevent keeps this name space, so
+# a device plugged in later gets planZ's driver too.
 if(test -x /boot/kbdfs)
 	bind /boot/kbdfs /bin/aux/kbdfs
+if(test -x /boot/usbd)
+	bind /boot/usbd /bin/nusb/usbd
+if(test -x /boot/usbkb)
+	bind /boot/usbkb /bin/nusb/kb
+if(test -x /boot/usbdisk)
+	bind /boot/usbdisk /bin/nusb/disk
 exec /rc/bin/bootrc $*

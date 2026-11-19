@@ -75,7 +75,8 @@ and `Opteron_G4,+xsaveopt`), `-Dsmp=`, `-Dmem=`,
 `-Ddiskbus=virtio|nvme|ahci` and `-Doptimize=debug`. `-Dzigrc` boots
 9front's user programs with planZ's rc as `/bin/rc`, and `-Dzigboot`
 with planZ's own in place of the stock programs that the boot script
-runs (so far `mntgen`, `init` and `kbdfs`). 9front boots to
+runs (so far `mntgen`, `init`, `kbdfs`, and the USB programs `usbd`,
+`nusb/kb` and `nusb/disk`). 9front boots to
 `vtfs`, four full-screen consoles switched with Ctl-Alt-Left/Right or
 Ctl-Alt-1…4 (three shells and the kernel's messages; `rio` typed at
 one of the shells runs on that console; the mouse copies and pastes

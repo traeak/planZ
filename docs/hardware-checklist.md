@@ -108,7 +108,9 @@ the commands ported so far (`build.zig`'s `zcmds` lists them), the
 dates, the locks, libthread, lib9p and libauth with the stock
 libraries (and `tprimes`,
 libthread's own test; `ramfs`, `mntgen`, `mount`, `srv`, `init` and `kbdfs` beside the stock
-ones), and
+ones; and the USB programs `usbd`, `kb` and `disk` beside 9front's on
+`usbfake`, a USB bus made of files, which leaves the machine's own USB
+alone), and
 `libctest`, which checks the library under them. The script copies them to `/tmp/zig` and runs each one beside the
 stock 9front program of the same name. If anything differs, it shows
 how:
